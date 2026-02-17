@@ -7,9 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A1B2C3D4E5F6010000000201 /* HelloWorldAppApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000101 /* HelloWorldAppApp.swift */; };
-		A1B2C3D4E5F6010000000202 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000102 /* ContentView.swift */; };
-		A1B2C3D4E5F6010000000203 /* HelloWorldAppTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000103 /* HelloWorldAppTests.swift */; };
+			A1B2C3D4E5F6010000000201 /* HelloWorldAppApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000101 /* HelloWorldAppApp.swift */; };
+			A1B2C3D4E5F6010000000202 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000102 /* ContentView.swift */; };
+			A1B2C3D4E5F6010000000203 /* HelloWorldAppTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000103 /* HelloWorldAppTests.swift */; };
+			A1B2C3D4E5F6010000000204 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F6010000000801 /* NIOSSH */; };
+			A1B2C3D4E5F6010000000205 /* NIOTransportServices in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F6010000000802 /* NIOTransportServices */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -31,13 +33,15 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		A1B2C3D4E5F6010000000302 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
+			A1B2C3D4E5F6010000000302 /* Frameworks */ = {
+				isa = PBXFrameworksBuildPhase;
+				buildActionMask = 2147483647;
+				files = (
+					A1B2C3D4E5F6010000000204 /* NIOSSH in Frameworks */,
+					A1B2C3D4E5F6010000000205 /* NIOTransportServices in Frameworks */,
+				);
+				runOnlyForDeploymentPostprocessing = 0;
+			};
 		A1B2C3D4E5F6010000000305 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -97,14 +101,16 @@
 			buildRules = (
 			);
 			dependencies = (
-			);
-			name = HelloWorldApp;
-			packageProductDependencies = (
-			);
-			productName = HelloWorldApp;
-			productReference = A1B2C3D4E5F6010000000104 /* HelloWorldApp.app */;
-			productType = "com.apple.product-type.application";
-		};
+				);
+				name = HelloWorldApp;
+				packageProductDependencies = (
+					A1B2C3D4E5F6010000000801 /* NIOSSH */,
+					A1B2C3D4E5F6010000000802 /* NIOTransportServices */,
+				);
+				productName = HelloWorldApp;
+				productReference = A1B2C3D4E5F6010000000104 /* HelloWorldApp.app */;
+				productType = "com.apple.product-type.application";
+			};
 		A1B2C3D4E5F6010000000006 /* HelloWorldAppTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A1B2C3D4E5F6010000000402 /* Build configuration list for PBXNativeTarget "HelloWorldAppTests" */;
@@ -152,14 +158,18 @@
 				Base,
 			);
 			mainGroup = A1B2C3D4E5F6010000000002;
-			productRefGroup = A1B2C3D4E5F6010000000003 /* Products */;
-			projectDirPath = "";
-			projectRoot = "";
-			targets = (
-				A1B2C3D4E5F6010000000005 /* HelloWorldApp */,
-				A1B2C3D4E5F6010000000006 /* HelloWorldAppTests */,
-			);
-		};
+				productRefGroup = A1B2C3D4E5F6010000000003 /* Products */;
+				packageReferences = (
+					A1B2C3D4E5F6010000000701 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */,
+					A1B2C3D4E5F6010000000702 /* XCRemoteSwiftPackageReference "swift-nio-transport-services" */,
+				);
+				projectDirPath = "";
+				projectRoot = "";
+				targets = (
+					A1B2C3D4E5F6010000000005 /* HelloWorldApp */,
+					A1B2C3D4E5F6010000000006 /* HelloWorldAppTests */,
+				);
+			};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
@@ -200,12 +210,44 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		A1B2C3D4E5F6010000000601 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = A1B2C3D4E5F6010000000005 /* HelloWorldApp */;
-			targetProxy = A1B2C3D4E5F6010000000602 /* PBXContainerItemProxy */;
-		};
+			A1B2C3D4E5F6010000000601 /* PBXTargetDependency */ = {
+				isa = PBXTargetDependency;
+				target = A1B2C3D4E5F6010000000005 /* HelloWorldApp */;
+				targetProxy = A1B2C3D4E5F6010000000602 /* PBXContainerItemProxy */;
+			};
 /* End PBXTargetDependency section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+			A1B2C3D4E5F6010000000701 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */ = {
+				isa = XCRemoteSwiftPackageReference;
+				repositoryURL = "https://github.com/apple/swift-nio-ssh.git";
+				requirement = {
+					kind = upToNextMajorVersion;
+					minimumVersion = 0.12.0;
+				};
+			};
+			A1B2C3D4E5F6010000000702 /* XCRemoteSwiftPackageReference "swift-nio-transport-services" */ = {
+				isa = XCRemoteSwiftPackageReference;
+				repositoryURL = "https://github.com/apple/swift-nio-transport-services.git";
+				requirement = {
+					kind = upToNextMajorVersion;
+					minimumVersion = 1.26.0;
+				};
+			};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+			A1B2C3D4E5F6010000000801 /* NIOSSH */ = {
+				isa = XCSwiftPackageProductDependency;
+				package = A1B2C3D4E5F6010000000701 /* XCRemoteSwiftPackageReference "swift-nio-ssh" */;
+				productName = NIOSSH;
+			};
+			A1B2C3D4E5F6010000000802 /* NIOTransportServices */ = {
+				isa = XCSwiftPackageProductDependency;
+				package = A1B2C3D4E5F6010000000702 /* XCRemoteSwiftPackageReference "swift-nio-transport-services" */;
+				productName = NIOTransportServices;
+			};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
 		A1B2C3D4E5F6010000000501 /* Debug */ = {
