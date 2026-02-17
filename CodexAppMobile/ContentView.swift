@@ -38,7 +38,6 @@ struct SSHConnectionDraft {
             && !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && (1...65535).contains(port)
-            && !password.isEmpty
     }
 }
 
@@ -186,6 +185,31 @@ enum PasswordVault {
     }
 }
 
+enum HostKeyStore {
+    private static let knownHostsKey = "ssh.known-hosts.v1"
+
+    static func endpointKey(host: String, port: Int) -> String {
+        "\(host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()):\(port)"
+    }
+
+    static func read(for endpoint: String, defaults: UserDefaults = .standard) -> String? {
+        let hosts = defaults.dictionary(forKey: self.knownHostsKey) as? [String: String]
+        return hosts?[endpoint]
+    }
+
+    static func save(_ hostKey: String, for endpoint: String, defaults: UserDefaults = .standard) {
+        var hosts = defaults.dictionary(forKey: self.knownHostsKey) as? [String: String] ?? [:]
+        hosts[endpoint] = hostKey
+        defaults.set(hosts, forKey: self.knownHostsKey)
+    }
+
+    static func remove(for endpoint: String, defaults: UserDefaults = .standard) {
+        var hosts = defaults.dictionary(forKey: self.knownHostsKey) as? [String: String] ?? [:]
+        hosts.removeValue(forKey: endpoint)
+        defaults.set(hosts, forKey: self.knownHostsKey)
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var store: ConnectionStore
 
@@ -307,7 +331,7 @@ struct ConnectionEditorView: View {
                         .disableAutocorrection(true)
                 }
 
-                Section("Authentication") {
+                Section("Authentication (Optional)") {
                     SecureField("Password", text: self.$password)
                 }
 
@@ -350,7 +374,7 @@ struct ConnectionEditorView: View {
         )
 
         guard draft.isValid else {
-            self.validationMessage = "Fill all fields and set a password."
+            self.validationMessage = "Fill all required fields."
             return
         }
 
@@ -418,7 +442,7 @@ struct TerminalSessionView: View {
                         self.store.updatePassword(self.password, for: self.profile.id)
                         self.viewModel.connect(profile: self.profile, password: self.password)
                     }
-                    .disabled(self.password.isEmpty || self.viewModel.state == .connecting)
+                    .disabled(self.viewModel.state == .connecting)
                 }
             }
         }
@@ -541,7 +565,7 @@ final class TerminalSessionViewModel: ObservableObject {
                     host: profile.host,
                     port: profile.port,
                     username: profile.username,
-                    password: password
+                    password: password.isEmpty ? nil : password
                 )
             } catch {
                 self.dispatchMain {
@@ -600,11 +624,14 @@ final class SSHClientEngine {
     private var rootChannel: Channel?
     private var sessionChannel: Channel?
 
-    func connect(host: String, port: Int, username: String, password: String) throws {
+    func connect(host: String, port: Int, username: String, password: String?) throws {
         self.disconnect()
 
         let group = NIOTSEventLoopGroup()
         self.eventLoopGroup = group
+        let endpoint = HostKeyStore.endpointKey(host: host, port: port)
+        let userAuthDelegate = OptionalPasswordAuthenticationDelegate(username: username, password: password)
+        let hostKeyDelegate = TrustOnFirstUseHostKeysDelegate(endpoint: endpoint)
 
         let bootstrap = NIOTSConnectionBootstrap(group: group)
             .channelInitializer { channel in
@@ -613,8 +640,8 @@ final class SSHClientEngine {
                     let sshHandler = NIOSSHHandler(
                         role: .client(
                             .init(
-                                userAuthDelegate: SimplePasswordDelegate(username: username, password: password),
-                                serverAuthDelegate: AcceptAllHostKeysDelegate()
+                                userAuthDelegate: userAuthDelegate,
+                                serverAuthDelegate: hostKeyDelegate
                             )
                         ),
                         allocator: channel.allocator,
@@ -773,9 +800,92 @@ final class RootErrorHandler: ChannelInboundHandler {
     }
 }
 
-final class AcceptAllHostKeysDelegate: NIOSSHClientServerAuthenticationDelegate {
+enum HostKeyValidationError: LocalizedError {
+    case changedHostKey(endpoint: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .changedHostKey(let endpoint):
+            return "Host key mismatch for \(endpoint). Remove the saved host key only if the server key rotation is intentional."
+        }
+    }
+}
+
+final class TrustOnFirstUseHostKeysDelegate: NIOSSHClientServerAuthenticationDelegate {
+    private let endpoint: String
+
+    init(endpoint: String) {
+        self.endpoint = endpoint
+    }
+
     func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
+        let presentedHostKey = String(openSSHPublicKey: hostKey)
+
+        if let trustedHostKey = HostKeyStore.read(for: self.endpoint) {
+            if trustedHostKey == presentedHostKey {
+                validationCompletePromise.succeed(())
+            } else {
+                validationCompletePromise.fail(HostKeyValidationError.changedHostKey(endpoint: self.endpoint))
+            }
+            return
+        }
+
+        HostKeyStore.save(presentedHostKey, for: self.endpoint)
         validationCompletePromise.succeed(())
+    }
+}
+
+public final class OptionalPasswordAuthenticationDelegate {
+    private enum State {
+        case tryNone
+        case tryPassword
+        case done
+    }
+
+    private var state: State = .tryNone
+    private let username: String
+    private let password: String?
+
+    init(username: String, password: String?) {
+        self.username = username
+        self.password = password
+    }
+}
+
+@available(*, unavailable)
+extension OptionalPasswordAuthenticationDelegate: Sendable {}
+
+extension OptionalPasswordAuthenticationDelegate: NIOSSHClientUserAuthenticationDelegate {
+    public func nextAuthenticationType(
+        availableMethods: NIOSSHAvailableUserAuthenticationMethods,
+        nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>
+    ) {
+        switch self.state {
+        case .tryNone:
+            self.state = .tryPassword
+            nextChallengePromise.succeed(
+                NIOSSHUserAuthenticationOffer(
+                    username: self.username,
+                    serviceName: "",
+                    offer: .none
+                )
+            )
+        case .tryPassword:
+            self.state = .done
+            guard let password = self.password, availableMethods.contains(.password) else {
+                nextChallengePromise.succeed(nil)
+                return
+            }
+            nextChallengePromise.succeed(
+                NIOSSHUserAuthenticationOffer(
+                    username: self.username,
+                    serviceName: "",
+                    offer: .password(.init(password: password))
+                )
+            )
+        case .done:
+            nextChallengePromise.succeed(nil)
+        }
     }
 }
 
