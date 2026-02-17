@@ -9,11 +9,11 @@ fi
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 project_root="$(cd "${script_dir}/.." && pwd)"
-project_path="${project_root}/HelloWorldApp.xcodeproj"
-scheme="HelloWorldApp"
-bundle_id="com.example.HelloWorldApp"
+project_path="${project_root}/CodexAppMobile.xcodeproj"
+scheme="CodexAppMobile"
+bundle_id="com.example.CodexAppMobile"
 derived_data_path="${project_root}/.build/DerivedData"
-device_name="${IOS_DEVICE_NAME:-HelloWorldApp iPhone 17}"
+device_name="${IOS_DEVICE_NAME:-CodexAppMobile iPhone 17}"
 device_type_identifier="${IOS_DEVICE_TYPE_IDENTIFIER:-com.apple.CoreSimulator.SimDeviceType.iPhone-17}"
 lock_dir="${project_root}/.build/locks/run-ios.lock"
 
@@ -129,7 +129,7 @@ xcodebuild \
   -derivedDataPath "${derived_data_path}" \
   build
 
-app_path="${derived_data_path}/Build/Products/Debug-iphonesimulator/HelloWorldApp.app"
+app_path="${derived_data_path}/Build/Products/Debug-iphonesimulator/CodexAppMobile.app"
 if [[ ! -d "${app_path}" ]]; then
   echo "Built app not found: ${app_path}" >&2
   exit 1

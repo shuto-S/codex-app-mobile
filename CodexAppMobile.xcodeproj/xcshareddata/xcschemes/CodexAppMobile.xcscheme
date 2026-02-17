@@ -16,9 +16,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A1B2C3D4E5F6010000000005"
-               BuildableName = "HelloWorldApp.app"
-               BlueprintName = "HelloWorldApp"
-               ReferencedContainer = "container:HelloWorldApp.xcodeproj">
+               BuildableName = "CodexAppMobile.app"
+               BlueprintName = "CodexAppMobile"
+               ReferencedContainer = "container:CodexAppMobile.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -36,9 +36,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A1B2C3D4E5F6010000000006"
-               BuildableName = "HelloWorldAppTests.xctest"
-               BlueprintName = "HelloWorldAppTests"
-               ReferencedContainer = "container:HelloWorldApp.xcodeproj">
+               BuildableName = "CodexAppMobileTests.xctest"
+               BlueprintName = "CodexAppMobileTests"
+               ReferencedContainer = "container:CodexAppMobile.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -58,9 +58,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A1B2C3D4E5F6010000000005"
-            BuildableName = "HelloWorldApp.app"
-            BlueprintName = "HelloWorldApp"
-            ReferencedContainer = "container:HelloWorldApp.xcodeproj">
+            BuildableName = "CodexAppMobile.app"
+            BlueprintName = "CodexAppMobile"
+            ReferencedContainer = "container:CodexAppMobile.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -75,9 +75,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A1B2C3D4E5F6010000000005"
-            BuildableName = "HelloWorldApp.app"
-            BlueprintName = "HelloWorldApp"
-            ReferencedContainer = "container:HelloWorldApp.xcodeproj">
+            BuildableName = "CodexAppMobile.app"
+            BlueprintName = "CodexAppMobile"
+            ReferencedContainer = "container:CodexAppMobile.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

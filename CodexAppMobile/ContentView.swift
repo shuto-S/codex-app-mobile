@@ -122,7 +122,7 @@ final class ConnectionStore: ObservableObject {
 }
 
 enum PasswordVault {
-    private static let service = "com.example.HelloWorldApp.ssh"
+    private static let service = "com.example.CodexAppMobile.ssh"
 
     static func save(password: String, for profileID: UUID) {
         let account = self.account(for: profileID)
@@ -491,7 +491,7 @@ final class TerminalSessionViewModel: ObservableObject {
     @Published var errorMessage = ""
 
     private let engine = SSHClientEngine()
-    private let workerQueue = DispatchQueue(label: "com.example.HelloWorldApp.ssh-session")
+    private let workerQueue = DispatchQueue(label: "com.example.CodexAppMobile.ssh-session")
 
     init() {
         self.engine.onOutput = { [weak self] text in

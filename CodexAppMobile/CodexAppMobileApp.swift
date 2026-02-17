@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct HelloWorldAppApp: App {
+struct CodexAppMobileApp: App {
     @StateObject private var store = ConnectionStore()
 
     var body: some Scene {

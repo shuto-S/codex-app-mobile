@@ -1,4 +1,4 @@
-# iOS Simulator 運用ノウハウ（HelloWorldApp）
+# iOS Simulator 運用ノウハウ（CodexAppMobile）
 
 最終更新: 2026-02-17
 
@@ -40,9 +40,9 @@ make run-ios
 
 ```bash
 xcrun simctl list devices | rg "\(Booted\)"
-xcrun simctl list devices | rg "HelloWorldApp iPhone 17"
+xcrun simctl list devices | rg "CodexAppMobile iPhone 17"
 xcrun simctl list devices | rg "\(Booted\)" | wc -l
-xcrun simctl list devices | rg "HelloWorldApp iPhone 17" | wc -l
+xcrun simctl list devices | rg "CodexAppMobile iPhone 17" | wc -l
 ```
 
 5. テスト実行
@@ -61,7 +61,7 @@ git status --short
 ## 単一起動を担保する実装ポイント
 対象: `scripts/run_ios.sh`
 
-- 管理対象デバイス名を `HelloWorldApp iPhone 17` で固定。
+- 管理対象デバイス名を `CodexAppMobile iPhone 17` で固定。
 - ロックディレクトリ（`.build/locks/run-ios.lock`）で `run-ios/test-ios` の同時実行を防止。
 - 同名デバイスが複数ある場合は先頭 1 台を残して削除。
 - 起動前に全デバイスを `shutdown` し、対象 UDID を明示して起動。
@@ -70,7 +70,7 @@ git status --short
 - アプリ起動は以下オプションを使用（ハング回避/再起動安定化）:
 
 ```bash
-xcrun simctl launch --terminate-running-process --stdout=/dev/null --stderr=/dev/null <device_udid> com.example.HelloWorldApp
+xcrun simctl launch --terminate-running-process --stdout=/dev/null --stderr=/dev/null <device_udid> com.example.CodexAppMobile
 ```
 
 ## よくある失敗と対処
@@ -81,13 +81,13 @@ xcrun simctl launch --terminate-running-process --stdout=/dev/null --stderr=/dev
 - `simctl launch` で標準出力接続に引っ張られる場合があるため、`--stdout=/dev/null --stderr=/dev/null` を使う。
 - 既存プロセス競合は `--terminate-running-process` で回避する。
 
-3. `make test-ios` で `Unable to find module dependency: 'HelloWorldApp'`
-- `HelloWorldApp` ターゲットの Debug に `ENABLE_TESTABILITY = YES;` を設定する。
-- 対象ファイル: `HelloWorldApp.xcodeproj/project.pbxproj`
+3. `make test-ios` で `Unable to find module dependency: 'CodexAppMobile'`
+- `CodexAppMobile` ターゲットの Debug に `ENABLE_TESTABILITY = YES;` を設定する。
+- 対象ファイル: `CodexAppMobile.xcodeproj/project.pbxproj`
 
 ## 受け入れチェックリスト
 - `make run-ios` が成功する。
 - `xcrun simctl list devices | rg "\(Booted\)" | wc -l` が `1`。
-- `xcrun simctl list devices | rg "HelloWorldApp iPhone 17" | wc -l` が `1`（管理対象重複なし）。
+- `xcrun simctl list devices | rg "CodexAppMobile iPhone 17" | wc -l` が `1`（管理対象重複なし）。
 - `make test-ios` が成功する。
 - `git status --short` がクリーン（不要生成物は `make clean` で除去）。

@@ -1,4 +1,4 @@
-# SSH Terminal MVP ノウハウ（HelloWorldApp）
+# SSH Terminal MVP ノウハウ（CodexAppMobile）
 
 最終更新: 2026-02-18
 
@@ -24,11 +24,11 @@
 
 ## 実装構成
 対象ファイル:
-- `HelloWorldApp/ContentView.swift`
-- `HelloWorldApp/HelloWorldAppApp.swift`
-- `HelloWorldApp.xcodeproj/project.pbxproj`
-- `HelloWorldApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`
-- `HelloWorldAppTests/HelloWorldAppTests.swift`
+- `CodexAppMobile/ContentView.swift`
+- `CodexAppMobile/CodexAppMobileApp.swift`
+- `CodexAppMobile.xcodeproj/project.pbxproj`
+- `CodexAppMobile.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`
+- `CodexAppMobileTests/CodexAppMobileTests.swift`
 
 主要コンポーネント:
 - `ConnectionStore`
@@ -53,7 +53,7 @@
 ```bash
 make run-ios
 xcrun simctl list devices | rg "\(Booted\)"
-xcrun simctl list devices | rg "HelloWorldApp iPhone 17"
+xcrun simctl list devices | rg "CodexAppMobile iPhone 17"
 make test-ios
 ```
 
