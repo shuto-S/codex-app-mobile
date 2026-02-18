@@ -1240,8 +1240,6 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
             self.dispatchMain { [self] in
                 self.suppressErrorsUntilNextConnect = false
                 self.state = .connected
-                self.ansiRenderer = ANSIRenderer()
-                self.output = AttributedString()
             }
         }
 
@@ -1280,6 +1278,8 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
 
         self.configureEndpoint(host: profile.host, port: profile.port)
         self.suppressErrorsUntilNextConnect = false
+        self.ansiRenderer = ANSIRenderer()
+        self.output = AttributedString()
         self.state = .connecting
 
         self.workerQueue.async { [weak self] in
@@ -1454,7 +1454,7 @@ final class SSHClientEngine: @unchecked Sendable {
     }
 }
 
-final class SessionOutputHandler: ChannelInboundHandler {
+final class SessionOutputHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = SSHChannelData
 
     private let onOutput: (String) -> Void
