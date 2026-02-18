@@ -12,6 +12,7 @@
 		A1B2C3D4E5F6010000000203 /* CodexAppMobileTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000103 /* CodexAppMobileTests.swift */; };
 		A1B2C3D4E5F6010000000204 /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F6010000000801 /* NIOSSH */; };
 		A1B2C3D4E5F6010000000205 /* NIOTransportServices in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F6010000000802 /* NIOTransportServices */; };
+		A1B2C3D4E5F6010000000206 /* CodexOrchestration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000106 /* CodexOrchestration.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -30,6 +31,7 @@
 		A1B2C3D4E5F6010000000103 /* CodexAppMobileTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexAppMobileTests.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6010000000104 /* CodexAppMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = CodexAppMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1B2C3D4E5F6010000000105 /* CodexAppMobileTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = CodexAppMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1B2C3D4E5F6010000000106 /* CodexOrchestration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOrchestration.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -75,6 +77,7 @@
 			children = (
 				A1B2C3D4E5F6010000000101 /* CodexAppMobileApp.swift */,
 				A1B2C3D4E5F6010000000102 /* ContentView.swift */,
+				A1B2C3D4E5F6010000000106 /* CodexOrchestration.swift */,
 			);
 			path = CodexAppMobile;
 			sourceTree = "<group>";
@@ -197,6 +200,7 @@
 			files = (
 				A1B2C3D4E5F6010000000201 /* CodexAppMobileApp.swift in Sources */,
 				A1B2C3D4E5F6010000000202 /* ContentView.swift in Sources */,
+				A1B2C3D4E5F6010000000206 /* CodexOrchestration.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

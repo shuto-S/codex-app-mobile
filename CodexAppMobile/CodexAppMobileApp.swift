@@ -2,12 +2,13 @@ import SwiftUI
 
 @main
 struct CodexAppMobileApp: App {
-    @StateObject private var store = ConnectionStore()
+    @StateObject private var appState = AppState()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environmentObject(store)
+                .environmentObject(self.appState)
+                .environmentObject(self.appState.fallbackConnectionStore)
         }
     }
 }

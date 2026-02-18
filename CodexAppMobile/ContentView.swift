@@ -238,7 +238,7 @@ struct KnownHostRecord: Identifiable, Equatable {
     }
 }
 
-struct ContentView: View {
+struct FallbackTerminalView: View {
     @EnvironmentObject private var store: ConnectionStore
 
     @State private var isPresentingEditor = false
@@ -681,7 +681,7 @@ private struct CodexCardSurfaceModifier: ViewModifier {
     }
 }
 
-private extension View {
+extension View {
     func codexCardSurface() -> some View {
         self.modifier(CodexCardSurfaceModifier())
     }
@@ -1845,6 +1845,6 @@ extension OptionalPasswordAuthenticationDelegate: NIOSSHClientUserAuthentication
 }
 
 #Preview {
-    ContentView()
+    FallbackTerminalView()
         .environmentObject(ConnectionStore())
 }
