@@ -519,9 +519,8 @@ struct TerminalSessionView: View {
     @EnvironmentObject private var store: ConnectionStore
 
     @StateObject private var viewModel = TerminalSessionViewModel()
-    @State private var password = ""
     @State private var commandInput = ""
-    @State private var didLoadPassword = false
+    @State private var didStartAutoConnect = false
     @FocusState private var isCommandFieldFocused: Bool
 
     private var terminalText: String {
@@ -534,14 +533,6 @@ struct TerminalSessionView: View {
 
             outputPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            if self.viewModel.state != .connected {
-                VStack {
-                    connectPanel
-                    Spacer()
-                }
-                .padding(.top, 10)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -552,10 +543,9 @@ struct TerminalSessionView: View {
         .navigationTitle(self.profile.name)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            guard !self.didLoadPassword else { return }
-            self.didLoadPassword = true
-            self.password = self.store.password(for: self.profile.id)
-            self.viewModel.configureEndpoint(host: self.profile.host, port: self.profile.port)
+            guard !self.didStartAutoConnect else { return }
+            self.didStartAutoConnect = true
+            self.viewModel.connect(profile: self.profile, password: self.store.password(for: self.profile.id))
         }
         .onDisappear {
             self.viewModel.disconnect()
@@ -567,16 +557,6 @@ struct TerminalSessionView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if self.isCommandFieldFocused {
-                    Button {
-                        self.isCommandFieldFocused = false
-                    } label: {
-                        Image(systemName: "keyboard.chevron.compact.down")
-                    }
-                    .codexActionButtonStyle()
-                    .accessibilityLabel("Hide Keyboard")
-                }
-
                 if self.viewModel.state == .connected {
                     Button("Disconnect", role: .destructive) {
                         self.viewModel.disconnect()
@@ -593,33 +573,16 @@ struct TerminalSessionView: View {
             .ignoresSafeArea()
     }
 
-    private var connectPanel: some View {
-        HStack(spacing: 8) {
-            SecureField("Password", text: self.$password)
-                .textContentType(.password)
-                .textFieldStyle(.roundedBorder)
-                .submitLabel(.go)
-                .disabled(self.viewModel.state == .connecting)
-
-            Button(self.viewModel.state == .connecting ? "Connecting..." : "Connect") {
-                self.store.updatePassword(self.password, for: self.profile.id)
-                self.viewModel.connect(profile: self.profile, password: self.password)
-            }
-            .codexActionButtonStyle()
-            .disabled(self.viewModel.state == .connecting)
-        }
-        .codexCardSurface()
-        .padding(.horizontal, 12)
-    }
-
     private var outputPane: some View {
         ScrollViewReader { proxy in
-            ScrollView([.vertical, .horizontal]) {
+            ScrollView(.vertical) {
                 Text(verbatim: self.terminalText)
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(Color(red: 0.82, green: 0.95, blue: 0.88))
                     .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                     .padding(16)
                     .textSelection(.enabled)
                     .id("terminal-end")
@@ -647,7 +610,7 @@ struct TerminalSessionView: View {
                 .font(.system(.body, design: .monospaced).weight(.semibold))
                 .foregroundStyle(Color(red: 0.37, green: 0.88, blue: 0.72))
 
-            TextField("Command", text: self.$commandInput, axis: .vertical)
+            TextField("Command", text: self.$commandInput)
                 .font(.system(.body, design: .monospaced))
                 .keyboardType(.default)
                 .textInputAutocapitalization(.never)
@@ -660,11 +623,15 @@ struct TerminalSessionView: View {
                 }
                 .padding(.vertical, 6)
 
-            Button("Send") {
-                self.sendCommand()
+            if self.isCommandFieldFocused {
+                Button {
+                    self.isCommandFieldFocused = false
+                } label: {
+                    Image(systemName: "keyboard.chevron.compact.down")
+                }
+                .codexActionButtonStyle()
+                .accessibilityLabel("Hide Keyboard")
             }
-            .codexActionButtonStyle()
-            .disabled(self.viewModel.state != .connected || self.commandInput.isEmpty)
         }
         .codexCardSurface()
     }
@@ -771,7 +738,7 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
     }
 
     func connect(profile: SSHConnectionProfile, password: String) {
-        guard self.state != .connecting else {
+        guard self.state == .disconnected else {
             return
         }
 
@@ -951,6 +918,7 @@ final class SessionOutputHandler: ChannelInboundHandler {
     private let onClosed: () -> Void
     private let onError: (Error) -> Void
     private var pendingUTF8Data = Data()
+    private var terminalEscapeFilter = TerminalEscapeFilter()
 
     init(
         onOutput: @escaping (String) -> Void,
@@ -1029,9 +997,7 @@ final class SessionOutputHandler: ChannelInboundHandler {
     private func flushUTF8Buffer() {
         while !self.pendingUTF8Data.isEmpty {
             if let text = String(data: self.pendingUTF8Data, encoding: .utf8) {
-                if !text.isEmpty {
-                    self.onOutput(text)
-                }
+                self.emitSanitized(text)
                 self.pendingUTF8Data.removeAll(keepingCapacity: true)
                 return
             }
@@ -1039,9 +1005,7 @@ final class SessionOutputHandler: ChannelInboundHandler {
             let prefixLength = self.longestValidUTF8PrefixLength(in: self.pendingUTF8Data)
             if prefixLength > 0,
                let text = String(data: self.pendingUTF8Data.prefix(prefixLength), encoding: .utf8) {
-                if !text.isEmpty {
-                    self.onOutput(text)
-                }
+                self.emitSanitized(text)
                 self.pendingUTF8Data.removeFirst(prefixLength)
                 continue
             }
@@ -1052,9 +1016,7 @@ final class SessionOutputHandler: ChannelInboundHandler {
             }
 
             let fallback = String(decoding: self.pendingUTF8Data.prefix(1), as: UTF8.self)
-            if !fallback.isEmpty {
-                self.onOutput(fallback)
-            }
+            self.emitSanitized(fallback)
             self.pendingUTF8Data.removeFirst()
         }
     }
@@ -1062,9 +1024,7 @@ final class SessionOutputHandler: ChannelInboundHandler {
     private func flushRemainingUTF8BufferLossy() {
         guard !self.pendingUTF8Data.isEmpty else { return }
         let remaining = String(decoding: self.pendingUTF8Data, as: UTF8.self)
-        if !remaining.isEmpty {
-            self.onOutput(remaining)
-        }
+        self.emitSanitized(remaining)
         self.pendingUTF8Data.removeAll(keepingCapacity: true)
     }
 
@@ -1084,6 +1044,109 @@ final class SessionOutputHandler: ChannelInboundHandler {
         }
 
         return best
+    }
+
+    private func emitSanitized(_ text: String) {
+        guard !text.isEmpty else { return }
+        let sanitized = self.terminalEscapeFilter.process(text)
+        guard !sanitized.isEmpty else { return }
+        self.onOutput(sanitized)
+    }
+}
+
+private struct TerminalEscapeFilter {
+    private enum State {
+        case plain
+        case esc
+        case csi
+        case osc
+        case oscEsc
+        case stString
+        case stStringEsc
+    }
+
+    private var state: State = .plain
+
+    mutating func process(_ input: String) -> String {
+        var output = String.UnicodeScalarView()
+
+        for scalar in input.unicodeScalars {
+            let value = scalar.value
+
+            switch self.state {
+            case .plain:
+                if value == 0x1B {
+                    self.state = .esc
+                    continue
+                }
+                if value == 0x9B {
+                    self.state = .csi
+                    continue
+                }
+                if value == 0x9D {
+                    self.state = .osc
+                    continue
+                }
+                if value == 0x90 {
+                    self.state = .stString
+                    continue
+                }
+                if value < 0x20, value != 0x09, value != 0x0A, value != 0x0D {
+                    continue
+                }
+                if (0x80...0x9F).contains(value) {
+                    continue
+                }
+                output.append(scalar)
+
+            case .esc:
+                switch scalar {
+                case "[":
+                    self.state = .csi
+                case "]":
+                    self.state = .osc
+                case "P", "_", "^", "X":
+                    self.state = .stString
+                default:
+                    self.state = .plain
+                }
+
+            case .csi:
+                if (0x40...0x7E).contains(value) {
+                    self.state = .plain
+                } else if value == 0x1B {
+                    self.state = .esc
+                }
+
+            case .osc:
+                if value == 0x07 {
+                    self.state = .plain
+                } else if value == 0x1B {
+                    self.state = .oscEsc
+                }
+
+            case .oscEsc:
+                if scalar == "\\" {
+                    self.state = .plain
+                } else {
+                    self.state = .osc
+                }
+
+            case .stString:
+                if value == 0x1B {
+                    self.state = .stStringEsc
+                }
+
+            case .stStringEsc:
+                if scalar == "\\" {
+                    self.state = .plain
+                } else {
+                    self.state = .stString
+                }
+            }
+        }
+
+        return String(output)
     }
 }
 
