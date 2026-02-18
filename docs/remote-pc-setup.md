@@ -39,16 +39,18 @@ codex app-server --listen ws://0.0.0.0:8080
 - iPhone のユーザー/デバイスからリモートPCの `8080/tcp` を許可します。
 - それ以外からは遮断します。
 
-## 5. iOS アプリで接続設定
+## 5. iOS アプリで接続設定（現行UI）
 
-- `Connections` タブで以下を登録
-  - `Host`: リモートPCの tailnet IP
-  - `App Server URL`: `ws://<tailnet-ip>:8080`
-  - `Transport`: `App Server (WebSocket)`
-- `Projects` タブで `remotePath` を追加
-- `Threads` タブで `Connect` → `Refresh` を実行
+1. `Hosts` タブで Host を追加
+   - `Host`: リモートPCの tailnet IP
+   - `App Server URL`: `ws://<tailnet-ip>:8080`
+   - `Transport`: `App Server (WebSocket)`
+2. `Hosts` タブから対象Hostをタップして `Sessions` タブへ遷移
+3. `SessionWorkbench` で Project を追加
+   - `Add Project` から `remotePath` を設定（必要に応じて `Browse Remote Path`）
+4. 同画面で `Connect` -> `Refresh` を実行し、Thread を選択/新規作成
 
 ## 6. 障害時フォールバック
 
-- `Threads` 画面の `Open Fallback Terminal` から SSH ターミナルへ移動できます。
+- `SessionWorkbench` の `Open in Terminal` で SSH Terminal に移動できます。
 - app-server 停止時でも最低限の操作を継続できます。
