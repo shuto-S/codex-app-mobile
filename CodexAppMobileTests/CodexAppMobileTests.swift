@@ -169,6 +169,47 @@ final class CodexAppMobileTests: XCTestCase {
         XCTAssertEqual(session?.selectedThreadID, "thread-1")
     }
 
+    @MainActor
+    func testHostSessionStoreCleanupOrphansRemovesInvalidSessions() {
+        let suiteName = "HostSessionStoreCleanup.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Failed to create temporary UserDefaults suite.")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let validHostID = UUID()
+        let orphanHostID = UUID()
+
+        let store = HostSessionStore(defaults: defaults)
+        store.upsertSession(hostID: validHostID)
+        store.upsertSession(hostID: orphanHostID)
+        store.cleanupOrphans(validHostIDs: Set([validHostID]))
+
+        XCTAssertNotNil(store.session(for: validHostID))
+        XCTAssertNil(store.session(for: orphanHostID))
+    }
+
+    func testTerminalLaunchContextCreatesUniqueIdentifiers() {
+        let hostID = UUID()
+        let first = TerminalLaunchContext(
+            hostID: hostID,
+            projectPath: "/tmp/project",
+            threadID: "thread-1",
+            initialCommand: "codex resume thread-1"
+        )
+        let second = TerminalLaunchContext(
+            hostID: hostID,
+            projectPath: "/tmp/project",
+            threadID: "thread-1",
+            initialCommand: "codex resume thread-1"
+        )
+
+        XCTAssertNotEqual(first.id, second.id)
+    }
+
     func testJSONRPCEnvelopeDecodesNotification() throws {
         let payload = """
         {"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"threadId":"t1","turnId":"u1","itemId":"i1","delta":"hello"}}

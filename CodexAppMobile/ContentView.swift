@@ -243,7 +243,7 @@ struct TerminalTabView: View {
 
     @State private var isPresentingKnownHosts = false
     @State private var navigationPath: [UUID] = []
-    @State private var consumedLaunchContextID: UUID?
+    @State private var consumedLaunchRequestID: UUID?
 
     var body: some View {
         NavigationStack(path: self.$navigationPath) {
@@ -316,12 +316,12 @@ struct TerminalTabView: View {
         guard let launchContext = self.appState.terminalLaunchContext else {
             return
         }
-        guard self.consumedLaunchContextID != launchContext.hostID else {
+        guard self.consumedLaunchRequestID != launchContext.id else {
             return
         }
 
         self.navigationPath = [launchContext.hostID]
-        self.consumedLaunchContextID = launchContext.hostID
+        self.consumedLaunchRequestID = launchContext.id
     }
 }
 
@@ -552,17 +552,11 @@ struct TerminalSessionView: View {
             self.pendingInitialCommand = self.initialCommand
             self.viewModel.connect(host: self.host, password: self.appState.remoteHostStore.password(for: self.host.id))
         }
+        .onChange(of: self.appState.terminalLaunchContext) {
+            self.consumeLaunchContextIfNeeded()
+        }
         .onChange(of: self.viewModel.state) {
-            guard self.viewModel.state == .connected,
-                  let pendingInitialCommand,
-                  !pendingInitialCommand.isEmpty else {
-                return
-            }
-            self.viewModel.send(command: pendingInitialCommand + "\n")
-            self.pendingInitialCommand = nil
-            if self.appState.terminalLaunchContext?.hostID == self.host.id {
-                self.appState.terminalLaunchContext = nil
-            }
+            self.sendPendingInitialCommandIfNeeded()
         }
         .onDisappear {
             self.viewModel.disconnect()
@@ -679,6 +673,31 @@ struct TerminalSessionView: View {
 
         self.viewModel.send(command: trimmed + "\n")
         self.commandInput = ""
+    }
+
+    private func consumeLaunchContextIfNeeded() {
+        guard let launchContext = self.appState.terminalLaunchContext,
+              launchContext.hostID == self.host.id else {
+            return
+        }
+        self.pendingInitialCommand = launchContext.initialCommand
+        self.sendPendingInitialCommandIfNeeded()
+    }
+
+    private func sendPendingInitialCommandIfNeeded() {
+        guard self.viewModel.state == .connected,
+              let pendingInitialCommand,
+              !pendingInitialCommand.isEmpty else {
+            return
+        }
+
+        self.viewModel.send(command: pendingInitialCommand + "\n")
+        self.pendingInitialCommand = nil
+
+        if let launchContext = self.appState.terminalLaunchContext,
+           launchContext.hostID == self.host.id {
+            self.appState.terminalLaunchContext = nil
+        }
     }
 
 }

@@ -685,7 +685,8 @@ enum AppRootTab: Hashable {
     case terminal
 }
 
-struct TerminalLaunchContext: Equatable {
+struct TerminalLaunchContext: Equatable, Identifiable {
+    let id: UUID = UUID()
     let hostID: UUID
     let projectPath: String?
     let threadID: String?
