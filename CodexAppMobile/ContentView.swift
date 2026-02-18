@@ -523,8 +523,8 @@ struct TerminalSessionView: View {
     @State private var didStartAutoConnect = false
     @FocusState private var isCommandFieldFocused: Bool
 
-    private var terminalText: String {
-        self.viewModel.output.isEmpty ? "No terminal output yet." : self.viewModel.output
+    private var hasTerminalOutput: Bool {
+        !self.viewModel.output.characters.isEmpty
     }
 
     var body: some View {
@@ -576,16 +576,23 @@ struct TerminalSessionView: View {
     private var outputPane: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
-                Text(verbatim: self.terminalText)
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(Color(red: 0.82, green: 0.95, blue: 0.88))
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(16)
-                    .textSelection(.enabled)
-                    .id("terminal-end")
+                if self.hasTerminalOutput {
+                    Text(self.viewModel.output)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(16)
+                        .textSelection(.enabled)
+                        .id("terminal-end")
+                } else {
+                    Text("No terminal output yet.")
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(Color(red: 0.82, green: 0.95, blue: 0.88))
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(16)
+                        .id("terminal-end")
+                }
             }
             .background(
                 Rectangle()
@@ -605,35 +612,45 @@ struct TerminalSessionView: View {
     }
 
     private var commandBar: some View {
-        HStack(spacing: 10) {
-            Text("›")
-                .font(.system(.body, design: .monospaced).weight(.semibold))
-                .foregroundStyle(Color(red: 0.37, green: 0.88, blue: 0.72))
+        HStack(alignment: .center, spacing: 10) {
+            HStack(spacing: 10) {
+                Text("›")
+                    .font(.system(.body, design: .monospaced).weight(.semibold))
+                    .foregroundStyle(Color(red: 0.37, green: 0.88, blue: 0.72))
 
-            TextField("Command", text: self.$commandInput)
-                .font(.system(.body, design: .monospaced))
-                .keyboardType(.default)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled(true)
-                .submitLabel(.send)
-                .focused(self.$isCommandFieldFocused)
-                .disabled(self.viewModel.state != .connected)
-                .onSubmit {
-                    self.sendCommand()
-                }
-                .padding(.vertical, 6)
-
-            if self.isCommandFieldFocused {
-                Button {
-                    self.isCommandFieldFocused = false
-                } label: {
-                    Image(systemName: "keyboard.chevron.compact.down")
-                }
-                .codexActionButtonStyle()
-                .accessibilityLabel("Hide Keyboard")
+                TextField("Command", text: self.$commandInput)
+                    .font(.system(.body, design: .monospaced))
+                    .keyboardType(.default)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled(true)
+                    .submitLabel(.send)
+                    .focused(self.$isCommandFieldFocused)
+                    .disabled(self.viewModel.state != .connected)
+                    .onSubmit {
+                        self.sendCommand()
+                    }
+                    .padding(.vertical, 6)
+                    .layoutPriority(1)
             }
+            .padding(.trailing, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .codexCardSurface()
+
+            Group {
+                if self.isCommandFieldFocused {
+                    Button {
+                        self.isCommandFieldFocused = false
+                    } label: {
+                        Image(systemName: "keyboard.chevron.compact.down")
+                    }
+                    .codexActionButtonStyle()
+                    .accessibilityLabel("Hide Keyboard")
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(width: 52, alignment: .trailing)
         }
-        .codexCardSurface()
     }
 
     private func sendCommand() {
@@ -679,6 +696,232 @@ private extension View {
     }
 }
 
+private struct ANSIRenderer {
+    private enum State {
+        case plain
+        case esc
+        case csi
+        case osc
+        case oscEsc
+        case stString
+        case stStringEsc
+    }
+
+    private struct TextStyle {
+        var isBold = false
+        var foregroundColor: Color?
+    }
+
+    private var state: State = .plain
+    private var csiParameters = ""
+    private var csiIntermediates = ""
+    private var style = TextStyle()
+
+    mutating func process(_ input: String) -> AttributedString {
+        var output = AttributedString()
+        var plainBuffer = ""
+
+        func flushPlainBuffer() {
+            guard !plainBuffer.isEmpty else { return }
+            var attributed = AttributedString(plainBuffer)
+            attributed.font = style.isBold
+                ? .system(.body, design: .monospaced).weight(.semibold)
+                : .system(.body, design: .monospaced)
+            attributed.foregroundColor = style.foregroundColor ?? Color(red: 0.82, green: 0.95, blue: 0.88)
+            output += attributed
+            plainBuffer.removeAll(keepingCapacity: true)
+        }
+
+        for scalar in input.unicodeScalars {
+            let value = scalar.value
+
+            switch self.state {
+            case .plain:
+                if value == 0x1B {
+                    flushPlainBuffer()
+                    self.state = .esc
+                    continue
+                }
+                if value == 0x9B {
+                    flushPlainBuffer()
+                    self.beginCSI()
+                    continue
+                }
+                if value == 0x9D {
+                    flushPlainBuffer()
+                    self.state = .osc
+                    continue
+                }
+                if value == 0x90 {
+                    flushPlainBuffer()
+                    self.state = .stString
+                    continue
+                }
+                if value < 0x20, value != 0x09, value != 0x0A, value != 0x0D {
+                    continue
+                }
+                if (0x80...0x9F).contains(value) {
+                    continue
+                }
+                plainBuffer.unicodeScalars.append(scalar)
+
+            case .esc:
+                switch scalar {
+                case "[":
+                    self.beginCSI()
+                case "]":
+                    self.state = .osc
+                case "P", "_", "^", "X":
+                    self.state = .stString
+                default:
+                    self.state = .plain
+                }
+
+            case .csi:
+                if (0x30...0x3F).contains(value) {
+                    self.csiParameters.unicodeScalars.append(scalar)
+                } else if (0x20...0x2F).contains(value) {
+                    self.csiIntermediates.unicodeScalars.append(scalar)
+                } else if (0x40...0x7E).contains(value) {
+                    self.handleCSI(final: scalar)
+                    self.state = .plain
+                } else if value == 0x1B {
+                    self.state = .esc
+                }
+
+            case .osc:
+                if value == 0x07 {
+                    self.state = .plain
+                } else if value == 0x1B {
+                    self.state = .oscEsc
+                }
+
+            case .oscEsc:
+                self.state = scalar == "\\" ? .plain : .osc
+
+            case .stString:
+                if value == 0x1B {
+                    self.state = .stStringEsc
+                }
+
+            case .stStringEsc:
+                self.state = scalar == "\\" ? .plain : .stString
+            }
+        }
+
+        flushPlainBuffer()
+        return output
+    }
+
+    private mutating func beginCSI() {
+        self.csiParameters = ""
+        self.csiIntermediates = ""
+        self.state = .csi
+    }
+
+    private mutating func handleCSI(final: UnicodeScalar) {
+        guard final == "m" else { return }
+
+        let params = self.parseCSIParameters(self.csiParameters)
+        var index = 0
+        while index < params.count {
+            let code = params[index]
+            switch code {
+            case 0:
+                self.style = TextStyle()
+            case 1:
+                self.style.isBold = true
+            case 22:
+                self.style.isBold = false
+            case 30...37:
+                self.style.foregroundColor = self.baseColor(for: code - 30, bright: false)
+            case 39:
+                self.style.foregroundColor = nil
+            case 90...97:
+                self.style.foregroundColor = self.baseColor(for: code - 90, bright: true)
+            case 38:
+                if index + 2 < params.count, params[index + 1] == 5 {
+                    self.style.foregroundColor = self.extended256Color(params[index + 2])
+                    index += 2
+                } else if index + 4 < params.count, params[index + 1] == 2 {
+                    let r = params[index + 2]
+                    let g = params[index + 3]
+                    let b = params[index + 4]
+                    self.style.foregroundColor = Color(
+                        red: Double(max(0, min(255, r))) / 255.0,
+                        green: Double(max(0, min(255, g))) / 255.0,
+                        blue: Double(max(0, min(255, b))) / 255.0
+                    )
+                    index += 4
+                }
+            default:
+                break
+            }
+            index += 1
+        }
+    }
+
+    private func parseCSIParameters(_ raw: String) -> [Int] {
+        guard !raw.isEmpty else { return [0] }
+        let params = raw.split(separator: ";", omittingEmptySubsequences: false).map { part -> Int in
+            Int(part) ?? 0
+        }
+        return params.isEmpty ? [0] : params
+    }
+
+    private func baseColor(for index: Int, bright: Bool) -> Color {
+        let palette: [(Double, Double, Double)] = bright
+            ? [
+                (0.50, 0.50, 0.50),
+                (1.00, 0.35, 0.35),
+                (0.45, 0.90, 0.45),
+                (1.00, 0.95, 0.45),
+                (0.50, 0.68, 1.00),
+                (1.00, 0.55, 1.00),
+                (0.55, 0.95, 0.95),
+                (1.00, 1.00, 1.00),
+            ]
+            : [
+                (0.00, 0.00, 0.00),
+                (0.75, 0.20, 0.20),
+                (0.20, 0.70, 0.20),
+                (0.78, 0.65, 0.20),
+                (0.25, 0.45, 0.78),
+                (0.70, 0.30, 0.70),
+                (0.25, 0.70, 0.70),
+                (0.80, 0.80, 0.80),
+            ]
+        let safeIndex = max(0, min(7, index))
+        let color = palette[safeIndex]
+        return Color(red: color.0, green: color.1, blue: color.2)
+    }
+
+    private func extended256Color(_ code: Int) -> Color {
+        let clamped = max(0, min(255, code))
+
+        if clamped < 16 {
+            if clamped < 8 {
+                return self.baseColor(for: clamped, bright: false)
+            }
+            return self.baseColor(for: clamped - 8, bright: true)
+        }
+
+        if clamped < 232 {
+            let offset = clamped - 16
+            let r = offset / 36
+            let g = (offset % 36) / 6
+            let b = offset % 6
+            let component: (Int) -> Double = { value in
+                value == 0 ? 0.0 : (Double(value) * 40.0 + 55.0) / 255.0
+            }
+            return Color(red: component(r), green: component(g), blue: component(b))
+        }
+
+        let gray = Double((clamped - 232) * 10 + 8) / 255.0
+        return Color(red: gray, green: gray, blue: gray)
+    }
+}
+
 final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
     enum State {
         case disconnected
@@ -687,27 +930,32 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
     }
 
     @Published var state: State = .disconnected
-    @Published var output: String = ""
+    @Published var output = AttributedString()
     @Published var isShowingError = false
     @Published var errorMessage = ""
 
     private let engine = SSHClientEngine()
     private let workerQueue = DispatchQueue(label: "com.example.CodexAppMobile.ssh-session")
     private var activeEndpoint = "unknown host"
+    private var ansiRenderer = ANSIRenderer()
+    private var suppressErrorsUntilNextConnect = false
+    private var didRenderDisconnectedMarker = true
 
     init() {
         self.engine.onOutput = { [weak self] text in
             guard let self else { return }
             self.dispatchMain { [self] in
-                self.output += text
+                self.appendRenderedOutput(text)
             }
         }
 
         self.engine.onConnected = { [weak self] in
             guard let self else { return }
             self.dispatchMain { [self] in
+                self.suppressErrorsUntilNextConnect = false
                 self.state = .connected
-                self.output += "\n[connected]\n"
+                self.didRenderDisconnectedMarker = false
+                self.appendRenderedOutput("\n[connected]\n")
             }
         }
 
@@ -715,7 +963,10 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
             guard let self else { return }
             self.dispatchMain { [self] in
                 self.state = .disconnected
-                self.output += "\n[disconnected]\n"
+                if !self.didRenderDisconnectedMarker {
+                    self.appendRenderedOutput("\n[disconnected]\n")
+                    self.didRenderDisconnectedMarker = true
+                }
             }
         }
 
@@ -723,6 +974,9 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
             guard let self else { return }
             self.dispatchMain { [self] in
                 self.state = .disconnected
+                guard !self.suppressErrorsUntilNextConnect else {
+                    return
+                }
                 self.errorMessage = SSHConnectionErrorFormatter.message(for: error, endpoint: self.activeEndpoint)
                 self.isShowingError = true
             }
@@ -743,6 +997,7 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
         }
 
         self.configureEndpoint(host: profile.host, port: profile.port)
+        self.suppressErrorsUntilNextConnect = false
         self.state = .connecting
 
         self.workerQueue.async { [weak self] in
@@ -766,6 +1021,7 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
     }
 
     func disconnect() {
+        self.suppressErrorsUntilNextConnect = true
         self.workerQueue.async { [weak self] in
             self?.engine.disconnect()
         }
@@ -792,6 +1048,12 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
         } else {
             DispatchQueue.main.async(execute: block)
         }
+    }
+
+    private func appendRenderedOutput(_ text: String) {
+        let rendered = self.ansiRenderer.process(text)
+        guard !rendered.characters.isEmpty else { return }
+        self.output += rendered
     }
 }
 
@@ -918,7 +1180,7 @@ final class SessionOutputHandler: ChannelInboundHandler {
     private let onClosed: () -> Void
     private let onError: (Error) -> Void
     private var pendingUTF8Data = Data()
-    private var terminalEscapeFilter = TerminalEscapeFilter()
+    private var terminalQueryResponder = TerminalQueryResponder()
 
     init(
         onOutput: @escaping (String) -> Void,
@@ -972,7 +1234,7 @@ final class SessionOutputHandler: ChannelInboundHandler {
         }
 
         self.pendingUTF8Data.append(contentsOf: chunk)
-        self.flushUTF8Buffer()
+        self.flushUTF8Buffer(context: context)
     }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
@@ -985,7 +1247,7 @@ final class SessionOutputHandler: ChannelInboundHandler {
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        self.flushRemainingUTF8BufferLossy()
+        self.flushRemainingUTF8BufferLossy(context: nil)
         self.onClosed()
     }
 
@@ -994,10 +1256,10 @@ final class SessionOutputHandler: ChannelInboundHandler {
         context.close(promise: nil)
     }
 
-    private func flushUTF8Buffer() {
+    private func flushUTF8Buffer(context: ChannelHandlerContext?) {
         while !self.pendingUTF8Data.isEmpty {
             if let text = String(data: self.pendingUTF8Data, encoding: .utf8) {
-                self.emitSanitized(text)
+                self.emitRaw(text, context: context)
                 self.pendingUTF8Data.removeAll(keepingCapacity: true)
                 return
             }
@@ -1005,7 +1267,7 @@ final class SessionOutputHandler: ChannelInboundHandler {
             let prefixLength = self.longestValidUTF8PrefixLength(in: self.pendingUTF8Data)
             if prefixLength > 0,
                let text = String(data: self.pendingUTF8Data.prefix(prefixLength), encoding: .utf8) {
-                self.emitSanitized(text)
+                self.emitRaw(text, context: context)
                 self.pendingUTF8Data.removeFirst(prefixLength)
                 continue
             }
@@ -1016,15 +1278,15 @@ final class SessionOutputHandler: ChannelInboundHandler {
             }
 
             let fallback = String(decoding: self.pendingUTF8Data.prefix(1), as: UTF8.self)
-            self.emitSanitized(fallback)
+            self.emitRaw(fallback, context: context)
             self.pendingUTF8Data.removeFirst()
         }
     }
 
-    private func flushRemainingUTF8BufferLossy() {
+    private func flushRemainingUTF8BufferLossy(context: ChannelHandlerContext?) {
         guard !self.pendingUTF8Data.isEmpty else { return }
         let remaining = String(decoding: self.pendingUTF8Data, as: UTF8.self)
-        self.emitSanitized(remaining)
+        self.emitRaw(remaining, context: context)
         self.pendingUTF8Data.removeAll(keepingCapacity: true)
     }
 
@@ -1046,29 +1308,40 @@ final class SessionOutputHandler: ChannelInboundHandler {
         return best
     }
 
-    private func emitSanitized(_ text: String) {
+    private func emitRaw(_ text: String, context: ChannelHandlerContext?) {
         guard !text.isEmpty else { return }
-        let sanitized = self.terminalEscapeFilter.process(text)
-        guard !sanitized.isEmpty else { return }
-        self.onOutput(sanitized)
+        if let context {
+            let responses = self.terminalQueryResponder.process(text)
+            for response in responses {
+                self.sendTerminalResponse(response, context: context)
+            }
+        } else {
+            _ = self.terminalQueryResponder.process(text)
+        }
+        self.onOutput(text)
+    }
+
+    private func sendTerminalResponse(_ response: String, context: ChannelHandlerContext) {
+        var buffer = context.channel.allocator.buffer(capacity: response.utf8.count)
+        buffer.writeString(response)
+        let data = SSHChannelData(type: .channel, data: .byteBuffer(buffer))
+        context.channel.writeAndFlush(data, promise: nil)
     }
 }
 
-private struct TerminalEscapeFilter {
+private struct TerminalQueryResponder {
     private enum State {
         case plain
         case esc
         case csi
-        case osc
-        case oscEsc
-        case stString
-        case stStringEsc
     }
 
     private var state: State = .plain
+    private var parameters = ""
+    private var intermediates = ""
 
-    mutating func process(_ input: String) -> String {
-        var output = String.UnicodeScalarView()
+    mutating func process(_ input: String) -> [String] {
+        var responses: [String] = []
 
         for scalar in input.unicodeScalars {
             let value = scalar.value
@@ -1080,73 +1353,70 @@ private struct TerminalEscapeFilter {
                     continue
                 }
                 if value == 0x9B {
-                    self.state = .csi
+                    self.beginCSI()
                     continue
                 }
-                if value == 0x9D {
-                    self.state = .osc
-                    continue
-                }
-                if value == 0x90 {
-                    self.state = .stString
-                    continue
-                }
-                if value < 0x20, value != 0x09, value != 0x0A, value != 0x0D {
-                    continue
-                }
-                if (0x80...0x9F).contains(value) {
-                    continue
-                }
-                output.append(scalar)
 
             case .esc:
-                switch scalar {
-                case "[":
-                    self.state = .csi
-                case "]":
-                    self.state = .osc
-                case "P", "_", "^", "X":
-                    self.state = .stString
-                default:
+                if scalar == "[" {
+                    self.beginCSI()
+                } else {
                     self.state = .plain
                 }
 
             case .csi:
-                if (0x40...0x7E).contains(value) {
+                if (0x30...0x3F).contains(value) {
+                    self.parameters.unicodeScalars.append(scalar)
+                } else if (0x20...0x2F).contains(value) {
+                    self.intermediates.unicodeScalars.append(scalar)
+                } else if (0x40...0x7E).contains(value) {
+                    if let response = self.response(final: scalar) {
+                        responses.append(response)
+                    }
                     self.state = .plain
                 } else if value == 0x1B {
                     self.state = .esc
                 }
-
-            case .osc:
-                if value == 0x07 {
-                    self.state = .plain
-                } else if value == 0x1B {
-                    self.state = .oscEsc
-                }
-
-            case .oscEsc:
-                if scalar == "\\" {
-                    self.state = .plain
-                } else {
-                    self.state = .osc
-                }
-
-            case .stString:
-                if value == 0x1B {
-                    self.state = .stStringEsc
-                }
-
-            case .stStringEsc:
-                if scalar == "\\" {
-                    self.state = .plain
-                } else {
-                    self.state = .stString
-                }
             }
         }
 
-        return String(output)
+        return responses
+    }
+
+    private mutating func beginCSI() {
+        self.parameters = ""
+        self.intermediates = ""
+        self.state = .csi
+    }
+
+    private func response(final: UnicodeScalar) -> String? {
+        switch final {
+        case "c":
+            if self.intermediates == ">" {
+                // Secondary Device Attributes response (xterm compatible)
+                return "\u{1B}[>0;10;1c"
+            }
+            // Primary Device Attributes response (VT100 with advanced video option)
+            if self.parameters.isEmpty || self.parameters == "0" {
+                return "\u{1B}[?1;2c"
+            }
+            return nil
+
+        case "n":
+            let normalized = self.parameters.replacingOccurrences(of: "?", with: "")
+            if normalized == "5" {
+                // Device Status Report: "OK"
+                return "\u{1B}[0n"
+            }
+            if normalized == "6" {
+                // Cursor position report (home position as minimal fallback)
+                return "\u{1B}[1;1R"
+            }
+            return nil
+
+        default:
+            return nil
+        }
     }
 }
 
