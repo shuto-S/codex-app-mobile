@@ -36,16 +36,27 @@
   - パスワードは `Keychain`（`PasswordVault`）で管理。
 - `ContentView` / `ConnectionEditorView`
   - 接続先の一覧・追加・編集・削除 UI。
+- `KnownHostsView` / `HostKeyStore`
+  - 保存済みホスト鍵の一覧表示・削除、接続画面からの再登録導線を提供。
 - `TerminalSessionView` / `TerminalSessionViewModel`
   - 接続・切断、コマンド送信、出力表示を担当。
+  - 接続エラーを種類別（認証失敗、接続拒否、タイムアウト等）に表示。
 - `SSHClientEngine`
   - `NIOTSConnectionBootstrap` + `NIOSSHHandler` で SSH セッションを開始。
   - session channel 作成後に PTY 要求 + shell 要求を送信。
 
 ## MVP で割り切った点（既知）
-- ホスト鍵検証は TOFU（初回保存・以降一致必須）。known_hosts 編集UIは未実装。
+- ホスト鍵検証は TOFU（初回保存・以降一致必須）。
 - 認証は `none` を先に試し、必要時のみパスワード認証にフォールバック（公開鍵認証UIは未実装）。
 - 端末表示はプレーンテキスト表示（ANSI 完全対応のエミュレーターではない）。
+
+## UI 方針（Liquid Glass 対応）
+- iOS 26 以上では `glassEffect(.regular, in:)` と `buttonStyle(.glass)` を利用。
+- iOS 26 未満では `secondarySystemBackground` + `bordered` ボタンに自動フォールバック。
+- 参照:
+  - <https://developer.apple.com/documentation/swiftui/view/glasseffect(_:in:)>
+  - <https://developer.apple.com/documentation/swiftui/primitivebuttonstyle/glass>
+  - <https://note.com/atsu25/n/n22b954115b8f>
 
 ## 実行・検証コマンド
 作業ディレクトリ: `/Users/shuto/src/private/codex-app-mobile`
@@ -58,6 +69,6 @@ make test-ios
 ```
 
 ## 次に強化する場合
-1. known_hosts 管理 UI（表示/削除/再登録）を追加する。
-2. 公開鍵認証（ED25519 等）と鍵管理 UI を追加する。
-3. 端末エミュレーション（ANSI, cursor, resize）を改善する。
+1. 公開鍵認証（ED25519 等）と鍵管理 UI を追加する。
+2. 端末エミュレーション（ANSI, cursor, resize）を改善する。
+3. known_hosts の検索/編集（別名付与、ピン留め）を追加する。

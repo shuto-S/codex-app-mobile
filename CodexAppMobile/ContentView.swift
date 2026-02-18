@@ -208,12 +208,41 @@ enum HostKeyStore {
         hosts.removeValue(forKey: endpoint)
         defaults.set(hosts, forKey: self.knownHostsKey)
     }
+
+    static func all(defaults: UserDefaults = .standard) -> [KnownHostRecord] {
+        let hosts = defaults.dictionary(forKey: self.knownHostsKey) as? [String: String] ?? [:]
+        return hosts
+            .map { KnownHostRecord(endpoint: $0.key, hostKey: $0.value) }
+            .sorted { $0.endpoint.localizedCaseInsensitiveCompare($1.endpoint) == .orderedAscending }
+    }
+}
+
+struct KnownHostRecord: Identifiable, Equatable {
+    let endpoint: String
+    let hostKey: String
+
+    var id: String { self.endpoint }
+
+    var algorithm: String {
+        self.hostKey.split(separator: " ").first.map(String.init) ?? "unknown"
+    }
+
+    var keyPreview: String {
+        let compact = self.hostKey.replacingOccurrences(of: " ", with: "")
+        if compact.count <= 26 {
+            return compact
+        }
+        let prefix = compact.prefix(10)
+        let suffix = compact.suffix(10)
+        return "\(prefix)...\(suffix)"
+    }
 }
 
 struct ContentView: View {
     @EnvironmentObject private var store: ConnectionStore
 
     @State private var isPresentingEditor = false
+    @State private var isPresentingKnownHosts = false
     @State private var editingProfile: SSHConnectionProfile?
     @State private var editingPassword = ""
 
@@ -259,6 +288,13 @@ struct ContentView: View {
             }
             .navigationTitle("Connections")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Known Hosts") {
+                        self.isPresentingKnownHosts = true
+                    }
+                    .codexActionButtonStyle()
+                }
+
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         self.editingProfile = nil
@@ -267,6 +303,7 @@ struct ContentView: View {
                     } label: {
                         Label("Add", systemImage: "plus")
                     }
+                    .codexActionButtonStyle()
                 }
             }
         }
@@ -278,6 +315,98 @@ struct ContentView: View {
                 self.store.upsert(profileID: self.editingProfile?.id, draft: draft)
             }
         }
+        .sheet(isPresented: self.$isPresentingKnownHosts) {
+            KnownHostsView()
+        }
+    }
+}
+
+struct KnownHostsView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var knownHosts = HostKeyStore.all()
+    @State private var isShowingDeleteAllConfirmation = false
+    @State private var statusMessage = ""
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if self.knownHosts.isEmpty {
+                    ContentUnavailableView(
+                        "No Known Hosts",
+                        systemImage: "lock.shield",
+                        description: Text("Host keys are saved after the first successful connection.")
+                    )
+                } else {
+                    List {
+                        ForEach(self.knownHosts) { record in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(record.endpoint)
+                                    .font(.headline)
+                                    .textSelection(.enabled)
+                                Text(record.algorithm)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(record.keyPreview)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button("Delete", role: .destructive) {
+                                    HostKeyStore.remove(for: record.endpoint)
+                                    self.reload()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Known Hosts")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") {
+                        self.dismiss()
+                    }
+                    .codexActionButtonStyle()
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Delete All", role: .destructive) {
+                        self.isShowingDeleteAllConfirmation = true
+                    }
+                    .disabled(self.knownHosts.isEmpty)
+                    .codexActionButtonStyle()
+                }
+            }
+            .confirmationDialog(
+                "Delete all stored host keys?",
+                isPresented: self.$isShowingDeleteAllConfirmation
+            ) {
+                Button("Delete All", role: .destructive) {
+                    self.knownHosts.forEach { HostKeyStore.remove(for: $0.endpoint) }
+                    self.reload()
+                    self.statusMessage = "All known hosts were removed."
+                }
+                Button("Cancel", role: .cancel) {}
+            }
+            .safeAreaInset(edge: .bottom) {
+                if !self.statusMessage.isEmpty {
+                    Text(self.statusMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                }
+            }
+            .onAppear {
+                self.reload()
+            }
+        }
+    }
+
+    private func reload() {
+        self.knownHosts = HostKeyStore.all()
     }
 }
 
@@ -348,12 +477,14 @@ struct ConnectionEditorView: View {
                     Button("Cancel") {
                         self.dismiss()
                     }
+                    .codexActionButtonStyle()
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Save") {
                         self.saveTapped()
                     }
+                    .codexActionButtonStyle()
                 }
             }
         }
@@ -392,6 +523,12 @@ struct TerminalSessionView: View {
     @State private var password = ""
     @State private var commandInput = ""
     @State private var didLoadPassword = false
+    @State private var hasStoredHostKey = false
+    @State private var hostKeyActionMessage = ""
+
+    private var endpointKey: String {
+        HostKeyStore.endpointKey(host: self.profile.host, port: self.profile.port)
+    }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -408,6 +545,11 @@ struct TerminalSessionView: View {
             guard !self.didLoadPassword else { return }
             self.didLoadPassword = true
             self.password = self.store.password(for: self.profile.id)
+            self.refreshHostKeyState()
+            self.viewModel.configureEndpoint(host: self.profile.host, port: self.profile.port)
+        }
+        .onChange(of: self.viewModel.state) { _, _ in
+            self.refreshHostKeyState()
         }
         .onDisappear {
             self.viewModel.disconnect()
@@ -431,6 +573,7 @@ struct TerminalSessionView: View {
                     Button("Disconnect", role: .destructive) {
                         self.viewModel.disconnect()
                     }
+                    .codexActionButtonStyle()
                 } else {
                     SecureField("Password", text: self.$password)
                         .textContentType(.password)
@@ -443,13 +586,35 @@ struct TerminalSessionView: View {
                         self.viewModel.connect(profile: self.profile, password: self.password)
                     }
                     .disabled(self.viewModel.state == .connecting)
+                    .codexActionButtonStyle()
                 }
             }
+
+            if self.hasStoredHostKey {
+                HStack {
+                    Label("Known host key is stored.", systemImage: "checkmark.shield")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Re-register Host Key") {
+                        HostKeyStore.remove(for: self.endpointKey)
+                        self.refreshHostKeyState()
+                        self.hostKeyActionMessage = "Stored host key removed. It will be re-registered on next connect."
+                        self.viewModel.disconnect()
+                    }
+                    .font(.caption)
+                    .codexActionButtonStyle()
+                }
+            }
+
+            if !self.hostKeyActionMessage.isEmpty {
+                Text(self.hostKeyActionMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
-        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .codexCardSurface()
     }
 
     private var outputPane: some View {
@@ -462,8 +627,7 @@ struct TerminalSessionView: View {
                     .textSelection(.enabled)
                     .id("terminal-end")
             }
-            .background(Color(.secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .codexCardSurface()
             .onChange(of: self.viewModel.output) { _, _ in
                 withAnimation(.linear(duration: 0.1)) {
                     proxy.scrollTo("terminal-end", anchor: .bottom)
@@ -487,7 +651,9 @@ struct TerminalSessionView: View {
                 self.sendCommand()
             }
             .disabled(self.viewModel.state != .connected || self.commandInput.isEmpty)
+            .codexActionButtonStyle()
         }
+        .codexCardSurface()
     }
 
     private func sendCommand() {
@@ -500,9 +666,46 @@ struct TerminalSessionView: View {
         self.viewModel.send(command: trimmed + "\n")
         self.commandInput = ""
     }
+
+    private func refreshHostKeyState() {
+        self.hasStoredHostKey = HostKeyStore.read(for: self.endpointKey) != nil
+        if !self.hasStoredHostKey {
+            self.hostKeyActionMessage = ""
+        }
+    }
 }
 
-final class TerminalSessionViewModel: ObservableObject {
+private struct CodexCardSurfaceModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .padding(12)
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        } else {
+            content
+                .padding(12)
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+}
+
+private extension View {
+    func codexCardSurface() -> some View {
+        self.modifier(CodexCardSurfaceModifier())
+    }
+
+    @ViewBuilder
+    func codexActionButtonStyle() -> some View {
+        if #available(iOS 26.0, *) {
+            self.buttonStyle(.glass)
+        } else {
+            self.buttonStyle(.bordered)
+        }
+    }
+}
+
+final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
     enum State {
         case disconnected
         case connecting
@@ -516,32 +719,38 @@ final class TerminalSessionViewModel: ObservableObject {
 
     private let engine = SSHClientEngine()
     private let workerQueue = DispatchQueue(label: "com.example.CodexAppMobile.ssh-session")
+    private var activeEndpoint = "unknown host"
 
     init() {
         self.engine.onOutput = { [weak self] text in
-            self?.dispatchMain {
-                self?.output += text
+            guard let self else { return }
+            self.dispatchMain { [self] in
+                self.output += text
             }
         }
 
         self.engine.onConnected = { [weak self] in
-            self?.dispatchMain {
-                self?.state = .connected
-                self?.output += "\n[connected]\n"
+            guard let self else { return }
+            self.dispatchMain { [self] in
+                self.state = .connected
+                self.output += "\n[connected]\n"
             }
         }
 
         self.engine.onDisconnected = { [weak self] in
-            self?.dispatchMain {
-                self?.state = .disconnected
-                self?.output += "\n[disconnected]\n"
+            guard let self else { return }
+            self.dispatchMain { [self] in
+                self.state = .disconnected
+                self.output += "\n[disconnected]\n"
             }
         }
 
-        self.engine.onError = { [weak self] message in
-            self?.dispatchMain {
-                self?.errorMessage = message
-                self?.isShowingError = true
+        self.engine.onError = { [weak self] error in
+            guard let self else { return }
+            self.dispatchMain { [self] in
+                self.state = .disconnected
+                self.errorMessage = SSHConnectionErrorFormatter.message(for: error, endpoint: self.activeEndpoint)
+                self.isShowingError = true
             }
         }
     }
@@ -550,11 +759,16 @@ final class TerminalSessionViewModel: ObservableObject {
         self.engine.disconnect()
     }
 
+    func configureEndpoint(host: String, port: Int) {
+        self.activeEndpoint = HostKeyStore.endpointKey(host: host, port: port)
+    }
+
     func connect(profile: SSHConnectionProfile, password: String) {
         guard self.state != .connecting else {
             return
         }
 
+        self.configureEndpoint(host: profile.host, port: profile.port)
         self.state = .connecting
 
         self.workerQueue.async { [weak self] in
@@ -570,7 +784,7 @@ final class TerminalSessionViewModel: ObservableObject {
             } catch {
                 self.dispatchMain {
                     self.state = .disconnected
-                    self.errorMessage = "Failed to connect: \(error.localizedDescription)"
+                    self.errorMessage = SSHConnectionErrorFormatter.message(for: error, endpoint: self.activeEndpoint)
                     self.isShowingError = true
                 }
             }
@@ -598,7 +812,7 @@ final class TerminalSessionViewModel: ObservableObject {
         }
     }
 
-    private func dispatchMain(_ block: @escaping () -> Void) {
+    private func dispatchMain(_ block: @escaping @Sendable () -> Void) {
         if Thread.isMainThread {
             block()
         } else {
@@ -607,7 +821,7 @@ final class TerminalSessionViewModel: ObservableObject {
     }
 }
 
-final class SSHClientEngine {
+final class SSHClientEngine: @unchecked Sendable {
     enum EngineError: Error {
         case missingSSHHandler
         case missingSessionChannel
@@ -615,10 +829,10 @@ final class SSHClientEngine {
         case notConnected
     }
 
-    var onOutput: ((String) -> Void)?
-    var onConnected: (() -> Void)?
-    var onDisconnected: (() -> Void)?
-    var onError: ((String) -> Void)?
+    var onOutput: (@Sendable (String) -> Void)?
+    var onConnected: (@Sendable () -> Void)?
+    var onDisconnected: (@Sendable () -> Void)?
+    var onError: (@Sendable (Error) -> Void)?
 
     private var eventLoopGroup: NIOTSEventLoopGroup?
     private var rootChannel: Channel?
@@ -630,13 +844,16 @@ final class SSHClientEngine {
         let group = NIOTSEventLoopGroup()
         self.eventLoopGroup = group
         let endpoint = HostKeyStore.endpointKey(host: host, port: port)
-        let userAuthDelegate = OptionalPasswordAuthenticationDelegate(username: username, password: password)
-        let hostKeyDelegate = TrustOnFirstUseHostKeysDelegate(endpoint: endpoint)
+        let onOutput = self.onOutput
+        let onDisconnected = self.onDisconnected
+        let onError = self.onError
 
         let bootstrap = NIOTSConnectionBootstrap(group: group)
             .channelInitializer { channel in
                 channel.eventLoop.makeCompletedFuture {
                     let sync = channel.pipeline.syncOperations
+                    let userAuthDelegate = OptionalPasswordAuthenticationDelegate(username: username, password: password)
+                    let hostKeyDelegate = TrustOnFirstUseHostKeysDelegate(endpoint: endpoint)
                     let sshHandler = NIOSSHHandler(
                         role: .client(
                             .init(
@@ -649,8 +866,8 @@ final class SSHClientEngine {
                     )
 
                     try sync.addHandler(sshHandler)
-                    try sync.addHandler(RootErrorHandler { [weak self] message in
-                        self?.onError?(message)
+                    try sync.addHandler(RootErrorHandler { error in
+                        onError?(error)
                     })
                 }
             }
@@ -659,11 +876,11 @@ final class SSHClientEngine {
             let root = try bootstrap.connect(host: host, port: port).wait()
             self.rootChannel = root
 
-            let sshHandler = try root.pipeline.handler(type: NIOSSHHandler.self).wait()
+            let sshHandler = try root.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
 
             let childChannelPromise = root.eventLoop.makePromise(of: Channel.self)
 
-            sshHandler.createChannel(childChannelPromise, channelType: .session) { [weak self] childChannel, channelType in
+            sshHandler.createChannel(childChannelPromise, channelType: .session) { childChannel, channelType in
                 guard channelType == .session else {
                     return childChannel.eventLoop.makeFailedFuture(EngineError.invalidChannelType)
                 }
@@ -671,14 +888,14 @@ final class SSHClientEngine {
                 return childChannel.eventLoop.makeCompletedFuture {
                     try childChannel.pipeline.syncOperations.addHandler(
                         SessionOutputHandler(
-                            onOutput: { [weak self] text in
-                                self?.onOutput?(text)
+                            onOutput: { text in
+                                onOutput?(text)
                             },
-                            onClosed: { [weak self] in
-                                self?.onDisconnected?()
+                            onClosed: {
+                                onDisconnected?()
                             },
-                            onError: { [weak self] message in
-                                self?.onError?(message)
+                            onError: { error in
+                                onError?(error)
                             }
                         )
                     )
@@ -726,12 +943,12 @@ final class SessionOutputHandler: ChannelInboundHandler {
 
     private let onOutput: (String) -> Void
     private let onClosed: () -> Void
-    private let onError: (String) -> Void
+    private let onError: (Error) -> Void
 
     init(
         onOutput: @escaping (String) -> Void,
         onClosed: @escaping () -> Void,
-        onError: @escaping (String) -> Void
+        onError: @escaping (Error) -> Void
     ) {
         self.onOutput = onOutput
         self.onClosed = onClosed
@@ -780,7 +997,7 @@ final class SessionOutputHandler: ChannelInboundHandler {
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        self.onError(error.localizedDescription)
+        self.onError(error)
         context.close(promise: nil)
     }
 }
@@ -788,15 +1005,54 @@ final class SessionOutputHandler: ChannelInboundHandler {
 final class RootErrorHandler: ChannelInboundHandler {
     typealias InboundIn = Any
 
-    private let onError: (String) -> Void
+    private let onError: (Error) -> Void
 
-    init(onError: @escaping (String) -> Void) {
+    init(onError: @escaping (Error) -> Void) {
         self.onError = onError
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        self.onError(error.localizedDescription)
+        self.onError(error)
         context.close(promise: nil)
+    }
+}
+
+enum SSHConnectionErrorFormatter {
+    static func message(for error: Error, endpoint: String) -> String {
+        if let validationError = error as? HostKeyValidationError {
+            return validationError.localizedDescription
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == NSPOSIXErrorDomain,
+           let posixCode = POSIXErrorCode(rawValue: Int32(nsError.code)) {
+            switch posixCode {
+            case .ECONNREFUSED:
+                return "Connection refused by \(endpoint). Ensure SSH server is running on the target host."
+            case .ETIMEDOUT:
+                return "Connection timed out for \(endpoint). Check VPN/Tailscale or network reachability."
+            case .EHOSTUNREACH, .ENETUNREACH:
+                return "Network is unreachable for \(endpoint)."
+            default:
+                break
+            }
+        }
+
+        let description = nsError.localizedDescription
+        let lowercased = description.lowercased()
+        if lowercased.contains("permission denied")
+            || lowercased.contains("authentication failed")
+            || lowercased.contains("unable to authenticate") {
+            return "Authentication failed for \(endpoint). Check username/password or server auth settings."
+        }
+        if lowercased.contains("host key") && lowercased.contains("mismatch") {
+            return "Host key mismatch for \(endpoint). Re-register the host key only if rotation is intentional."
+        }
+        if lowercased.contains("timed out") {
+            return "Connection timed out for \(endpoint)."
+        }
+
+        return "Connection failed for \(endpoint): \(description)"
     }
 }
 

@@ -52,4 +52,28 @@ final class CodexAppMobileTests: XCTestCase {
         HostKeyStore.remove(for: endpoint, defaults: defaults)
         XCTAssertNil(HostKeyStore.read(for: endpoint, defaults: defaults))
     }
+
+    func testHostKeyStoreAllReturnsSortedEndpoints() {
+        let suiteName = "HostKeyStoreAllTests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Failed to create temporary UserDefaults suite.")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        HostKeyStore.save("ssh-ed25519 KEY_A", for: "z.example.com:22", defaults: defaults)
+        HostKeyStore.save("ssh-ed25519 KEY_B", for: "a.example.com:22", defaults: defaults)
+
+        let endpoints = HostKeyStore.all(defaults: defaults).map(\.endpoint)
+        XCTAssertEqual(endpoints, ["a.example.com:22", "z.example.com:22"])
+    }
+
+    func testSSHConnectionErrorFormatterClassifiesConnectionRefused() {
+        let error = NSError(domain: NSPOSIXErrorDomain, code: Int(POSIXErrorCode.ECONNREFUSED.rawValue))
+        let message = SSHConnectionErrorFormatter.message(for: error, endpoint: "host:22")
+        XCTAssertTrue(message.contains("Connection refused"))
+        XCTAssertTrue(message.contains("host:22"))
+    }
 }
