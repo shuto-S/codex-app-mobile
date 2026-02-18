@@ -286,6 +286,8 @@ struct ContentView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Color(.systemBackground))
             .navigationTitle("Connections")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -444,20 +446,17 @@ struct ConnectionEditorView: View {
             Form {
                 Section("Basic") {
                     TextField("Name", text: self.$name)
-                        .textInputAutocapitalization(.never)
-                        .disableAutocorrection(true)
 
                     TextField("Host", text: self.$host)
                         .textInputAutocapitalization(.never)
-                        .disableAutocorrection(true)
-                        .keyboardType(.URL)
+                        .autocorrectionDisabled(true)
 
                     TextField("Port", text: self.$portText)
                         .keyboardType(.numberPad)
 
                     TextField("Username", text: self.$username)
                         .textInputAutocapitalization(.never)
-                        .disableAutocorrection(true)
+                        .autocorrectionDisabled(true)
                 }
 
                 Section("Authentication (Optional)") {
@@ -523,33 +522,40 @@ struct TerminalSessionView: View {
     @State private var password = ""
     @State private var commandInput = ""
     @State private var didLoadPassword = false
-    @State private var hasStoredHostKey = false
-    @State private var hostKeyActionMessage = ""
+    @FocusState private var isCommandFieldFocused: Bool
 
-    private var endpointKey: String {
-        HostKeyStore.endpointKey(host: self.profile.host, port: self.profile.port)
+    private var terminalText: String {
+        self.viewModel.output.isEmpty ? "No terminal output yet." : self.viewModel.output
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            connectionHeader
+        ZStack {
+            terminalBackground
 
             outputPane
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            commandBar
+            if self.viewModel.state != .connected {
+                VStack {
+                    connectPanel
+                    Spacer()
+                }
+                .padding(.top, 10)
+            }
         }
-        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            commandBar
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+        }
         .navigationTitle(self.profile.name)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             guard !self.didLoadPassword else { return }
             self.didLoadPassword = true
             self.password = self.store.password(for: self.profile.id)
-            self.refreshHostKeyState()
             self.viewModel.configureEndpoint(host: self.profile.host, port: self.profile.port)
-        }
-        .onChange(of: self.viewModel.state) { _, _ in
-            self.refreshHostKeyState()
         }
         .onDisappear {
             self.viewModel.disconnect()
@@ -559,99 +565,106 @@ struct TerminalSessionView: View {
         } message: {
             Text(self.viewModel.errorMessage)
         }
-    }
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if self.isCommandFieldFocused {
+                    Button {
+                        self.isCommandFieldFocused = false
+                    } label: {
+                        Image(systemName: "keyboard.chevron.compact.down")
+                    }
+                    .codexActionButtonStyle()
+                    .accessibilityLabel("Hide Keyboard")
+                }
 
-    private var connectionHeader: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("\(self.profile.username)@\(self.profile.host):\(self.profile.port)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-
-            HStack(spacing: 8) {
                 if self.viewModel.state == .connected {
                     Button("Disconnect", role: .destructive) {
                         self.viewModel.disconnect()
                     }
                     .codexActionButtonStyle()
-                } else {
-                    SecureField("Password", text: self.$password)
-                        .textContentType(.password)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .disabled(self.viewModel.state == .connecting)
-
-                    Button(self.viewModel.state == .connecting ? "Connecting..." : "Connect") {
-                        self.store.updatePassword(self.password, for: self.profile.id)
-                        self.viewModel.connect(profile: self.profile, password: self.password)
-                    }
-                    .disabled(self.viewModel.state == .connecting)
-                    .codexActionButtonStyle()
                 }
-            }
-
-            if self.hasStoredHostKey {
-                HStack {
-                    Label("Known host key is stored.", systemImage: "checkmark.shield")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Re-register Host Key") {
-                        HostKeyStore.remove(for: self.endpointKey)
-                        self.refreshHostKeyState()
-                        self.hostKeyActionMessage = "Stored host key removed. It will be re-registered on next connect."
-                        self.viewModel.disconnect()
-                    }
-                    .font(.caption)
-                    .codexActionButtonStyle()
-                }
-            }
-
-            if !self.hostKeyActionMessage.isEmpty {
-                Text(self.hostKeyActionMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .ignoresSafeArea(.container, edges: [.horizontal, .bottom])
+    }
+
+    private var terminalBackground: some View {
+        Color.black
+            .ignoresSafeArea()
+    }
+
+    private var connectPanel: some View {
+        HStack(spacing: 8) {
+            SecureField("Password", text: self.$password)
+                .textContentType(.password)
+                .textFieldStyle(.roundedBorder)
+                .submitLabel(.go)
+                .disabled(self.viewModel.state == .connecting)
+
+            Button(self.viewModel.state == .connecting ? "Connecting..." : "Connect") {
+                self.store.updatePassword(self.password, for: self.profile.id)
+                self.viewModel.connect(profile: self.profile, password: self.password)
+            }
+            .codexActionButtonStyle()
+            .disabled(self.viewModel.state == .connecting)
+        }
         .codexCardSurface()
+        .padding(.horizontal, 12)
     }
 
     private var outputPane: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                Text(self.viewModel.output.isEmpty ? "No terminal output yet." : self.viewModel.output)
+            ScrollView([.vertical, .horizontal]) {
+                Text(verbatim: self.terminalText)
                     .font(.system(.body, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
+                    .foregroundStyle(Color(red: 0.82, green: 0.95, blue: 0.88))
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(16)
                     .textSelection(.enabled)
                     .id("terminal-end")
             }
-            .codexCardSurface()
+            .background(
+                Rectangle()
+                    .fill(Color(red: 0.06, green: 0.08, blue: 0.11))
+            )
             .onChange(of: self.viewModel.output) { _, _ in
                 withAnimation(.linear(duration: 0.1)) {
-                    proxy.scrollTo("terminal-end", anchor: .bottom)
+                    proxy.scrollTo("terminal-end")
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
+            .onTapGesture {
+                self.isCommandFieldFocused = false
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var commandBar: some View {
-        HStack(spacing: 8) {
-            TextField("Command", text: self.$commandInput)
+        HStack(spacing: 10) {
+            Text("›")
+                .font(.system(.body, design: .monospaced).weight(.semibold))
+                .foregroundStyle(Color(red: 0.37, green: 0.88, blue: 0.72))
+
+            TextField("Command", text: self.$commandInput, axis: .vertical)
                 .font(.system(.body, design: .monospaced))
+                .keyboardType(.default)
                 .textInputAutocapitalization(.never)
-                .disableAutocorrection(true)
+                .autocorrectionDisabled(true)
+                .submitLabel(.send)
+                .focused(self.$isCommandFieldFocused)
                 .disabled(self.viewModel.state != .connected)
                 .onSubmit {
                     self.sendCommand()
                 }
+                .padding(.vertical, 6)
 
             Button("Send") {
                 self.sendCommand()
             }
-            .disabled(self.viewModel.state != .connected || self.commandInput.isEmpty)
             .codexActionButtonStyle()
+            .disabled(self.viewModel.state != .connected || self.commandInput.isEmpty)
         }
         .codexCardSurface()
     }
@@ -667,12 +680,6 @@ struct TerminalSessionView: View {
         self.commandInput = ""
     }
 
-    private func refreshHostKeyState() {
-        self.hasStoredHostKey = HostKeyStore.read(for: self.endpointKey) != nil
-        if !self.hasStoredHostKey {
-            self.hostKeyActionMessage = ""
-        }
-    }
 }
 
 private struct CodexCardSurfaceModifier: ViewModifier {
@@ -876,33 +883,32 @@ final class SSHClientEngine: @unchecked Sendable {
             let root = try bootstrap.connect(host: host, port: port).wait()
             self.rootChannel = root
 
-            let sshHandler = try root.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
+            let sessionChannelFuture = root.pipeline.handler(type: NIOSSHHandler.self).flatMap { sshHandler in
+                let childChannelPromise = root.eventLoop.makePromise(of: Channel.self)
 
-            let childChannelPromise = root.eventLoop.makePromise(of: Channel.self)
+                sshHandler.createChannel(childChannelPromise, channelType: .session) { childChannel, channelType in
+                    guard channelType == .session else {
+                        return childChannel.eventLoop.makeFailedFuture(EngineError.invalidChannelType)
+                    }
 
-            sshHandler.createChannel(childChannelPromise, channelType: .session) { childChannel, channelType in
-                guard channelType == .session else {
-                    return childChannel.eventLoop.makeFailedFuture(EngineError.invalidChannelType)
-                }
-
-                return childChannel.eventLoop.makeCompletedFuture {
-                    try childChannel.pipeline.syncOperations.addHandler(
-                        SessionOutputHandler(
-                            onOutput: { text in
-                                onOutput?(text)
-                            },
-                            onClosed: {
-                                onDisconnected?()
-                            },
-                            onError: { error in
-                                onError?(error)
-                            }
-                        )
+                    let handler = SessionOutputHandler(
+                        onOutput: { text in
+                            onOutput?(text)
+                        },
+                        onClosed: {
+                            onDisconnected?()
+                        },
+                        onError: { error in
+                            onError?(error)
+                        }
                     )
+                    return childChannel.pipeline.addHandler(handler)
                 }
+
+                return childChannelPromise.futureResult
             }
 
-            self.sessionChannel = try childChannelPromise.futureResult.wait()
+            self.sessionChannel = try sessionChannelFuture.wait()
             self.onConnected?()
         } catch {
             self.disconnect()
@@ -944,6 +950,7 @@ final class SessionOutputHandler: ChannelInboundHandler {
     private let onOutput: (String) -> Void
     private let onClosed: () -> Void
     private let onError: (Error) -> Void
+    private var pendingUTF8Data = Data()
 
     init(
         onOutput: @escaping (String) -> Void,
@@ -956,6 +963,16 @@ final class SessionOutputHandler: ChannelInboundHandler {
     }
 
     func channelActive(context: ChannelHandlerContext) {
+        let langRequest = SSHChannelRequestEvent.EnvironmentRequest(
+            wantReply: false,
+            name: "LANG",
+            value: "en_US.UTF-8"
+        )
+        let lcCTypeRequest = SSHChannelRequestEvent.EnvironmentRequest(
+            wantReply: false,
+            name: "LC_CTYPE",
+            value: "en_US.UTF-8"
+        )
         let ptyRequest = SSHChannelRequestEvent.PseudoTerminalRequest(
             wantReply: false,
             term: "xterm-256color",
@@ -966,6 +983,8 @@ final class SessionOutputHandler: ChannelInboundHandler {
             terminalModes: SSHTerminalModes([:])
         )
 
+        context.triggerUserOutboundEvent(langRequest, promise: nil)
+        context.triggerUserOutboundEvent(lcCTypeRequest, promise: nil)
         context.triggerUserOutboundEvent(ptyRequest, promise: nil)
         context.triggerUserOutboundEvent(SSHChannelRequestEvent.ShellRequest(wantReply: false), promise: nil)
     }
@@ -973,14 +992,19 @@ final class SessionOutputHandler: ChannelInboundHandler {
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let channelData = self.unwrapInboundIn(data)
 
-        guard case .byteBuffer(var buffer) = channelData.data,
-              let text = buffer.readString(length: buffer.readableBytes),
-              !text.isEmpty
+        guard case .byteBuffer(var buffer) = channelData.data else {
+            return
+        }
+
+        let readableBytes = buffer.readableBytes
+        guard readableBytes > 0,
+              let chunk = buffer.readBytes(length: readableBytes)
         else {
             return
         }
 
-        self.onOutput(text)
+        self.pendingUTF8Data.append(contentsOf: chunk)
+        self.flushUTF8Buffer()
     }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
@@ -993,12 +1017,73 @@ final class SessionOutputHandler: ChannelInboundHandler {
     }
 
     func channelInactive(context: ChannelHandlerContext) {
+        self.flushRemainingUTF8BufferLossy()
         self.onClosed()
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         self.onError(error)
         context.close(promise: nil)
+    }
+
+    private func flushUTF8Buffer() {
+        while !self.pendingUTF8Data.isEmpty {
+            if let text = String(data: self.pendingUTF8Data, encoding: .utf8) {
+                if !text.isEmpty {
+                    self.onOutput(text)
+                }
+                self.pendingUTF8Data.removeAll(keepingCapacity: true)
+                return
+            }
+
+            let prefixLength = self.longestValidUTF8PrefixLength(in: self.pendingUTF8Data)
+            if prefixLength > 0,
+               let text = String(data: self.pendingUTF8Data.prefix(prefixLength), encoding: .utf8) {
+                if !text.isEmpty {
+                    self.onOutput(text)
+                }
+                self.pendingUTF8Data.removeFirst(prefixLength)
+                continue
+            }
+
+            // UTF-8 は最大 4 バイトのため、4 バイト以下は次チャンクを待つ。
+            if self.pendingUTF8Data.count <= 4 {
+                return
+            }
+
+            let fallback = String(decoding: self.pendingUTF8Data.prefix(1), as: UTF8.self)
+            if !fallback.isEmpty {
+                self.onOutput(fallback)
+            }
+            self.pendingUTF8Data.removeFirst()
+        }
+    }
+
+    private func flushRemainingUTF8BufferLossy() {
+        guard !self.pendingUTF8Data.isEmpty else { return }
+        let remaining = String(decoding: self.pendingUTF8Data, as: UTF8.self)
+        if !remaining.isEmpty {
+            self.onOutput(remaining)
+        }
+        self.pendingUTF8Data.removeAll(keepingCapacity: true)
+    }
+
+    private func longestValidUTF8PrefixLength(in data: Data) -> Int {
+        var low = 1
+        var high = data.count
+        var best = 0
+
+        while low <= high {
+            let mid = (low + high) / 2
+            if String(data: data.prefix(mid), encoding: .utf8) != nil {
+                best = mid
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+
+        return best
     }
 }
 

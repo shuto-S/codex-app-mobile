@@ -1,6 +1,6 @@
 # AGENTS.md
 
-このファイルは `/Users/shuto/src/private/codex-app-mobile` の開発方針です。  
+このファイルは `/Users/shuto/src/private/codex-app-mobile` の開発方針です。
 目的は「動くものを最短で作る」「AIで継続開発しやすい状態を保つ」ことです。
 
 ## 1. 前提
@@ -50,3 +50,13 @@
 - 変更内容をファイル単位で説明できる。
 - 実行した検証コマンドと結果を共有できる。
 - 未実施の検証があれば、理由を明記する。
+
+## 7. iOS デザイン方針（URL付き）
+
+- デザイン判断は Apple の一次情報を優先する（HIG）: https://developer.apple.com/jp/design/human-interface-guidelines/
+- 画面は「機能ミニマム」を基本とし、不要な装飾・情報・操作導線を増やさない。
+- レイアウトは Safe Area を前提に設計し、背景とコンテンツの適用範囲を分離する: https://developer.apple.com/documentation/uikit/positioning-content-relative-to-the-safe-area
+- ナビゲーションやツールバーは標準コンポーネントを優先し、独自挙動は必要最小限にする: https://developer.apple.com/documentation/swiftui/navigationstack
+- Liquid Glass は利用可能OSで優先採用し、古いOSでは標準スタイルへフォールバックする: https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass
+- テキスト入力は iOS 標準キーボードを前提とし、必要な場合のみ自動補正・自動大文字化を無効化する: https://developer.apple.com/documentation/uikit/uitextinputtraits
+- キーボード表示中でも主要操作を阻害しない（閉じる導線、スクロールでの dismiss 等）: https://developer.apple.com/documentation/swiftui/view/scrolldismisseskeyboard(_:)
