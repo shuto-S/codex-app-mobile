@@ -8,7 +8,6 @@ struct CodexAppMobileApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(self.appState)
-                .environmentObject(self.appState.fallbackConnectionStore)
         }
     }
 }

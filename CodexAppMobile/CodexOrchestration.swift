@@ -17,7 +17,7 @@ enum TransportKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum ConnectionAuthMode: String, Codable, CaseIterable, Identifiable {
+enum HostAuthMode: String, Codable, CaseIterable, Identifiable {
     case remotePCManaged
 
     var id: String { self.rawValue }
@@ -52,7 +52,7 @@ enum CodexApprovalPolicy: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-struct RemoteConnection: Identifiable, Codable, Equatable {
+struct RemoteHost: Identifiable, Codable, Equatable {
     let id: UUID
     var name: String
     var host: String
@@ -60,7 +60,7 @@ struct RemoteConnection: Identifiable, Codable, Equatable {
     var username: String
     var appServerURL: String
     var preferredTransport: TransportKind
-    var authMode: ConnectionAuthMode
+    var authMode: HostAuthMode
     var createdAt: Date
     var updatedAt: Date
 
@@ -72,7 +72,7 @@ struct RemoteConnection: Identifiable, Codable, Equatable {
         username: String,
         appServerURL: String,
         preferredTransport: TransportKind = .appServerWS,
-        authMode: ConnectionAuthMode = .remotePCManaged,
+        authMode: HostAuthMode = .remotePCManaged,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -94,17 +94,17 @@ struct RemoteConnection: Identifiable, Codable, Equatable {
     }
 }
 
-struct RemoteConnectionDraft {
+struct RemoteHostDraft {
     var name: String
     var host: String
     var sshPort: Int
     var username: String
     var appServerURL: String
     var preferredTransport: TransportKind
-    var authMode: ConnectionAuthMode
+    var authMode: HostAuthMode
     var password: String
 
-    static let empty = RemoteConnectionDraft(
+    static let empty = RemoteHostDraft(
         name: "",
         host: "",
         sshPort: 22,
@@ -141,7 +141,7 @@ struct RemoteConnectionDraft {
         username: String,
         appServerURL: String,
         preferredTransport: TransportKind,
-        authMode: ConnectionAuthMode,
+        authMode: HostAuthMode,
         password: String
     ) {
         self.name = name
@@ -154,21 +154,21 @@ struct RemoteConnectionDraft {
         self.password = password
     }
 
-    init(connection: RemoteConnection, password: String) {
-        self.name = connection.name
-        self.host = connection.host
-        self.sshPort = connection.sshPort
-        self.username = connection.username
-        self.appServerURL = connection.appServerURL
-        self.preferredTransport = connection.preferredTransport
-        self.authMode = connection.authMode
+    init(host: RemoteHost, password: String) {
+        self.name = host.name
+        self.host = host.host
+        self.sshPort = host.sshPort
+        self.username = host.username
+        self.appServerURL = host.appServerURL
+        self.preferredTransport = host.preferredTransport
+        self.authMode = host.authMode
         self.password = password
     }
 }
 
 struct ProjectWorkspace: Identifiable, Codable, Equatable {
     let id: UUID
-    var connectionID: UUID
+    var hostID: UUID
     var name: String
     var remotePath: String
     var defaultModel: String
@@ -178,7 +178,7 @@ struct ProjectWorkspace: Identifiable, Codable, Equatable {
 
     init(
         id: UUID = UUID(),
-        connectionID: UUID,
+        hostID: UUID,
         name: String,
         remotePath: String,
         defaultModel: String = "",
@@ -187,7 +187,7 @@ struct ProjectWorkspace: Identifiable, Codable, Equatable {
         updatedAt: Date = Date()
     ) {
         self.id = id
-        self.connectionID = connectionID
+        self.hostID = hostID
         self.name = name
         self.remotePath = remotePath
         self.defaultModel = defaultModel
@@ -199,6 +199,46 @@ struct ProjectWorkspace: Identifiable, Codable, Equatable {
     var displayName: String {
         let trimmed = self.name.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? self.remotePath : trimmed
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case hostID
+        case connectionID
+        case name
+        case remotePath
+        case defaultModel
+        case defaultApprovalPolicy
+        case createdAt
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(UUID.self, forKey: .id)
+        if let hostID = try container.decodeIfPresent(UUID.self, forKey: .hostID) {
+            self.hostID = hostID
+        } else {
+            self.hostID = try container.decode(UUID.self, forKey: .connectionID)
+        }
+        self.name = try container.decode(String.self, forKey: .name)
+        self.remotePath = try container.decode(String.self, forKey: .remotePath)
+        self.defaultModel = try container.decode(String.self, forKey: .defaultModel)
+        self.defaultApprovalPolicy = try container.decode(CodexApprovalPolicy.self, forKey: .defaultApprovalPolicy)
+        self.createdAt = try container.decode(Date.self, forKey: .createdAt)
+        self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.id, forKey: .id)
+        try container.encode(self.hostID, forKey: .hostID)
+        try container.encode(self.name, forKey: .name)
+        try container.encode(self.remotePath, forKey: .remotePath)
+        try container.encode(self.defaultModel, forKey: .defaultModel)
+        try container.encode(self.defaultApprovalPolicy, forKey: .defaultApprovalPolicy)
+        try container.encode(self.createdAt, forKey: .createdAt)
+        try container.encode(self.updatedAt, forKey: .updatedAt)
     }
 }
 
@@ -243,12 +283,67 @@ struct CodexThreadSummary: Identifiable, Codable, Equatable {
     var id: String { "\(self.workspaceID.uuidString):\(self.threadID)" }
 
     var threadID: String
-    var connectionID: UUID
+    var hostID: UUID
     var workspaceID: UUID
     var preview: String
     var updatedAt: Date
     var archived: Bool
     var cwd: String
+
+    private enum CodingKeys: String, CodingKey {
+        case threadID
+        case hostID
+        case connectionID
+        case workspaceID
+        case preview
+        case updatedAt
+        case archived
+        case cwd
+    }
+
+    init(
+        threadID: String,
+        hostID: UUID,
+        workspaceID: UUID,
+        preview: String,
+        updatedAt: Date,
+        archived: Bool,
+        cwd: String
+    ) {
+        self.threadID = threadID
+        self.hostID = hostID
+        self.workspaceID = workspaceID
+        self.preview = preview
+        self.updatedAt = updatedAt
+        self.archived = archived
+        self.cwd = cwd
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.threadID = try container.decode(String.self, forKey: .threadID)
+        if let hostID = try container.decodeIfPresent(UUID.self, forKey: .hostID) {
+            self.hostID = hostID
+        } else {
+            self.hostID = try container.decode(UUID.self, forKey: .connectionID)
+        }
+        self.workspaceID = try container.decode(UUID.self, forKey: .workspaceID)
+        self.preview = try container.decode(String.self, forKey: .preview)
+        self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        self.archived = try container.decode(Bool.self, forKey: .archived)
+        self.cwd = try container.decode(String.self, forKey: .cwd)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.threadID, forKey: .threadID)
+        try container.encode(self.hostID, forKey: .hostID)
+        try container.encode(self.workspaceID, forKey: .workspaceID)
+        try container.encode(self.preview, forKey: .preview)
+        try container.encode(self.updatedAt, forKey: .updatedAt)
+        try container.encode(self.archived, forKey: .archived)
+        try container.encode(self.cwd, forKey: .cwd)
+    }
 }
 
 enum CodexTurnItem: Equatable, Identifiable {
@@ -285,80 +380,81 @@ struct CodexThreadDetail: Equatable {
     let turns: [CodexTurn]
 }
 
-protocol ConnectionCredentialStore {
-    func save(password: String, for connectionID: UUID)
-    func readPassword(for connectionID: UUID) -> String?
-    func deletePassword(for connectionID: UUID)
+protocol HostCredentialStore {
+    func save(password: String, for hostID: UUID)
+    func readPassword(for hostID: UUID) -> String?
+    func deletePassword(for hostID: UUID)
 }
 
-struct KeychainConnectionCredentialStore: ConnectionCredentialStore {
-    func save(password: String, for connectionID: UUID) {
-        PasswordVault.save(password: password, for: connectionID)
+struct KeychainHostCredentialStore: HostCredentialStore {
+    func save(password: String, for hostID: UUID) {
+        PasswordVault.save(password: password, for: hostID)
     }
 
-    func readPassword(for connectionID: UUID) -> String? {
-        PasswordVault.readPassword(for: connectionID)
+    func readPassword(for hostID: UUID) -> String? {
+        PasswordVault.readPassword(for: hostID)
     }
 
-    func deletePassword(for connectionID: UUID) {
-        PasswordVault.deletePassword(for: connectionID)
+    func deletePassword(for hostID: UUID) {
+        PasswordVault.deletePassword(for: hostID)
     }
 }
 
-final class InMemoryConnectionCredentialStore: ConnectionCredentialStore {
+final class InMemoryHostCredentialStore: HostCredentialStore {
     private var values: [UUID: String] = [:]
 
-    func save(password: String, for connectionID: UUID) {
-        self.values[connectionID] = password
+    func save(password: String, for hostID: UUID) {
+        self.values[hostID] = password
     }
 
-    func readPassword(for connectionID: UUID) -> String? {
-        self.values[connectionID]
+    func readPassword(for hostID: UUID) -> String? {
+        self.values[hostID]
     }
 
-    func deletePassword(for connectionID: UUID) {
-        self.values.removeValue(forKey: connectionID)
+    func deletePassword(for hostID: UUID) {
+        self.values.removeValue(forKey: hostID)
     }
 }
 
 @MainActor
-final class RemoteConnectionStore: ObservableObject {
-    @Published private(set) var connections: [RemoteConnection] = []
+final class RemoteHostStore: ObservableObject {
+    @Published private(set) var hosts: [RemoteHost] = []
 
     private let defaults: UserDefaults
-    private let credentialStore: ConnectionCredentialStore
+    private let credentialStore: HostCredentialStore
 
-    private let connectionsKey = "codex.remote.connections.v1"
+    private let hostsKey = "codex.remote.hosts.v1"
+    private let legacyRemoteHostsKey = "codex.remote.connections.v1"
     private let legacyProfilesKey = "ssh.connection.profiles.v1"
 
     init(
         defaults: UserDefaults = .standard,
-        credentialStore: ConnectionCredentialStore = KeychainConnectionCredentialStore()
+        credentialStore: HostCredentialStore = KeychainHostCredentialStore()
     ) {
         self.defaults = defaults
         self.credentialStore = credentialStore
-        self.loadConnections()
+        self.loadHosts()
     }
 
-    func upsert(connectionID: UUID?, draft: RemoteConnectionDraft) {
+    func upsert(hostID: UUID?, draft: RemoteHostDraft) {
         let trimmedName = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedHost = draft.host.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedUser = draft.username.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedURL = draft.appServerURL.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if let connectionID,
-           let index = self.connections.firstIndex(where: { $0.id == connectionID }) {
-            self.connections[index].name = trimmedName
-            self.connections[index].host = trimmedHost
-            self.connections[index].sshPort = draft.sshPort
-            self.connections[index].username = trimmedUser
-            self.connections[index].appServerURL = trimmedURL
-            self.connections[index].preferredTransport = draft.preferredTransport
-            self.connections[index].authMode = draft.authMode
-            self.connections[index].updatedAt = Date()
-            self.credentialStore.save(password: draft.password, for: connectionID)
+        if let hostID,
+           let index = self.hosts.firstIndex(where: { $0.id == hostID }) {
+            self.hosts[index].name = trimmedName
+            self.hosts[index].host = trimmedHost
+            self.hosts[index].sshPort = draft.sshPort
+            self.hosts[index].username = trimmedUser
+            self.hosts[index].appServerURL = trimmedURL
+            self.hosts[index].preferredTransport = draft.preferredTransport
+            self.hosts[index].authMode = draft.authMode
+            self.hosts[index].updatedAt = Date()
+            self.credentialStore.save(password: draft.password, for: hostID)
         } else {
-            let connection = RemoteConnection(
+            let hostRecord = RemoteHost(
                 name: trimmedName,
                 host: trimmedHost,
                 sshPort: draft.sshPort,
@@ -367,69 +463,76 @@ final class RemoteConnectionStore: ObservableObject {
                 preferredTransport: draft.preferredTransport,
                 authMode: draft.authMode
             )
-            self.connections.append(connection)
-            self.credentialStore.save(password: draft.password, for: connection.id)
+            self.hosts.append(hostRecord)
+            self.credentialStore.save(password: draft.password, for: hostRecord.id)
         }
 
         self.sortAndPersist()
     }
 
-    func delete(connectionID: UUID) {
-        self.connections.removeAll(where: { $0.id == connectionID })
-        self.credentialStore.deletePassword(for: connectionID)
-        self.persistConnections()
+    func delete(hostID: UUID) {
+        self.hosts.removeAll(where: { $0.id == hostID })
+        self.credentialStore.deletePassword(for: hostID)
+        self.persistHosts()
     }
 
-    func password(for connectionID: UUID) -> String {
-        self.credentialStore.readPassword(for: connectionID) ?? ""
+    func password(for hostID: UUID) -> String {
+        self.credentialStore.readPassword(for: hostID) ?? ""
     }
 
-    func updatePassword(_ password: String, for connectionID: UUID) {
-        self.credentialStore.save(password: password, for: connectionID)
+    func updatePassword(_ password: String, for hostID: UUID) {
+        self.credentialStore.save(password: password, for: hostID)
     }
 
-    private func loadConnections() {
-        if let data = self.defaults.data(forKey: self.connectionsKey),
-           let decoded = try? JSONDecoder().decode([RemoteConnection].self, from: data) {
-            self.connections = decoded
-            self.connections.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    private func loadHosts() {
+        if let data = self.defaults.data(forKey: self.hostsKey),
+           let decoded = try? JSONDecoder().decode([RemoteHost].self, from: data) {
+            self.hosts = decoded
+            self.hosts.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             return
         }
 
-        self.connections = self.migrateFromLegacyProfilesIfNeeded()
+        if let data = self.defaults.data(forKey: self.legacyRemoteHostsKey),
+           let decoded = try? JSONDecoder().decode([RemoteHost].self, from: data) {
+            self.hosts = decoded
+            self.sortAndPersist()
+            return
+        }
+
+        self.hosts = self.migrateFromLegacyProfilesIfNeeded()
         self.sortAndPersist()
     }
 
-    private func migrateFromLegacyProfilesIfNeeded() -> [RemoteConnection] {
+    private func migrateFromLegacyProfilesIfNeeded() -> [RemoteHost] {
         guard let data = self.defaults.data(forKey: self.legacyProfilesKey),
-              let legacyProfiles = try? JSONDecoder().decode([SSHConnectionProfile].self, from: data)
+              let legacyProfiles = try? JSONDecoder().decode([SSHHostProfile].self, from: data)
         else {
             return []
         }
 
         return legacyProfiles.map { profile in
-            RemoteConnection(
+            RemoteHost(
                 id: profile.id,
                 name: profile.name,
                 host: profile.host,
                 sshPort: profile.port,
                 username: profile.username,
-                appServerURL: RemoteConnection.defaultAppServerURL(host: profile.host)
+                appServerURL: RemoteHost.defaultAppServerURL(host: profile.host)
             )
         }
     }
 
     private func sortAndPersist() {
-        self.connections.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        self.persistConnections()
+        self.hosts.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        self.persistHosts()
     }
 
-    private func persistConnections() {
-        guard let data = try? JSONEncoder().encode(self.connections) else {
-            self.defaults.removeObject(forKey: self.connectionsKey)
+    private func persistHosts() {
+        guard let data = try? JSONEncoder().encode(self.hosts) else {
+            self.defaults.removeObject(forKey: self.hostsKey)
             return
         }
-        self.defaults.set(data, forKey: self.connectionsKey)
+        self.defaults.set(data, forKey: self.hostsKey)
     }
 }
 
@@ -445,19 +548,19 @@ final class ProjectStore: ObservableObject {
         self.loadWorkspaces()
     }
 
-    func workspaces(for connectionID: UUID?) -> [ProjectWorkspace] {
-        guard let connectionID else { return [] }
-        return self.workspaces.filter { $0.connectionID == connectionID }
+    func workspaces(for hostID: UUID?) -> [ProjectWorkspace] {
+        guard let hostID else { return [] }
+        return self.workspaces.filter { $0.hostID == hostID }
     }
 
-    func upsert(workspaceID: UUID?, connectionID: UUID, draft: ProjectWorkspaceDraft) {
+    func upsert(workspaceID: UUID?, hostID: UUID, draft: ProjectWorkspaceDraft) {
         let trimmedPath = draft.remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedName = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedModel = draft.defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if let workspaceID,
            let index = self.workspaces.firstIndex(where: { $0.id == workspaceID }) {
-            self.workspaces[index].connectionID = connectionID
+            self.workspaces[index].hostID = hostID
             self.workspaces[index].name = trimmedName
             self.workspaces[index].remotePath = trimmedPath
             self.workspaces[index].defaultModel = trimmedModel
@@ -466,7 +569,7 @@ final class ProjectStore: ObservableObject {
         } else {
             self.workspaces.append(
                 ProjectWorkspace(
-                    connectionID: connectionID,
+                    hostID: hostID,
                     name: trimmedName,
                     remotePath: trimmedPath,
                     defaultModel: trimmedModel,
@@ -509,8 +612,8 @@ final class ProjectStore: ObservableObject {
     }
 
     private static func compare(lhs: ProjectWorkspace, rhs: ProjectWorkspace) -> Bool {
-        if lhs.connectionID != rhs.connectionID {
-            return lhs.connectionID.uuidString < rhs.connectionID.uuidString
+        if lhs.hostID != rhs.hostID {
+            return lhs.hostID.uuidString < rhs.hostID.uuidString
         }
         return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
     }
@@ -546,8 +649,8 @@ final class ThreadBookmarkStore: ObservableObject {
         self.persist()
     }
 
-    func replaceThreads(for workspaceID: UUID, connectionID: UUID, with summaries: [CodexThreadSummary]) {
-        self.bookmarks.removeAll(where: { $0.workspaceID == workspaceID && $0.connectionID == connectionID })
+    func replaceThreads(for workspaceID: UUID, hostID: UUID, with summaries: [CodexThreadSummary]) {
+        self.bookmarks.removeAll(where: { $0.workspaceID == workspaceID && $0.hostID == hostID })
         self.bookmarks.append(contentsOf: summaries)
         self.persist()
     }
@@ -577,78 +680,198 @@ final class ThreadBookmarkStore: ObservableObject {
 }
 
 enum AppRootTab: Hashable {
-    case connections
-    case projects
-    case threads
-    case fallbackTerminal
+    case hosts
+    case sessions
+    case terminal
+}
+
+struct TerminalLaunchContext: Equatable {
+    let hostID: UUID
+    let projectPath: String?
+    let threadID: String?
+    let initialCommand: String
+}
+
+struct HostSessionContext: Identifiable, Codable, Equatable {
+    var id: UUID { self.hostID }
+    let hostID: UUID
+    var selectedProjectID: UUID?
+    var selectedThreadID: String?
+    var lastActiveAt: Date
+    var lastOpenedAt: Date
+}
+
+@MainActor
+final class HostSessionStore: ObservableObject {
+    @Published private(set) var sessions: [HostSessionContext] = []
+
+    private let defaults: UserDefaults
+    private let key = "codex.host.sessions.v1"
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        self.load()
+    }
+
+    func session(for hostID: UUID) -> HostSessionContext? {
+        self.sessions.first(where: { $0.hostID == hostID })
+    }
+
+    func upsertSession(hostID: UUID) {
+        let now = Date()
+        if let index = self.sessions.firstIndex(where: { $0.hostID == hostID }) {
+            self.sessions[index].lastActiveAt = now
+        } else {
+            self.sessions.append(
+                HostSessionContext(
+                    hostID: hostID,
+                    selectedProjectID: nil,
+                    selectedThreadID: nil,
+                    lastActiveAt: now,
+                    lastOpenedAt: now
+                )
+            )
+        }
+        self.persist()
+    }
+
+    func markOpened(hostID: UUID) {
+        let now = Date()
+        if let index = self.sessions.firstIndex(where: { $0.hostID == hostID }) {
+            self.sessions[index].lastOpenedAt = now
+            self.sessions[index].lastActiveAt = now
+        } else {
+            self.sessions.append(
+                HostSessionContext(
+                    hostID: hostID,
+                    selectedProjectID: nil,
+                    selectedThreadID: nil,
+                    lastActiveAt: now,
+                    lastOpenedAt: now
+                )
+            )
+        }
+        self.persist()
+    }
+
+    func selectProject(hostID: UUID, projectID: UUID?) {
+        self.upsertSession(hostID: hostID)
+        guard let index = self.sessions.firstIndex(where: { $0.hostID == hostID }) else { return }
+        self.sessions[index].selectedProjectID = projectID
+        if projectID == nil {
+            self.sessions[index].selectedThreadID = nil
+        }
+        self.sessions[index].lastActiveAt = Date()
+        self.persist()
+    }
+
+    func selectThread(hostID: UUID, threadID: String?) {
+        self.upsertSession(hostID: hostID)
+        guard let index = self.sessions.firstIndex(where: { $0.hostID == hostID }) else { return }
+        self.sessions[index].selectedThreadID = threadID
+        self.sessions[index].lastActiveAt = Date()
+        self.persist()
+    }
+
+    func removeSession(hostID: UUID) {
+        self.sessions.removeAll(where: { $0.hostID == hostID })
+        self.persist()
+    }
+
+    func cleanupOrphans(validHostIDs: Set<UUID>) {
+        self.sessions.removeAll(where: { validHostIDs.contains($0.hostID) == false })
+        self.persist()
+    }
+
+    private func load() {
+        guard let data = self.defaults.data(forKey: self.key),
+              let decoded = try? JSONDecoder().decode([HostSessionContext].self, from: data)
+        else {
+            self.sessions = []
+            return
+        }
+        self.sessions = decoded.sorted { $0.lastActiveAt > $1.lastActiveAt }
+    }
+
+    private func persist() {
+        self.sessions.sort { $0.lastActiveAt > $1.lastActiveAt }
+        guard let data = try? JSONEncoder().encode(self.sessions) else {
+            self.defaults.removeObject(forKey: self.key)
+            return
+        }
+        self.defaults.set(data, forKey: self.key)
+    }
 }
 
 @MainActor
 final class AppState: ObservableObject {
-    @Published var selectedTab: AppRootTab = .threads
-    @Published var selectedConnectionID: UUID?
-    @Published var selectedWorkspaceID: UUID?
+    @Published var selectedTab: AppRootTab = .hosts
+    @Published var selectedHostID: UUID?
+    @Published var terminalLaunchContext: TerminalLaunchContext?
 
-    let fallbackConnectionStore: ConnectionStore
-    let remoteConnectionStore: RemoteConnectionStore
+    let remoteHostStore: RemoteHostStore
     let projectStore: ProjectStore
     let threadBookmarkStore: ThreadBookmarkStore
+    let hostSessionStore: HostSessionStore
     let appServerClient: AppServerClient
 
     init(
-        fallbackConnectionStore: ConnectionStore = ConnectionStore(),
-        remoteConnectionStore: RemoteConnectionStore = RemoteConnectionStore(),
+        remoteHostStore: RemoteHostStore = RemoteHostStore(),
         projectStore: ProjectStore = ProjectStore(),
         threadBookmarkStore: ThreadBookmarkStore = ThreadBookmarkStore(),
+        hostSessionStore: HostSessionStore = HostSessionStore(),
         appServerClient: AppServerClient = AppServerClient()
     ) {
-        self.fallbackConnectionStore = fallbackConnectionStore
-        self.remoteConnectionStore = remoteConnectionStore
+        self.remoteHostStore = remoteHostStore
         self.projectStore = projectStore
         self.threadBookmarkStore = threadBookmarkStore
+        self.hostSessionStore = hostSessionStore
         self.appServerClient = appServerClient
 
-        self.selectedConnectionID = remoteConnectionStore.connections.first?.id
-        self.syncWorkspaceSelection()
+        self.selectedHostID = remoteHostStore.hosts.first?.id
+        self.cleanupSessionOrphans()
     }
 
-    var selectedConnection: RemoteConnection? {
-        guard let selectedConnectionID else { return nil }
-        return self.remoteConnectionStore.connections.first(where: { $0.id == selectedConnectionID })
+    var selectedHost: RemoteHost? {
+        guard let selectedHostID else { return nil }
+        return self.remoteHostStore.hosts.first(where: { $0.id == selectedHostID })
     }
 
-    var selectedWorkspace: ProjectWorkspace? {
-        guard let selectedWorkspaceID else { return nil }
-        return self.projectStore.workspaces.first(where: { $0.id == selectedWorkspaceID })
-    }
-
-    func selectConnection(_ connectionID: UUID?) {
-        self.selectedConnectionID = connectionID
-        self.syncWorkspaceSelection()
-    }
-
-    func selectWorkspace(_ workspaceID: UUID?) {
-        self.selectedWorkspaceID = workspaceID
-    }
-
-    func refreshSelections() {
-        if let selectedConnectionID,
-           self.remoteConnectionStore.connections.contains(where: { $0.id == selectedConnectionID }) == false {
-            self.selectedConnectionID = self.remoteConnectionStore.connections.first?.id
+    func selectHost(_ hostID: UUID?) {
+        self.selectedHostID = hostID
+        if let hostID {
+            self.hostSessionStore.upsertSession(hostID: hostID)
         }
-        self.syncWorkspaceSelection()
     }
 
-    private func syncWorkspaceSelection() {
-        let candidates = self.projectStore.workspaces(for: self.selectedConnectionID)
-        guard let selectedWorkspaceID else {
-            self.selectedWorkspaceID = candidates.first?.id
-            return
-        }
+    func openHostSession(_ hostID: UUID) {
+        self.selectHost(hostID)
+        self.hostSessionStore.markOpened(hostID: hostID)
+        self.selectedTab = .sessions
+    }
 
-        if candidates.contains(where: { $0.id == selectedWorkspaceID }) == false {
-            self.selectedWorkspaceID = candidates.first?.id
+    func removeHost(hostID: UUID) {
+        self.remoteHostStore.delete(hostID: hostID)
+        self.hostSessionStore.removeSession(hostID: hostID)
+        self.projectStore.workspaces
+            .filter { $0.hostID == hostID }
+            .forEach { workspace in
+                self.threadBookmarkStore
+                    .threads(for: workspace.id)
+                    .forEach { summary in
+                        self.threadBookmarkStore.remove(threadID: summary.threadID, workspaceID: workspace.id)
+                    }
+                self.projectStore.delete(workspaceID: workspace.id)
+            }
+        if self.selectedHostID == hostID {
+            self.selectedHostID = self.remoteHostStore.hosts.first?.id
         }
+        self.cleanupSessionOrphans()
+    }
+
+    func cleanupSessionOrphans() {
+        let validHostIDs = Set(self.remoteHostStore.hosts.map(\.id))
+        self.hostSessionStore.cleanupOrphans(validHostIDs: validHostIDs)
     }
 }
 
@@ -1009,7 +1232,7 @@ final class AppServerClient: ObservableObject {
     private var reconnectAttempts = 0
     private let maxReconnectAttempts = 3
     private var autoReconnectEnabled = false
-    private var lastConnection: RemoteConnection?
+    private var lastHost: RemoteHost?
 
     private let requestTimeoutSeconds: TimeInterval = 30
 
@@ -1017,8 +1240,8 @@ final class AppServerClient: ObservableObject {
         self.session = session
     }
 
-    func connect(to connection: RemoteConnection) async throws {
-        try await self.openConnection(to: connection, resetReconnectAttempts: true)
+    func connect(to host: RemoteHost) async throws {
+        try await self.openConnection(to: host, resetReconnectAttempts: true)
     }
 
     func disconnect() {
@@ -1215,8 +1438,8 @@ final class AppServerClient: ObservableObject {
         try await self.respond(to: request, result: result)
     }
 
-    private func openConnection(to connection: RemoteConnection, resetReconnectAttempts: Bool) async throws {
-        guard let url = URL(string: connection.appServerURL),
+    private func openConnection(to host: RemoteHost, resetReconnectAttempts: Bool) async throws {
+        guard let url = URL(string: host.appServerURL),
               let scheme = url.scheme?.lowercased(),
               scheme == "ws" || scheme == "wss"
         else {
@@ -1233,8 +1456,8 @@ final class AppServerClient: ObservableObject {
         self.state = .connecting
         self.lastErrorMessage = ""
         self.autoReconnectEnabled = true
-        self.lastConnection = connection
-        self.connectedEndpoint = connection.appServerURL
+        self.lastHost = host
+        self.connectedEndpoint = host.appServerURL
         self.diagnostics = AppServerDiagnostics(
             minimumRequiredVersion: Self.minimumSupportedCLIVersion
         )
@@ -1266,7 +1489,7 @@ final class AppServerClient: ObservableObject {
             }
             self.state = .connected
             self.diagnostics.lastCheckedAt = Date()
-            self.appendEvent("Connected: \(connection.name) @ \(connection.appServerURL)")
+            self.appendEvent("Connected: \(host.name) @ \(host.appServerURL)")
         } catch {
             self.lastErrorMessage = self.userFacingMessage(for: error)
             self.state = .disconnected
@@ -1538,7 +1761,7 @@ final class AppServerClient: ObservableObject {
         self.teardownConnection(closeCode: .abnormalClosure)
 
         guard self.autoReconnectEnabled,
-              let connection = self.lastConnection
+              let host = self.lastHost
         else {
             return
         }
@@ -1561,7 +1784,7 @@ final class AppServerClient: ObservableObject {
             }
 
             do {
-                try await self.openConnection(to: connection, resetReconnectAttempts: false)
+                try await self.openConnection(to: host, resetReconnectAttempts: false)
             } catch {
                 await self.handleSocketFailure(error)
             }
@@ -1937,63 +2160,57 @@ struct ContentView: View {
 
     var body: some View {
         TabView(selection: self.$appState.selectedTab) {
-            ConnectionsTabView()
+            HostsTabView()
                 .tabItem {
-                    Label("Connections", systemImage: "network")
+                    Label("Hosts", systemImage: "network")
                 }
-                .tag(AppRootTab.connections)
+                .tag(AppRootTab.hosts)
 
-            ProjectsTabView()
+            SessionsTabView()
                 .tabItem {
-                    Label("Projects", systemImage: "folder")
+                    Label("Sessions", systemImage: "clock.arrow.circlepath")
                 }
-                .tag(AppRootTab.projects)
+                .tag(AppRootTab.sessions)
 
-            ThreadsTabView()
+            TerminalTabView()
                 .tabItem {
-                    Label("Threads", systemImage: "message")
+                    Label("Terminal", systemImage: "terminal")
                 }
-                .tag(AppRootTab.threads)
-
-            FallbackTerminalView()
-                .tabItem {
-                    Label("Fallback", systemImage: "terminal")
-                }
-                .tag(AppRootTab.fallbackTerminal)
+                .tag(AppRootTab.terminal)
         }
     }
 }
 
-struct ConnectionsTabView: View {
+struct HostsTabView: View {
     @EnvironmentObject private var appState: AppState
 
     @State private var isPresentingEditor = false
-    @State private var editingConnection: RemoteConnection?
+    @State private var editingHost: RemoteHost?
     @State private var editingPassword = ""
 
     var body: some View {
         NavigationStack {
             Group {
-                if self.appState.remoteConnectionStore.connections.isEmpty {
+                if self.appState.remoteHostStore.hosts.isEmpty {
                     ContentUnavailableView(
-                        "No Remote Connections",
+                        "No Hosts",
                         systemImage: "network",
-                        description: Text("Tap + to add your first app-server endpoint.")
+                        description: Text("Tap + to add your first host.")
                     )
                 } else {
                     List {
-                        ForEach(self.appState.remoteConnectionStore.connections) { connection in
+                        ForEach(self.appState.remoteHostStore.hosts) { host in
                             Button {
-                                self.appState.selectConnection(connection.id)
+                                self.appState.openHostSession(host.id)
                             } label: {
                                 HStack(alignment: .center, spacing: 10) {
                                     VStack(alignment: .leading, spacing: 4) {
-                                        Text(connection.name)
+                                        Text(host.name)
                                             .font(.headline)
-                                        Text("\(connection.username)@\(connection.host):\(connection.sshPort)")
+                                        Text("\(host.username)@\(host.host):\(host.sshPort)")
                                             .font(.subheadline)
                                             .foregroundStyle(.secondary)
-                                        Text(connection.appServerURL)
+                                        Text(host.appServerURL)
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                             .textSelection(.enabled)
@@ -2001,7 +2218,7 @@ struct ConnectionsTabView: View {
 
                                     Spacer(minLength: 8)
 
-                                    if self.appState.selectedConnectionID == connection.id {
+                                    if self.appState.selectedHostID == host.id {
                                         Image(systemName: "checkmark.circle.fill")
                                             .foregroundStyle(.green)
                                     }
@@ -2010,13 +2227,12 @@ struct ConnectionsTabView: View {
                             .buttonStyle(.plain)
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 Button("Delete", role: .destructive) {
-                                    self.appState.remoteConnectionStore.delete(connectionID: connection.id)
-                                    self.appState.refreshSelections()
+                                    self.appState.removeHost(hostID: host.id)
                                 }
 
                                 Button("Edit") {
-                                    self.editingConnection = connection
-                                    self.editingPassword = self.appState.remoteConnectionStore.password(for: connection.id)
+                                    self.editingHost = host
+                                    self.editingPassword = self.appState.remoteHostStore.password(for: host.id)
                                     self.isPresentingEditor = true
                                 }
                                 .tint(.orange)
@@ -2025,18 +2241,11 @@ struct ConnectionsTabView: View {
                     }
                 }
             }
-            .navigationTitle("Connections")
+            .navigationTitle("Hosts")
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Fallback") {
-                        self.appState.selectedTab = .fallbackTerminal
-                    }
-                    .codexActionButtonStyle()
-                }
-
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        self.editingConnection = nil
+                        self.editingHost = nil
                         self.editingPassword = ""
                         self.isPresentingEditor = true
                     } label: {
@@ -2047,57 +2256,56 @@ struct ConnectionsTabView: View {
             }
         }
         .sheet(isPresented: self.$isPresentingEditor) {
-            RemoteConnectionEditorView(
-                connection: self.editingConnection,
+            RemoteHostEditorView(
+                host: self.editingHost,
                 initialPassword: self.editingPassword
             ) { draft in
-                self.appState.remoteConnectionStore.upsert(connectionID: self.editingConnection?.id, draft: draft)
-                self.appState.refreshSelections()
+                self.appState.remoteHostStore.upsert(hostID: self.editingHost?.id, draft: draft)
+                self.appState.cleanupSessionOrphans()
             }
         }
     }
 }
 
-struct RemoteConnectionEditorView: View {
-    let connection: RemoteConnection?
+struct RemoteHostEditorView: View {
+    let host: RemoteHost?
     let initialPassword: String
-    let onSave: (RemoteConnectionDraft) -> Void
+    let onSave: (RemoteHostDraft) -> Void
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var name: String
-    @State private var host: String
+    @State private var displayName: String
+    @State private var hostAddress: String
     @State private var sshPortText: String
     @State private var username: String
     @State private var appServerURL: String
     @State private var password: String
-
     @State private var preferredTransport: TransportKind
-    @State private var authMode: ConnectionAuthMode
+    @State private var authMode: HostAuthMode
 
-    init(connection: RemoteConnection?, initialPassword: String, onSave: @escaping (RemoteConnectionDraft) -> Void) {
-        self.connection = connection
+    init(host: RemoteHost?, initialPassword: String, onSave: @escaping (RemoteHostDraft) -> Void) {
+        self.host = host
         self.initialPassword = initialPassword
         self.onSave = onSave
 
-        _name = State(initialValue: connection?.name ?? "")
-        _host = State(initialValue: connection?.host ?? "")
-        _sshPortText = State(initialValue: String(connection?.sshPort ?? 22))
-        _username = State(initialValue: connection?.username ?? "")
-        _appServerURL = State(initialValue: connection?.appServerURL ?? "")
+        _displayName = State(initialValue: host?.name ?? "")
+        _hostAddress = State(initialValue: host?.host ?? "")
+        _sshPortText = State(initialValue: String(host?.sshPort ?? 22))
+        _username = State(initialValue: host?.username ?? "")
+        _appServerURL = State(initialValue: host?.appServerURL ?? "")
         _password = State(initialValue: initialPassword)
-        _preferredTransport = State(initialValue: connection?.preferredTransport ?? .appServerWS)
-        _authMode = State(initialValue: connection?.authMode ?? .remotePCManaged)
+        _preferredTransport = State(initialValue: host?.preferredTransport ?? .appServerWS)
+        _authMode = State(initialValue: host?.authMode ?? .remotePCManaged)
     }
 
     private var parsedPort: Int {
         Int(self.sshPortText) ?? 22
     }
 
-    private var draft: RemoteConnectionDraft {
-        RemoteConnectionDraft(
-            name: self.name,
-            host: self.host,
+    private var draft: RemoteHostDraft {
+        RemoteHostDraft(
+            name: self.displayName,
+            host: self.hostAddress,
             sshPort: self.parsedPort,
             username: self.username,
             appServerURL: self.appServerURL,
@@ -2111,8 +2319,8 @@ struct RemoteConnectionEditorView: View {
         NavigationStack {
             Form {
                 Section("Basic") {
-                    TextField("Name", text: self.$name)
-                    TextField("Host", text: self.$host)
+                    TextField("Name", text: self.$displayName)
+                    TextField("Host", text: self.$hostAddress)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
                     TextField("SSH Port", text: self.$sshPortText)
@@ -2135,27 +2343,27 @@ struct RemoteConnectionEditorView: View {
                     }
 
                     Picker("Auth", selection: self.$authMode) {
-                        ForEach(ConnectionAuthMode.allCases) { mode in
+                        ForEach(HostAuthMode.allCases) { mode in
                             Text(mode.displayName).tag(mode)
                         }
                     }
                 }
 
-                Section("SSH Fallback") {
+                Section("SSH") {
                     SecureField("Password (optional)", text: self.$password)
                 }
 
-                if self.connection == nil {
+                if self.host == nil {
                     Section {
-                        Button("Use host to generate app-server URL") {
-                            let normalizedHost = self.host.trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !normalizedHost.isEmpty else { return }
-                            self.appServerURL = RemoteConnection.defaultAppServerURL(host: normalizedHost)
+                        Button("Generate app-server URL from host") {
+                            let normalized = self.hostAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !normalized.isEmpty else { return }
+                            self.appServerURL = RemoteHost.defaultAppServerURL(host: normalized)
                         }
                     }
                 }
             }
-            .navigationTitle(self.connection == nil ? "New Connection" : "Edit Connection")
+            .navigationTitle(self.host == nil ? "New Host" : "Edit Host")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") {
@@ -2177,123 +2385,305 @@ struct RemoteConnectionEditorView: View {
     }
 }
 
-struct ProjectsTabView: View {
+struct SessionsTabView: View {
     @EnvironmentObject private var appState: AppState
 
-    @State private var isPresentingEditor = false
-    @State private var editingWorkspace: ProjectWorkspace?
-
-    private var selectedConnection: RemoteConnection? {
-        self.appState.selectedConnection
-    }
-
-    private var workspaces: [ProjectWorkspace] {
-        self.appState.projectStore.workspaces(for: self.appState.selectedConnectionID)
+    private var sessionRows: [HostSessionContext] {
+        self.appState.hostSessionStore.sessions.filter { context in
+            self.appState.remoteHostStore.hosts.contains(where: { $0.id == context.hostID })
+        }
     }
 
     var body: some View {
         NavigationStack {
             Group {
-                if self.appState.remoteConnectionStore.connections.isEmpty {
+                if self.sessionRows.isEmpty {
                     ContentUnavailableView(
-                        "No Connections",
-                        systemImage: "network.slash",
-                        description: Text("Create a connection first from the Connections tab.")
-                    )
-                } else if self.selectedConnection == nil {
-                    ContentUnavailableView(
-                        "Select Connection",
-                        systemImage: "network",
-                        description: Text("Choose a connection to manage project paths.")
+                        "No Sessions",
+                        systemImage: "clock.arrow.circlepath",
+                        description: Text("Select a host from Hosts tab to create a resumable session.")
                     )
                 } else {
                     List {
-                        Section {
-                            Picker("Connection", selection: Binding(
-                                get: { self.appState.selectedConnectionID },
-                                set: { self.appState.selectConnection($0) }
-                            )) {
-                                ForEach(self.appState.remoteConnectionStore.connections) { connection in
-                                    Text(connection.name).tag(Optional(connection.id))
-                                }
-                            }
-                        }
-
-                        if self.workspaces.isEmpty {
-                            Section {
-                                Text("No projects for this connection.")
-                                    .foregroundStyle(.secondary)
-                            }
-                        } else {
-                            ForEach(self.workspaces) { workspace in
-                                Button {
-                                    self.appState.selectWorkspace(workspace.id)
+                        ForEach(self.sessionRows) { context in
+                            if let host = self.appState.remoteHostStore.hosts.first(where: { $0.id == context.hostID }) {
+                                NavigationLink {
+                                    SessionWorkbenchView(host: host)
                                 } label: {
-                                    HStack(alignment: .center, spacing: 8) {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(workspace.displayName)
-                                                .font(.headline)
-                                            Text(workspace.remotePath)
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                                .textSelection(.enabled)
-                                            if !workspace.defaultModel.isEmpty {
-                                                Text("model: \(workspace.defaultModel)")
-                                                    .font(.caption2)
-                                                    .foregroundStyle(.secondary)
-                                            }
-                                        }
-
-                                        Spacer(minLength: 8)
-
-                                        if self.appState.selectedWorkspaceID == workspace.id {
-                                            Image(systemName: "checkmark.circle.fill")
-                                                .foregroundStyle(.green)
-                                        }
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(host.name)
+                                            .font(.headline)
+                                        Text("\(host.username)@\(host.host):\(host.sshPort)")
+                                            .font(.subheadline)
+                                            .foregroundStyle(.secondary)
+                                        Text("Last active: \(context.lastActiveAt.formatted(date: .abbreviated, time: .shortened))")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
                                     }
                                 }
-                                .buttonStyle(.plain)
-                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                    Button("Delete", role: .destructive) {
-                                        self.appState.projectStore.delete(workspaceID: workspace.id)
-                                        self.appState.refreshSelections()
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button("Remove", role: .destructive) {
+                                        self.appState.hostSessionStore.removeSession(hostID: context.hostID)
                                     }
-
-                                    Button("Edit") {
-                                        self.editingWorkspace = workspace
-                                        self.isPresentingEditor = true
-                                    }
-                                    .tint(.orange)
                                 }
                             }
                         }
                     }
                 }
             }
-            .navigationTitle("Projects")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        self.editingWorkspace = nil
-                        self.isPresentingEditor = true
-                    } label: {
-                        Label("Add", systemImage: "plus")
+            .navigationTitle("Sessions")
+        }
+    }
+}
+
+private struct RemoteDirectoryEntry: Identifiable, Equatable {
+    var id: String { self.path }
+    let name: String
+    let path: String
+}
+
+private enum RemotePathBrowserError: LocalizedError {
+    case timeout
+    case malformedOutput
+
+    var errorDescription: String? {
+        switch self {
+        case .timeout:
+            return "Directory listing timed out."
+        case .malformedOutput:
+            return "Could not parse remote directory output."
+        }
+    }
+}
+
+private actor RemotePathBrowserService {
+    func listDirectories(host: RemoteHost, password: String, path: String) async throws -> (String, [RemoteDirectoryEntry]) {
+        try await withCheckedThrowingContinuation { continuation in
+            let queue = DispatchQueue(label: "com.example.CodexAppMobile.path-browser")
+            queue.async {
+                final class SharedState: @unchecked Sendable {
+                    var fullOutput = ""
+                    var completed = false
+                }
+
+                let state = SharedState()
+                let engine = SSHClientEngine()
+                let startMarker = "__CODEX_PATH_START__"
+                let endMarker = "__CODEX_PATH_END__"
+
+                let timeoutSource = DispatchSource.makeTimerSource(queue: queue)
+                timeoutSource.schedule(deadline: .now() + .seconds(8))
+                timeoutSource.setEventHandler {
+                    guard !state.completed else { return }
+                    state.completed = true
+                    engine.disconnect()
+                    continuation.resume(throwing: RemotePathBrowserError.timeout)
+                }
+                timeoutSource.resume()
+
+                let complete: @Sendable (Result<(String, [RemoteDirectoryEntry]), Error>) -> Void = { result in
+                    guard !state.completed else { return }
+                    state.completed = true
+                    timeoutSource.cancel()
+                    engine.disconnect()
+                    continuation.resume(with: result)
+                }
+
+                engine.onOutput = { chunk in
+                    state.fullOutput += chunk
+                    guard state.fullOutput.contains(endMarker) else { return }
+                    do {
+                        let parsed = try Self.parseOutput(
+                            state.fullOutput,
+                            startMarker: startMarker,
+                            endMarker: endMarker
+                        )
+                        complete(.success(parsed))
+                    } catch {
+                        complete(.failure(error))
                     }
-                    .disabled(self.selectedConnection == nil)
-                    .codexActionButtonStyle()
+                }
+
+                engine.onError = { error in
+                    complete(.failure(error))
+                }
+
+                engine.onConnected = {
+                    let escapedPath = Self.escapeForSingleQuote(path)
+                    let command = "printf '\(startMarker)\\n'; cd '\(escapedPath)' 2>/dev/null || cd /; pwd; LC_ALL=C ls -1Ap; printf '\(endMarker)\\n'"
+                    do {
+                        try engine.send(command: command + "\n")
+                    } catch {
+                        complete(.failure(error))
+                    }
+                }
+
+                do {
+                    try engine.connect(
+                        host: host.host,
+                        port: host.sshPort,
+                        username: host.username,
+                        password: password.isEmpty ? nil : password
+                    )
+                } catch {
+                    complete(.failure(error))
                 }
             }
         }
-        .sheet(isPresented: self.$isPresentingEditor) {
-            if let selectedConnection {
-                ProjectEditorView(workspace: self.editingWorkspace) { draft in
-                    self.appState.projectStore.upsert(
-                        workspaceID: self.editingWorkspace?.id,
-                        connectionID: selectedConnection.id,
-                        draft: draft
-                    )
-                    self.appState.refreshSelections()
+    }
+
+    private static func escapeForSingleQuote(_ path: String) -> String {
+        path.replacingOccurrences(of: "'", with: "'\"'\"'")
+    }
+
+    private static func stripANSI(_ text: String) -> String {
+        text.replacingOccurrences(
+            of: #"\u{001B}\[[0-9;?]*[ -/]*[@-~]"#,
+            with: "",
+            options: .regularExpression
+        )
+    }
+
+    private static func parseOutput(
+        _ output: String,
+        startMarker: String,
+        endMarker: String
+    ) throws -> (String, [RemoteDirectoryEntry]) {
+        guard let startRange = output.range(of: startMarker),
+              let endRange = output.range(of: endMarker),
+              startRange.upperBound <= endRange.lowerBound
+        else {
+            throw RemotePathBrowserError.malformedOutput
+        }
+
+        let body = output[startRange.upperBound..<endRange.lowerBound]
+        let lines = body
+            .split(whereSeparator: \.isNewline)
+            .map { Self.stripANSI(String($0)).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard let currentPath = lines.first else {
+            throw RemotePathBrowserError.malformedOutput
+        }
+
+        let directories = lines.dropFirst().compactMap { raw -> RemoteDirectoryEntry? in
+            guard raw.hasSuffix("/") else { return nil }
+            let name = String(raw.dropLast())
+            guard name != "." && name != ".." && !name.isEmpty else { return nil }
+            let fullPath = currentPath == "/" ? "/\(name)" : "\(currentPath)/\(name)"
+            return RemoteDirectoryEntry(name: name, path: fullPath)
+        }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+        return (currentPath, directories)
+    }
+}
+
+struct RemotePathBrowserView: View {
+    let host: RemoteHost
+    let hostPassword: String
+    let initialPath: String
+    let onSelectPath: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var currentPath = ""
+    @State private var entries: [RemoteDirectoryEntry] = []
+    @State private var errorMessage = ""
+    @State private var isLoading = false
+
+    private let service = RemotePathBrowserService()
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Current") {
+                    Text(self.currentPath.isEmpty ? self.initialPath : self.currentPath)
+                        .font(.footnote)
+                        .textSelection(.enabled)
                 }
+
+                if let parentPath = self.parentPath(of: self.currentPath) {
+                    Section {
+                        Button("..") {
+                            self.load(path: parentPath)
+                        }
+                    }
+                }
+
+                Section("Directories") {
+                    if self.entries.isEmpty {
+                        Text(self.isLoading ? "Loading..." : "No subdirectories")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(self.entries) { entry in
+                            Button(entry.name) {
+                                self.load(path: entry.path)
+                            }
+                        }
+                    }
+                }
+
+                if !self.errorMessage.isEmpty {
+                    Section {
+                        Text(self.errorMessage)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle("Remote Paths")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") {
+                        self.dismiss()
+                    }
+                    .codexActionButtonStyle()
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Use This Path") {
+                        self.onSelectPath(self.currentPath.isEmpty ? self.initialPath : self.currentPath)
+                        self.dismiss()
+                    }
+                    .codexActionButtonStyle()
+                }
+            }
+            .task {
+                if self.currentPath.isEmpty {
+                    self.load(path: self.initialPath)
+                }
+            }
+        }
+    }
+
+    private func parentPath(of path: String) -> String? {
+        let cleaned = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty, cleaned != "/" else { return nil }
+        let url = URL(filePath: cleaned)
+        let parent = url.deletingLastPathComponent().path()
+        return parent.isEmpty ? "/" : parent
+    }
+
+    private func load(path: String) {
+        self.errorMessage = ""
+        self.isLoading = true
+
+        Task {
+            defer {
+                self.isLoading = false
+            }
+
+            do {
+                let (resolvedPath, directories) = try await self.service.listDirectories(
+                    host: self.host,
+                    password: self.hostPassword,
+                    path: path
+                )
+                self.currentPath = resolvedPath
+                self.entries = directories
+            } catch {
+                self.errorMessage = error.localizedDescription
             }
         }
     }
@@ -2301,6 +2691,8 @@ struct ProjectsTabView: View {
 
 struct ProjectEditorView: View {
     let workspace: ProjectWorkspace?
+    let host: RemoteHost
+    let hostPassword: String
     let onSave: (ProjectWorkspaceDraft) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -2309,9 +2701,17 @@ struct ProjectEditorView: View {
     @State private var remotePath: String
     @State private var defaultModel: String
     @State private var defaultApprovalPolicy: CodexApprovalPolicy
+    @State private var isPresentingPathBrowser = false
 
-    init(workspace: ProjectWorkspace?, onSave: @escaping (ProjectWorkspaceDraft) -> Void) {
+    init(
+        workspace: ProjectWorkspace?,
+        host: RemoteHost,
+        hostPassword: String,
+        onSave: @escaping (ProjectWorkspaceDraft) -> Void
+    ) {
         self.workspace = workspace
+        self.host = host
+        self.hostPassword = hostPassword
         self.onSave = onSave
 
         _name = State(initialValue: workspace?.name ?? "")
@@ -2337,6 +2737,11 @@ struct ProjectEditorView: View {
                     TextField("/absolute/remote/path", text: self.$remotePath)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
+
+                    Button("Browse Remote Path") {
+                        self.isPresentingPathBrowser = true
+                    }
+                    .codexActionButtonStyle()
                 }
 
                 Section("Defaults") {
@@ -2370,30 +2775,45 @@ struct ProjectEditorView: View {
                 }
             }
         }
+        .sheet(isPresented: self.$isPresentingPathBrowser) {
+            RemotePathBrowserView(
+                host: self.host,
+                hostPassword: self.hostPassword,
+                initialPath: self.remotePath.isEmpty ? "~" : self.remotePath
+            ) { selectedPath in
+                self.remotePath = selectedPath
+            }
+        }
     }
 }
 
-struct ThreadsTabView: View {
+struct SessionWorkbenchView: View {
     @EnvironmentObject private var appState: AppState
 
+    let host: RemoteHost
+
+    @State private var selectedWorkspaceID: UUID?
     @State private var selectedThreadID: String?
     @State private var prompt = ""
     @State private var localErrorMessage = ""
     @State private var isRefreshingThreads = false
     @State private var showArchived = false
     @State private var isPresentingDiagnostics = false
+    @State private var isPresentingProjectEditor = false
+    @State private var editingWorkspace: ProjectWorkspace?
     @State private var activePendingRequest: AppServerPendingRequest?
 
-    private var selectedConnection: RemoteConnection? {
-        self.appState.selectedConnection
+    private var selectedWorkspace: ProjectWorkspace? {
+        guard let selectedWorkspaceID else { return nil }
+        return self.workspaces.first(where: { $0.id == selectedWorkspaceID })
     }
 
-    private var selectedWorkspace: ProjectWorkspace? {
-        self.appState.selectedWorkspace
+    private var workspaces: [ProjectWorkspace] {
+        self.appState.projectStore.workspaces(for: self.host.id)
     }
 
     private var threads: [CodexThreadSummary] {
-        self.appState.threadBookmarkStore.threads(for: self.appState.selectedWorkspaceID)
+        self.appState.threadBookmarkStore.threads(for: self.selectedWorkspaceID)
     }
 
     private var selectedThreadTranscript: String {
@@ -2402,219 +2822,260 @@ struct ThreadsTabView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section("Status") {
-                    if let selectedConnection {
-                        Text("Connection: \(selectedConnection.name)")
-                    } else {
-                        Text("Connection: not selected")
-                            .foregroundStyle(.secondary)
-                    }
+        List {
+            Section("Status") {
+                Text("Host: \(self.host.name)")
+                Text("\(self.host.username)@\(self.host.host):\(self.host.sshPort)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
 
-                    if let selectedWorkspace {
-                        Text("Project: \(selectedWorkspace.displayName)")
-                    } else {
-                        Text("Project: not selected")
-                            .foregroundStyle(.secondary)
-                    }
+                Text("State: \(self.appState.appServerClient.state.rawValue)")
 
-                    Text("State: \(self.appState.appServerClient.state.rawValue)")
-
-                    if !self.appState.appServerClient.connectedEndpoint.isEmpty {
-                        Text("Endpoint: \(self.appState.appServerClient.connectedEndpoint)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-
-                    if !self.appState.appServerClient.diagnostics.cliVersion.isEmpty {
-                        Text("CLI: \(self.appState.appServerClient.diagnostics.cliVersion)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if let latency = self.appState.appServerClient.diagnostics.lastPingLatencyMS {
-                        Text("Ping: \(latency.formatted(.number.precision(.fractionLength(0)))) ms")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if !self.appState.appServerClient.lastErrorMessage.isEmpty {
-                        Text(self.appState.appServerClient.lastErrorMessage)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
-
-                    if !self.localErrorMessage.isEmpty {
-                        Text(self.localErrorMessage)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
-
-                    HStack {
-                        Button("Connect") {
-                            self.connect()
-                        }
-                        .disabled(self.selectedConnection == nil || self.appState.appServerClient.state == .connected)
-                        .codexActionButtonStyle()
-
-                        Button("Disconnect") {
-                            self.appState.appServerClient.disconnect()
-                        }
-                        .disabled(self.appState.appServerClient.state == .disconnected)
-                        .codexActionButtonStyle()
-
-                        Button("Refresh") {
-                            self.refreshThreads()
-                        }
-                        .disabled(self.selectedConnection == nil || self.selectedWorkspace == nil || self.isRefreshingThreads)
-                        .codexActionButtonStyle()
-                    }
-
-                    Toggle("Show Archived", isOn: self.$showArchived)
-
-                    HStack {
-                        Button("Diagnostics") {
-                            self.isPresentingDiagnostics = true
-                        }
-                        .codexActionButtonStyle()
-
-                        Button("Open Fallback Terminal") {
-                            self.appState.selectedTab = .fallbackTerminal
-                        }
-                        .codexActionButtonStyle()
-                    }
+                if !self.appState.appServerClient.connectedEndpoint.isEmpty {
+                    Text("Endpoint: \(self.appState.appServerClient.connectedEndpoint)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
                 }
 
-                Section("Threads") {
-                    if self.threads.isEmpty {
-                        Text("No threads for selected project.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(self.threads) { summary in
-                            Button {
-                                self.selectedThreadID = summary.threadID
-                                self.loadThread(summary.threadID)
-                            } label: {
-                                HStack(alignment: .center, spacing: 8) {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(summary.preview.isEmpty ? "(empty preview)" : summary.preview)
-                                            .font(.subheadline)
-                                            .lineLimit(2)
-                                        Text(summary.threadID)
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                        Text(summary.updatedAt.formatted(date: .abbreviated, time: .shortened))
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                    }
-
-                                    Spacer(minLength: 8)
-
-                                    if self.selectedThreadID == summary.threadID {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundStyle(.green)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(self.showArchived ? "Unarchive" : "Archive") {
-                                    self.archiveThread(summary: summary, archived: !self.showArchived)
-                                }
-                                .tint(self.showArchived ? .green : .blue)
-
-                                Button("Delete", role: .destructive) {
-                                    self.appState.threadBookmarkStore.remove(
-                                        threadID: summary.threadID,
-                                        workspaceID: summary.workspaceID
-                                    )
-                                    if self.selectedThreadID == summary.threadID {
-                                        self.selectedThreadID = nil
-                                    }
-                                }
-                            }
-                        }
-                    }
+                if !self.appState.appServerClient.lastErrorMessage.isEmpty {
+                    Text(self.appState.appServerClient.lastErrorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
                 }
 
-                Section("Prompt") {
-                    TextField("Send prompt", text: self.$prompt, axis: .vertical)
-                        .lineLimit(1...5)
-                        .textInputAutocapitalization(.sentences)
-
-                    HStack {
-                        Button("Send") {
-                            self.sendPrompt(forceNewThread: false)
-                        }
-                        .disabled(self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .codexActionButtonStyle()
-
-                        Button("New Thread + Send") {
-                            self.sendPrompt(forceNewThread: true)
-                        }
-                        .disabled(self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .codexActionButtonStyle()
-
-                        Button("Interrupt") {
-                            self.interruptActiveTurn()
-                        }
-                        .disabled(
-                            self.appState.appServerClient.activeTurnID(for: self.selectedThreadID) == nil
-                        )
-                        .codexActionButtonStyle()
-                    }
+                if !self.localErrorMessage.isEmpty {
+                    Text(self.localErrorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
                 }
 
-                Section("Pending Actions") {
-                    if self.appState.appServerClient.pendingRequests.isEmpty {
-                        Text("No pending approvals.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(self.appState.appServerClient.pendingRequests) { request in
-                            Button {
-                                self.activePendingRequest = request
-                            } label: {
+                HStack {
+                    Button("Connect") {
+                        self.connectHost()
+                    }
+                    .disabled(self.appState.appServerClient.state == .connected)
+                    .codexActionButtonStyle()
+
+                    Button("Disconnect") {
+                        self.appState.appServerClient.disconnect()
+                    }
+                    .disabled(self.appState.appServerClient.state == .disconnected)
+                    .codexActionButtonStyle()
+
+                    Button("Refresh") {
+                        self.refreshThreads()
+                    }
+                    .disabled(self.selectedWorkspace == nil || self.isRefreshingThreads)
+                    .codexActionButtonStyle()
+                }
+
+                Toggle("Show Archived", isOn: self.$showArchived)
+
+                HStack {
+                    Button("Open in Terminal") {
+                        self.openInTerminal()
+                    }
+                    .codexActionButtonStyle()
+
+                    Button("Diagnostics") {
+                        self.isPresentingDiagnostics = true
+                    }
+                    .codexActionButtonStyle()
+                }
+            }
+
+            Section("Projects") {
+                if self.workspaces.isEmpty {
+                    Text("No projects for this host.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(self.workspaces) { workspace in
+                        Button {
+                            self.selectedWorkspaceID = workspace.id
+                            self.selectedThreadID = nil
+                            self.appState.hostSessionStore.selectProject(hostID: self.host.id, projectID: workspace.id)
+                        } label: {
+                            HStack {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(request.title)
-                                        .font(.subheadline)
-                                    Text(request.method)
+                                    Text(workspace.displayName)
+                                        .font(.headline)
+                                    Text(workspace.remotePath)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
-                                    if !request.threadID.isEmpty {
-                                        Text("thread: \(request.threadID)")
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                    }
+                                }
+                                Spacer(minLength: 8)
+                                if self.selectedWorkspaceID == workspace.id {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.green)
                                 }
                             }
-                            .buttonStyle(.plain)
+                        }
+                        .buttonStyle(.plain)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button("Delete", role: .destructive) {
+                                self.appState.projectStore.delete(workspaceID: workspace.id)
+                                if self.selectedWorkspaceID == workspace.id {
+                                    self.selectedWorkspaceID = nil
+                                    self.selectedThreadID = nil
+                                    self.appState.hostSessionStore.selectProject(hostID: self.host.id, projectID: nil)
+                                    self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: nil)
+                                }
+                            }
+
+                            Button("Edit") {
+                                self.editingWorkspace = workspace
+                                self.isPresentingProjectEditor = true
+                            }
+                            .tint(.orange)
                         }
                     }
                 }
 
-                Section("Transcript") {
-                    if let selectedThreadID,
-                       !selectedThreadID.isEmpty {
-                        Text(self.selectedThreadTranscript.isEmpty ? "No output yet." : self.selectedThreadTranscript)
-                            .font(.system(.footnote, design: .monospaced))
-                            .textSelection(.enabled)
-                            .lineLimit(nil)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else {
-                        Text("Select thread to view output.")
-                            .foregroundStyle(.secondary)
+                Button {
+                    self.editingWorkspace = nil
+                    self.isPresentingProjectEditor = true
+                } label: {
+                    Label("Add Project", systemImage: "plus")
+                }
+                .codexActionButtonStyle()
+            }
+
+            Section("Threads") {
+                if self.selectedWorkspace == nil {
+                    Text("Select a project first.")
+                        .foregroundStyle(.secondary)
+                } else if self.threads.isEmpty {
+                    Text("No threads for selected project.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(self.threads) { summary in
+                        Button {
+                            self.selectedThreadID = summary.threadID
+                            self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: summary.threadID)
+                            self.loadThread(summary.threadID)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(summary.preview.isEmpty ? "(empty preview)" : summary.preview)
+                                        .font(.subheadline)
+                                        .lineLimit(2)
+                                    Text(summary.threadID)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 8)
+                                if self.selectedThreadID == summary.threadID {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.green)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(self.showArchived ? "Unarchive" : "Archive") {
+                                self.archiveThread(summary: summary, archived: !self.showArchived)
+                            }
+                            .tint(self.showArchived ? .green : .blue)
+
+                            Button("Delete", role: .destructive) {
+                                self.appState.threadBookmarkStore.remove(threadID: summary.threadID, workspaceID: summary.workspaceID)
+                                if self.selectedThreadID == summary.threadID {
+                                    self.selectedThreadID = nil
+                                    self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: nil)
+                                }
+                            }
+                        }
                     }
                 }
             }
-            .navigationTitle("Threads")
+
+            Section("Prompt") {
+                TextField("Send prompt", text: self.$prompt, axis: .vertical)
+                    .lineLimit(1...5)
+                    .textInputAutocapitalization(.sentences)
+
+                HStack {
+                    Button("Send") {
+                        self.sendPrompt(forceNewThread: false)
+                    }
+                    .disabled(self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .codexActionButtonStyle()
+
+                    Button("New Thread + Send") {
+                        self.sendPrompt(forceNewThread: true)
+                    }
+                    .disabled(self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .codexActionButtonStyle()
+
+                    Button("Interrupt") {
+                        self.interruptActiveTurn()
+                    }
+                    .disabled(self.appState.appServerClient.activeTurnID(for: self.selectedThreadID) == nil)
+                    .codexActionButtonStyle()
+                }
+            }
+
+            Section("Pending Actions") {
+                if self.appState.appServerClient.pendingRequests.isEmpty {
+                    Text("No pending approvals.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(self.appState.appServerClient.pendingRequests) { request in
+                        Button {
+                            self.activePendingRequest = request
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(request.title)
+                                    .font(.subheadline)
+                                Text(request.method)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Section("Transcript") {
+                if let selectedThreadID,
+                   !selectedThreadID.isEmpty {
+                    Text(self.selectedThreadTranscript.isEmpty ? "No output yet." : self.selectedThreadTranscript)
+                        .font(.system(.footnote, design: .monospaced))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Select thread to view output.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle(self.host.name)
+        .onAppear {
+            self.appState.selectHost(self.host.id)
+            self.appState.hostSessionStore.markOpened(hostID: self.host.id)
+            self.restoreSelectionFromSession()
         }
         .onChange(of: self.showArchived) {
             self.refreshThreads()
         }
+        .sheet(isPresented: self.$isPresentingProjectEditor) {
+            ProjectEditorView(
+                workspace: self.editingWorkspace,
+                host: self.host,
+                hostPassword: self.appState.remoteHostStore.password(for: self.host.id)
+            ) { draft in
+                self.appState.projectStore.upsert(
+                    workspaceID: self.editingWorkspace?.id,
+                    hostID: self.host.id,
+                    draft: draft
+                )
+                self.restoreSelectionFromSession()
+            }
+        }
         .sheet(isPresented: self.$isPresentingDiagnostics) {
-            ConnectionDiagnosticsView()
+            HostDiagnosticsView()
                 .environmentObject(self.appState)
         }
         .sheet(item: self.$activePendingRequest) { request in
@@ -2623,16 +3084,28 @@ struct ThreadsTabView: View {
         }
     }
 
-    private func connect() {
-        guard let selectedConnection else {
-            self.localErrorMessage = "Select a connection first."
-            return
+    private func restoreSelectionFromSession() {
+        let session = self.appState.hostSessionStore.session(for: self.host.id)
+        let workspaceIDs = Set(self.workspaces.map(\.id))
+
+        if let selectedProjectID = session?.selectedProjectID,
+           workspaceIDs.contains(selectedProjectID) {
+            self.selectedWorkspaceID = selectedProjectID
+        } else {
+            self.selectedWorkspaceID = self.workspaces.first?.id
+            self.appState.hostSessionStore.selectProject(hostID: self.host.id, projectID: self.selectedWorkspaceID)
         }
 
+        if let selectedThreadID = session?.selectedThreadID {
+            self.selectedThreadID = selectedThreadID
+        }
+    }
+
+    private func connectHost() {
         self.localErrorMessage = ""
         Task {
             do {
-                try await self.appState.appServerClient.connect(to: selectedConnection)
+                try await self.appState.appServerClient.connect(to: self.host)
             } catch {
                 self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
             }
@@ -2640,10 +3113,6 @@ struct ThreadsTabView: View {
     }
 
     private func refreshThreads() {
-        guard let selectedConnection else {
-            self.localErrorMessage = "Select a connection first."
-            return
-        }
         guard let selectedWorkspace else {
             self.localErrorMessage = "Select a project first."
             return
@@ -2659,19 +3128,16 @@ struct ThreadsTabView: View {
 
             do {
                 if self.appState.appServerClient.state != .connected {
-                    try await self.appState.appServerClient.connect(to: selectedConnection)
+                    try await self.appState.appServerClient.connect(to: self.host)
                 }
 
-                let fetched = try await self.appState.appServerClient.threadList(
-                    archived: self.showArchived,
-                    limit: 100
-                )
+                let fetched = try await self.appState.appServerClient.threadList(archived: self.showArchived, limit: 100)
                 let scoped = fetched.filter { $0.cwd == selectedWorkspace.remotePath }
 
                 let summaries = scoped.map { thread in
                     CodexThreadSummary(
                         threadID: thread.id,
-                        connectionID: selectedConnection.id,
+                        hostID: self.host.id,
                         workspaceID: selectedWorkspace.id,
                         preview: thread.preview,
                         updatedAt: thread.updatedAt,
@@ -2682,7 +3148,7 @@ struct ThreadsTabView: View {
 
                 self.appState.threadBookmarkStore.replaceThreads(
                     for: selectedWorkspace.id,
-                    connectionID: selectedConnection.id,
+                    hostID: self.host.id,
                     with: summaries
                 )
 
@@ -2697,15 +3163,7 @@ struct ThreadsTabView: View {
 
     private func sendPrompt(forceNewThread: Bool) {
         let trimmedPrompt = self.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedPrompt.isEmpty else {
-            return
-        }
-
-        guard let selectedConnection else {
-            self.localErrorMessage = "Select a connection first."
-            return
-        }
-
+        guard !trimmedPrompt.isEmpty else { return }
         guard let selectedWorkspace else {
             self.localErrorMessage = "Select a project first."
             return
@@ -2716,25 +3174,25 @@ struct ThreadsTabView: View {
         Task {
             do {
                 if self.appState.appServerClient.state != .connected {
-                    try await self.appState.appServerClient.connect(to: selectedConnection)
+                    try await self.appState.appServerClient.connect(to: self.host)
                 }
 
                 var threadID = forceNewThread ? nil : self.selectedThreadID
-
                 if threadID == nil {
-                    let createdThreadID = try await self.appState.appServerClient.threadStart(
+                    threadID = try await self.appState.appServerClient.threadStart(
                         cwd: selectedWorkspace.remotePath,
                         approvalPolicy: selectedWorkspace.defaultApprovalPolicy,
                         model: selectedWorkspace.defaultModel
                     )
-                    threadID = createdThreadID
-                    self.selectedThreadID = createdThreadID
                 }
 
                 guard let threadID else {
                     self.localErrorMessage = "Failed to resolve thread."
                     return
                 }
+
+                self.selectedThreadID = threadID
+                self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: threadID)
 
                 self.appState.appServerClient.appendLocalEcho(trimmedPrompt, to: threadID)
                 if let activeTurnID = self.appState.appServerClient.activeTurnID(for: threadID) {
@@ -2754,7 +3212,7 @@ struct ThreadsTabView: View {
                 self.appState.threadBookmarkStore.upsert(
                     summary: CodexThreadSummary(
                         threadID: threadID,
-                        connectionID: selectedConnection.id,
+                        hostID: self.host.id,
                         workspaceID: selectedWorkspace.id,
                         preview: trimmedPrompt,
                         updatedAt: Date(),
@@ -2797,46 +3255,44 @@ struct ThreadsTabView: View {
     }
 
     private func archiveThread(summary: CodexThreadSummary, archived: Bool) {
-        guard let selectedConnection else {
-            self.localErrorMessage = "Select a connection first."
-            return
-        }
-
         Task {
             do {
                 if self.appState.appServerClient.state != .connected {
-                    try await self.appState.appServerClient.connect(to: selectedConnection)
+                    try await self.appState.appServerClient.connect(to: self.host)
                 }
-
-                try await self.appState.appServerClient.threadArchive(
-                    threadID: summary.threadID,
-                    archived: archived
-                )
-
-                if archived {
-                    self.appState.threadBookmarkStore.remove(
-                        threadID: summary.threadID,
-                        workspaceID: summary.workspaceID
-                    )
-                    if self.selectedThreadID == summary.threadID {
-                        self.selectedThreadID = nil
-                    }
-                } else {
-                    var restored = summary
-                    restored.archived = false
-                    restored.updatedAt = Date()
-                    self.appState.threadBookmarkStore.upsert(summary: restored)
-                }
-
+                try await self.appState.appServerClient.threadArchive(threadID: summary.threadID, archived: archived)
                 self.refreshThreads()
             } catch {
                 self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
             }
         }
     }
+
+    private func openInTerminal() {
+        let initialCommand: String
+        if let selectedWorkspace,
+           let selectedThreadID,
+           !selectedThreadID.isEmpty {
+            let escaped = selectedWorkspace.remotePath.replacingOccurrences(of: "'", with: "'\"'\"'")
+            initialCommand = "cd '\(escaped)' && codex resume \(selectedThreadID)"
+        } else if let selectedWorkspace {
+            let escaped = selectedWorkspace.remotePath.replacingOccurrences(of: "'", with: "'\"'\"'")
+            initialCommand = "cd '\(escaped)' && codex"
+        } else {
+            initialCommand = "codex"
+        }
+
+        self.appState.terminalLaunchContext = TerminalLaunchContext(
+            hostID: self.host.id,
+            projectPath: self.selectedWorkspace?.remotePath,
+            threadID: self.selectedThreadID,
+            initialCommand: initialCommand
+        )
+        self.appState.selectedTab = .terminal
+    }
 }
 
-struct ConnectionDiagnosticsView: View {
+struct HostDiagnosticsView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
 
@@ -2849,7 +3305,7 @@ struct ConnectionDiagnosticsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Connection") {
+                Section("Host") {
                     Text("State: \(self.appState.appServerClient.state.rawValue)")
                     if !self.appState.appServerClient.connectedEndpoint.isEmpty {
                         Text(self.appState.appServerClient.connectedEndpoint)
@@ -2857,18 +3313,11 @@ struct ConnectionDiagnosticsView: View {
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
-                    if let checkedAt = self.diagnostics.lastCheckedAt {
-                        Text("Last check: \(checkedAt.formatted(date: .abbreviated, time: .standard))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
                 }
 
                 Section("Codex CLI") {
                     Text("CLI version: \(self.diagnostics.cliVersion.isEmpty ? "unknown" : self.diagnostics.cliVersion)")
                     Text("Required >= \(self.diagnostics.minimumRequiredVersion)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                     Text("Auth status: \(self.diagnostics.authStatus)")
                     Text("Current model: \(self.diagnostics.currentModel.isEmpty ? "unknown" : self.diagnostics.currentModel)")
                 }
@@ -2878,7 +3327,6 @@ struct ConnectionDiagnosticsView: View {
                         Text("Ping latency: \(latency.formatted(.number.precision(.fractionLength(0)))) ms")
                     } else {
                         Text("Ping latency: unknown")
-                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -2898,7 +3346,6 @@ struct ConnectionDiagnosticsView: View {
                     }
                     .codexActionButtonStyle()
                 }
-
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Run") {
                         self.runDiagnostics()
@@ -2921,7 +3368,6 @@ struct ConnectionDiagnosticsView: View {
         }
     }
 }
-
 struct PendingRequestSheet: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss

@@ -2,8 +2,8 @@ import XCTest
 @testable import CodexAppMobile
 
 final class CodexAppMobileTests: XCTestCase {
-    func testConnectionProfileCodableRoundTrip() throws {
-        let profile = SSHConnectionProfile(
+    func testHostProfileCodableRoundTrip() throws {
+        let profile = SSHHostProfile(
             id: UUID(uuidString: "11111111-2222-3333-4444-555555555555")!,
             name: "Prod",
             host: "example.com",
@@ -12,13 +12,13 @@ final class CodexAppMobileTests: XCTestCase {
         )
 
         let encoded = try JSONEncoder().encode([profile])
-        let decoded = try JSONDecoder().decode([SSHConnectionProfile].self, from: encoded)
+        let decoded = try JSONDecoder().decode([SSHHostProfile].self, from: encoded)
 
         XCTAssertEqual(decoded, [profile])
     }
 
-    func testConnectionDraftValidation() {
-        let draft = SSHConnectionDraft(
+    func testHostDraftValidation() {
+        let draft = SSHHostDraft(
             name: "dev",
             host: "127.0.0.1",
             port: 22,
@@ -78,8 +78,8 @@ final class CodexAppMobileTests: XCTestCase {
     }
 
     @MainActor
-    func testRemoteConnectionStoreMigratesLegacySSHProfiles() throws {
-        let suiteName = "RemoteConnectionStoreMigration.\(UUID().uuidString)"
+    func testRemoteHostStoreMigratesLegacySSHProfiles() throws {
+        let suiteName = "RemoteHostStoreMigration.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
             XCTFail("Failed to create temporary UserDefaults suite.")
             return
@@ -88,7 +88,7 @@ final class CodexAppMobileTests: XCTestCase {
             defaults.removePersistentDomain(forName: suiteName)
         }
 
-        let legacyProfile = SSHConnectionProfile(
+        let legacyProfile = SSHHostProfile(
             id: UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!,
             name: "Legacy Host",
             host: "legacy.example.com",
@@ -98,14 +98,75 @@ final class CodexAppMobileTests: XCTestCase {
         let encoded = try JSONEncoder().encode([legacyProfile])
         defaults.set(encoded, forKey: "ssh.connection.profiles.v1")
 
-        let credentialStore = InMemoryConnectionCredentialStore()
-        let store = RemoteConnectionStore(defaults: defaults, credentialStore: credentialStore)
+        let credentialStore = InMemoryHostCredentialStore()
+        let store = RemoteHostStore(defaults: defaults, credentialStore: credentialStore)
 
-        XCTAssertEqual(store.connections.count, 1)
-        XCTAssertEqual(store.connections[0].id, legacyProfile.id)
-        XCTAssertEqual(store.connections[0].host, legacyProfile.host)
-        XCTAssertEqual(store.connections[0].username, legacyProfile.username)
-        XCTAssertEqual(store.connections[0].appServerURL, "ws://legacy.example.com:8080")
+        XCTAssertEqual(store.hosts.count, 1)
+        XCTAssertEqual(store.hosts[0].id, legacyProfile.id)
+        XCTAssertEqual(store.hosts[0].host, legacyProfile.host)
+        XCTAssertEqual(store.hosts[0].username, legacyProfile.username)
+        XCTAssertEqual(store.hosts[0].appServerURL, "ws://legacy.example.com:8080")
+    }
+
+    func testProjectWorkspaceDecodesLegacyConnectionID() throws {
+        let payload = """
+        {
+          "id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+          "connectionID":"11111111-2222-3333-4444-555555555555",
+          "name":"workspace",
+          "remotePath":"/tmp/project",
+          "defaultModel":"",
+          "defaultApprovalPolicy":"on-request",
+          "createdAt":"2026-02-18T00:00:00Z",
+          "updatedAt":"2026-02-18T00:00:00Z"
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let workspace = try decoder.decode(ProjectWorkspace.self, from: Data(payload.utf8))
+        XCTAssertEqual(workspace.hostID.uuidString.lowercased(), "11111111-2222-3333-4444-555555555555")
+    }
+
+    func testThreadSummaryDecodesLegacyConnectionID() throws {
+        let payload = """
+        {
+          "threadID":"thread-1",
+          "connectionID":"11111111-2222-3333-4444-555555555555",
+          "workspaceID":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+          "preview":"hello",
+          "updatedAt":"2026-02-18T00:00:00Z",
+          "archived":false,
+          "cwd":"/tmp/project"
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let summary = try decoder.decode(CodexThreadSummary.self, from: Data(payload.utf8))
+        XCTAssertEqual(summary.hostID.uuidString.lowercased(), "11111111-2222-3333-4444-555555555555")
+    }
+
+    @MainActor
+    func testHostSessionStorePersistsSelections() {
+        let suiteName = "HostSessionStore.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Failed to create temporary UserDefaults suite.")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let hostID = UUID()
+        let projectID = UUID()
+        let store = HostSessionStore(defaults: defaults)
+        store.upsertSession(hostID: hostID)
+        store.selectProject(hostID: hostID, projectID: projectID)
+        store.selectThread(hostID: hostID, threadID: "thread-1")
+
+        let reloaded = HostSessionStore(defaults: defaults)
+        let session = reloaded.session(for: hostID)
+        XCTAssertEqual(session?.selectedProjectID, projectID)
+        XCTAssertEqual(session?.selectedThreadID, "thread-1")
     }
 
     func testJSONRPCEnvelopeDecodesNotification() throws {

@@ -4,7 +4,7 @@ import Security
 @preconcurrency import NIOSSH
 @preconcurrency import NIOTransportServices
 
-struct SSHConnectionProfile: Identifiable, Codable, Equatable {
+struct SSHHostProfile: Identifiable, Codable, Equatable {
     let id: UUID
     var name: String
     var host: String
@@ -26,7 +26,7 @@ struct SSHConnectionProfile: Identifiable, Codable, Equatable {
     }
 }
 
-struct SSHConnectionDraft {
+struct SSHHostDraft {
     var name: String
     var host: String
     var port: Int
@@ -42,8 +42,8 @@ struct SSHConnectionDraft {
 }
 
 @MainActor
-final class ConnectionStore: ObservableObject {
-    @Published private(set) var profiles: [SSHConnectionProfile] = []
+final class SSHHostStore: ObservableObject {
+    @Published private(set) var profiles: [SSHHostProfile] = []
 
     private let profilesKey = "ssh.connection.profiles.v1"
 
@@ -51,7 +51,7 @@ final class ConnectionStore: ObservableObject {
         self.loadProfiles()
     }
 
-    func upsert(profileID: UUID?, draft: SSHConnectionDraft) {
+    func upsert(profileID: UUID?, draft: SSHHostDraft) {
         let normalizedName = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedHost = draft.host.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedUser = draft.username.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -64,7 +64,7 @@ final class ConnectionStore: ObservableObject {
             self.profiles[index].username = normalizedUser
             PasswordVault.save(password: draft.password, for: profileID)
         } else {
-            let profile = SSHConnectionProfile(
+            let profile = SSHHostProfile(
                 name: normalizedName,
                 host: normalizedHost,
                 port: draft.port,
@@ -98,7 +98,7 @@ final class ConnectionStore: ObservableObject {
         }
 
         do {
-            self.profiles = try JSONDecoder().decode([SSHConnectionProfile].self, from: data)
+            self.profiles = try JSONDecoder().decode([SSHHostProfile].self, from: data)
             self.profiles.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         } catch {
             self.profiles = []
@@ -238,57 +238,52 @@ struct KnownHostRecord: Identifiable, Equatable {
     }
 }
 
-struct FallbackTerminalView: View {
-    @EnvironmentObject private var store: ConnectionStore
+struct TerminalTabView: View {
+    @EnvironmentObject private var appState: AppState
 
-    @State private var isPresentingEditor = false
     @State private var isPresentingKnownHosts = false
-    @State private var editingProfile: SSHConnectionProfile?
-    @State private var editingPassword = ""
+    @State private var navigationPath: [UUID] = []
+    @State private var consumedLaunchContextID: UUID?
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: self.$navigationPath) {
             Group {
-                if self.store.profiles.isEmpty {
+                if self.appState.remoteHostStore.hosts.isEmpty {
                     ContentUnavailableView(
-                        "No Connections",
+                        "No Hosts",
                         systemImage: "terminal",
-                        description: Text("Tap + to add your first SSH endpoint.")
+                        description: Text("Add a host from Hosts tab first.")
                     )
                 } else {
                     List {
-                        ForEach(self.store.profiles) { profile in
-                            NavigationLink {
-                                TerminalSessionView(profile: profile)
-                            } label: {
+                        ForEach(self.appState.remoteHostStore.hosts) { host in
+                            NavigationLink(value: host.id) {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(profile.name)
+                                    Text(host.name)
                                         .font(.headline)
-                                    Text("\(profile.username)@\(profile.host):\(profile.port)")
+                                    Text("\(host.username)@\(host.host):\(host.sshPort)")
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
                                         .textSelection(.enabled)
                                 }
                             }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button("Delete", role: .destructive) {
-                                    self.store.delete(profileID: profile.id)
-                                }
-
-                                Button("Edit") {
-                                    self.editingProfile = profile
-                                    self.editingPassword = self.store.password(for: profile.id)
-                                    self.isPresentingEditor = true
-                                }
-                                .tint(.orange)
-                            }
                         }
                     }
                 }
             }
+            .navigationDestination(for: UUID.self) { hostID in
+                if let host = self.appState.remoteHostStore.hosts.first(where: { $0.id == hostID }) {
+                    TerminalSessionView(
+                        host: host,
+                        initialCommand: self.initialCommand(for: hostID)
+                    )
+                } else {
+                    Text("Host not found.")
+                }
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Color(.systemBackground))
-            .navigationTitle("Connections")
+            .navigationTitle("Terminal")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Known Hosts") {
@@ -296,30 +291,37 @@ struct FallbackTerminalView: View {
                     }
                     .codexActionButtonStyle()
                 }
-
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        self.editingProfile = nil
-                        self.editingPassword = ""
-                        self.isPresentingEditor = true
-                    } label: {
-                        Label("Add", systemImage: "plus")
-                    }
-                    .codexActionButtonStyle()
-                }
-            }
-        }
-        .sheet(isPresented: self.$isPresentingEditor) {
-            ConnectionEditorView(
-                profile: self.editingProfile,
-                initialPassword: self.editingPassword
-            ) { draft in
-                self.store.upsert(profileID: self.editingProfile?.id, draft: draft)
             }
         }
         .sheet(isPresented: self.$isPresentingKnownHosts) {
             KnownHostsView()
         }
+        .onAppear {
+            self.consumeLaunchContextIfNeeded()
+        }
+        .onChange(of: self.appState.terminalLaunchContext) {
+            self.consumeLaunchContextIfNeeded()
+        }
+    }
+
+    private func initialCommand(for hostID: UUID) -> String? {
+        guard let launchContext = self.appState.terminalLaunchContext,
+              launchContext.hostID == hostID else {
+            return nil
+        }
+        return launchContext.initialCommand
+    }
+
+    private func consumeLaunchContextIfNeeded() {
+        guard let launchContext = self.appState.terminalLaunchContext else {
+            return
+        }
+        guard self.consumedLaunchContextID != launchContext.hostID else {
+            return
+        }
+
+        self.navigationPath = [launchContext.hostID]
+        self.consumedLaunchContextID = launchContext.hostID
     }
 }
 
@@ -412,9 +414,9 @@ struct KnownHostsView: View {
     }
 }
 
-struct ConnectionEditorView: View {
-    let profile: SSHConnectionProfile?
-    let onSave: (SSHConnectionDraft) -> Void
+struct SSHHostEditorView: View {
+    let profile: SSHHostProfile?
+    let onSave: (SSHHostDraft) -> Void
 
     @Environment(\.dismiss) private var dismiss
 
@@ -427,9 +429,9 @@ struct ConnectionEditorView: View {
     @State private var validationMessage: String?
 
     init(
-        profile: SSHConnectionProfile?,
+        profile: SSHHostProfile?,
         initialPassword: String,
-        onSave: @escaping (SSHConnectionDraft) -> Void
+        onSave: @escaping (SSHHostDraft) -> Void
     ) {
         self.profile = profile
         self.onSave = onSave
@@ -470,7 +472,7 @@ struct ConnectionEditorView: View {
                     }
                 }
             }
-            .navigationTitle(self.profile == nil ? "New Connection" : "Edit Connection")
+            .navigationTitle(self.profile == nil ? "New Host" : "Edit Host")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") {
@@ -495,7 +497,7 @@ struct ConnectionEditorView: View {
             return
         }
 
-        let draft = SSHConnectionDraft(
+        let draft = SSHHostDraft(
             name: self.name,
             host: self.host,
             port: port,
@@ -514,13 +516,15 @@ struct ConnectionEditorView: View {
 }
 
 struct TerminalSessionView: View {
-    let profile: SSHConnectionProfile
+    let host: RemoteHost
+    let initialCommand: String?
 
-    @EnvironmentObject private var store: ConnectionStore
+    @EnvironmentObject private var appState: AppState
 
     @StateObject private var viewModel = TerminalSessionViewModel()
     @State private var commandInput = ""
     @State private var didStartAutoConnect = false
+    @State private var pendingInitialCommand: String?
     @FocusState private var isCommandFieldFocused: Bool
 
     private var hasTerminalOutput: Bool {
@@ -540,12 +544,25 @@ struct TerminalSessionView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
         }
-        .navigationTitle(self.profile.name)
+        .navigationTitle(self.host.name)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             guard !self.didStartAutoConnect else { return }
             self.didStartAutoConnect = true
-            self.viewModel.connect(profile: self.profile, password: self.store.password(for: self.profile.id))
+            self.pendingInitialCommand = self.initialCommand
+            self.viewModel.connect(host: self.host, password: self.appState.remoteHostStore.password(for: self.host.id))
+        }
+        .onChange(of: self.viewModel.state) {
+            guard self.viewModel.state == .connected,
+                  let pendingInitialCommand,
+                  !pendingInitialCommand.isEmpty else {
+                return
+            }
+            self.viewModel.send(command: pendingInitialCommand + "\n")
+            self.pendingInitialCommand = nil
+            if self.appState.terminalLaunchContext?.hostID == self.host.id {
+                self.appState.terminalLaunchContext = nil
+            }
         }
         .onDisappear {
             self.viewModel.disconnect()
@@ -1271,12 +1288,12 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
         self.activeEndpoint = HostKeyStore.endpointKey(host: host, port: port)
     }
 
-    func connect(profile: SSHConnectionProfile, password: String) {
+    func connect(host: RemoteHost, password: String) {
         guard self.state == .disconnected else {
             return
         }
 
-        self.configureEndpoint(host: profile.host, port: profile.port)
+        self.configureEndpoint(host: host.host, port: host.sshPort)
         self.suppressErrorsUntilNextConnect = false
         self.ansiRenderer = ANSIRenderer()
         self.output = AttributedString()
@@ -1287,9 +1304,9 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
 
             do {
                 try self.engine.connect(
-                    host: profile.host,
-                    port: profile.port,
-                    username: profile.username,
+                    host: host.host,
+                    port: host.sshPort,
+                    username: host.username,
                     password: password.isEmpty ? nil : password
                 )
             } catch {
@@ -1845,6 +1862,6 @@ extension OptionalPasswordAuthenticationDelegate: NIOSSHClientUserAuthentication
 }
 
 #Preview {
-    FallbackTerminalView()
-        .environmentObject(ConnectionStore())
+    TerminalTabView()
+        .environmentObject(AppState())
 }

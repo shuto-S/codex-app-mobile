@@ -2,6 +2,14 @@
 
 最終更新: 2026-02-18
 
+## UI/UX更新（Host中心, 2026-02-18）
+- タブ構成を `Hosts / Sessions / Terminal` に再編。
+- `connection` 命名を `host` 命名へ移行（主要型/変数/UI文言）。
+- `HostSessionStore` を追加し、再開可能コンテキストを永続化。
+- `SessionWorkbench` で `Project + Thread + Prompt` を一画面操作。
+- Terminal は `TerminalLaunchContext` で `codex resume` などを自動投入。
+- Project追加時に SSH簡易ディレクトリブラウザを導入（失敗時は手入力フォールバック）。
+
 ## サマリー
 - 目標は「リモートPC上のCodexをiOSから安全に操作するGUI」。
 - 方式は `codex app-server`（WebSocket JSON-RPC）を主経路、既存SSHターミナルを障害時フォールバック。
