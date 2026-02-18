@@ -267,4 +267,60 @@ final class CodexAppMobileTests: XCTestCase {
         )
         XCTAssertTrue(connectionMessage.contains("[Connection]"))
     }
+
+    @MainActor
+    func testAppServerClientUnknownNotificationIsTolerated() {
+        let client = AppServerClient()
+        client.applyNotificationForTesting(
+            method: "item/unknownNotification",
+            params: .object(["threadId": .string("thread-1")])
+        )
+
+        XCTAssertTrue(client.eventLog.contains("Notification: item/unknownNotification"))
+        XCTAssertTrue(client.transcriptByThread.isEmpty)
+    }
+
+    @MainActor
+    func testAppServerClientNotificationUpdatesTranscriptAndTurnState() {
+        let client = AppServerClient()
+
+        client.applyNotificationForTesting(
+            method: "item/agentMessage/delta",
+            params: .object([
+                "threadId": .string("thread-1"),
+                "delta": .string("Hello")
+            ])
+        )
+        client.applyNotificationForTesting(
+            method: "item/agentMessage/delta",
+            params: .object([
+                "threadId": .string("thread-1"),
+                "delta": .string(" world")
+            ])
+        )
+
+        client.applyNotificationForTesting(
+            method: "turn/started",
+            params: .object([
+                "threadId": .string("thread-1"),
+                "turn": .object([
+                    "id": .string("turn-1")
+                ])
+            ])
+        )
+        XCTAssertEqual(client.activeTurnID(for: "thread-1"), "turn-1")
+
+        client.applyNotificationForTesting(
+            method: "turn/completed",
+            params: .object([
+                "threadId": .string("thread-1"),
+                "turn": .object([
+                    "status": .string("completed")
+                ])
+            ])
+        )
+
+        XCTAssertEqual(client.transcriptByThread["thread-1"], "Hello world")
+        XCTAssertNil(client.activeTurnID(for: "thread-1"))
+    }
 }

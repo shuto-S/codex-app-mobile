@@ -1696,6 +1696,10 @@ final class AppServerClient: ObservableObject {
         }
     }
 
+    func applyNotificationForTesting(method: String, params: JSONValue?) {
+        self.handleNotification(method: method, params: params)
+    }
+
     private func parsePendingRequest(id: JSONValue, method: String, params: JSONValue?) -> AppServerPendingRequest {
         let paramsObject = params?.objectValue ?? [:]
         let threadID = paramsObject["threadId"]?.stringValue ?? ""
