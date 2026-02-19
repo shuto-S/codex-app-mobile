@@ -724,12 +724,6 @@ final class ThreadBookmarkStore: ObservableObject {
     }
 }
 
-enum AppRootTab: Hashable {
-    case hosts
-    case sessions
-    case terminal
-}
-
 struct TerminalLaunchContext: Equatable, Identifiable {
     let id: UUID = UUID()
     let hostID: UUID
@@ -851,7 +845,6 @@ final class HostSessionStore: ObservableObject {
 
 @MainActor
 final class AppState: ObservableObject {
-    @Published var selectedTab: AppRootTab = .hosts
     @Published var selectedHostID: UUID?
     @Published var terminalLaunchContext: TerminalLaunchContext?
 
@@ -888,12 +881,6 @@ final class AppState: ObservableObject {
         if let hostID {
             self.hostSessionStore.upsertSession(hostID: hostID)
         }
-    }
-
-    func openHostSession(_ hostID: UUID) {
-        self.selectHost(hostID)
-        self.hostSessionStore.markOpened(hostID: hostID)
-        self.selectedTab = .sessions
     }
 
     func removeHost(hostID: UUID) {
@@ -2286,29 +2273,14 @@ struct ContentView: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        TabView(selection: self.$appState.selectedTab) {
-            HostsTabView()
-                .tabItem {
-                    Label("Hosts", systemImage: "network")
-                }
-                .tag(AppRootTab.hosts)
-
-            SessionsTabView()
-                .tabItem {
-                    Label("Sessions", systemImage: "clock.arrow.circlepath")
-                }
-                .tag(AppRootTab.sessions)
-
-            TerminalTabView()
-                .tabItem {
-                    Label("Terminal", systemImage: "terminal")
-                }
-                .tag(AppRootTab.terminal)
+        HostsView()
+        .sheet(item: self.$appState.terminalLaunchContext) { _ in
+            TerminalView()
         }
     }
 }
 
-struct HostsTabView: View {
+struct HostsView: View {
     @EnvironmentObject private var appState: AppState
 
     @State private var editorContext: HostEditorContext?
@@ -2325,8 +2297,8 @@ struct HostsTabView: View {
                 } else {
                     List {
                         ForEach(self.appState.remoteHostStore.hosts) { host in
-                            Button {
-                                self.appState.openHostSession(host.id)
+                            NavigationLink {
+                                SessionWorkbenchView(host: host)
                             } label: {
                                 HStack(alignment: .center, spacing: 10) {
                                     VStack(alignment: .leading, spacing: 4) {
@@ -2349,7 +2321,11 @@ struct HostsTabView: View {
                                     }
                                 }
                             }
-                            .buttonStyle(.plain)
+                            .simultaneousGesture(
+                                TapGesture().onEnded {
+                                    self.appState.selectHost(host.id)
+                                }
+                            )
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 Button("Delete", role: .destructive) {
                                     self.appState.removeHost(hostID: host.id)
@@ -2362,6 +2338,16 @@ struct HostsTabView: View {
                                     )
                                 }
                                 .tint(.orange)
+
+                                Button("Terminal") {
+                                    self.appState.terminalLaunchContext = TerminalLaunchContext(
+                                        hostID: host.id,
+                                        projectPath: nil,
+                                        threadID: nil,
+                                        initialCommand: "codex"
+                                    )
+                                }
+                                .tint(.blue)
                             }
                         }
                     }
@@ -2507,57 +2493,6 @@ struct RemoteHostEditorView: View {
                     .codexActionButtonStyle()
                 }
             }
-        }
-    }
-}
-
-struct SessionsTabView: View {
-    @EnvironmentObject private var appState: AppState
-
-    private var sessionRows: [HostSessionContext] {
-        self.appState.hostSessionStore.sessions.filter { context in
-            self.appState.remoteHostStore.hosts.contains(where: { $0.id == context.hostID })
-        }
-    }
-
-    var body: some View {
-        NavigationStack {
-            Group {
-                if self.sessionRows.isEmpty {
-                    ContentUnavailableView(
-                        "No Sessions",
-                        systemImage: "clock.arrow.circlepath",
-                        description: Text("Select a host from Hosts tab to create a resumable session.")
-                    )
-                } else {
-                    List {
-                        ForEach(self.sessionRows) { context in
-                            if let host = self.appState.remoteHostStore.hosts.first(where: { $0.id == context.hostID }) {
-                                NavigationLink {
-                                    SessionWorkbenchView(host: host)
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(host.name)
-                                            .font(.headline)
-                                        Text("\(host.username)@\(host.host):\(host.sshPort)")
-                                            .font(.subheadline)
-                                            .foregroundStyle(.secondary)
-                                        Text("Last active: \(context.lastActiveAt.formatted(date: .abbreviated, time: .shortened))")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button("Remove", role: .destructive) {
-                                        self.appState.hostSessionStore.removeSession(hostID: context.hostID)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Sessions")
         }
     }
 }
@@ -3879,7 +3814,6 @@ struct SessionWorkbenchView: View {
             threadID: self.selectedThreadID,
             initialCommand: initialCommand
         )
-        self.appState.selectedTab = .terminal
     }
 }
 

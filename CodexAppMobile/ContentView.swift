@@ -238,7 +238,7 @@ struct KnownHostRecord: Identifiable, Equatable {
     }
 }
 
-struct TerminalTabView: View {
+struct TerminalView: View {
     @EnvironmentObject private var appState: AppState
 
     @State private var isPresentingKnownHosts = false
@@ -252,7 +252,7 @@ struct TerminalTabView: View {
                     ContentUnavailableView(
                         "No Hosts",
                         systemImage: "terminal",
-                        description: Text("Add a host from Hosts tab first.")
+                        description: Text("Add a host from Hosts first.")
                     )
                 } else {
                     List {
@@ -1881,6 +1881,6 @@ extension OptionalPasswordAuthenticationDelegate: NIOSSHClientUserAuthentication
 }
 
 #Preview {
-    TerminalTabView()
+    TerminalView()
         .environmentObject(AppState())
 }
