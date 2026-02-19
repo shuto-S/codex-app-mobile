@@ -1444,8 +1444,7 @@ final class AppServerClient: ObservableObject {
     }
 
     private func openConnection(to host: RemoteHost, resetReconnectAttempts: Bool) async throws {
-        let fallbackEndpointHost = Self.preferredEndpointHost(primary: host.host, secondary: host.name)
-        let url = try Self.resolveAppServerURL(raw: host.appServerURL, fallbackHost: fallbackEndpointHost)
+        let url = try Self.resolveAppServerURL(raw: host.appServerURL)
 
         self.reconnectTask?.cancel()
         self.teardownConnection(closeCode: .normalClosure)
@@ -1886,17 +1885,13 @@ final class AppServerClient: ObservableObject {
         return true
     }
 
-    static func resolveAppServerURL(raw: String, fallbackHost: String) throws -> URL {
-        var normalizedRaw = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    static func resolveAppServerURL(raw: String) throws -> URL {
+        let normalizedRaw = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedRaw.isEmpty else {
             throw AppServerClientError.invalidURL
         }
 
-        if normalizedRaw.contains("://") == false {
-            normalizedRaw = "ws://\(normalizedRaw)"
-        }
-
-        guard var components = URLComponents(string: normalizedRaw),
+        guard let components = URLComponents(string: normalizedRaw),
               let scheme = components.scheme?.lowercased(),
               scheme == "ws" || scheme == "wss"
         else {
@@ -1909,37 +1904,14 @@ final class AppServerClient: ObservableObject {
             throw AppServerClientError.invalidURL
         }
 
-        if Self.isUnroutableEndpointHost(endpointHost) {
-            let fallback = fallbackHost.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !fallback.isEmpty, Self.isUnroutableEndpointHost(fallback) == false else {
-                throw AppServerClientError.invalidEndpointHost(endpointHost)
-            }
-            components.host = fallback
-        }
-
-        if components.port == nil {
-            components.port = 8080
+        guard Self.isUnroutableEndpointHost(endpointHost) == false else {
+            throw AppServerClientError.invalidEndpointHost(endpointHost)
         }
 
         guard let resolvedURL = components.url else {
             throw AppServerClientError.invalidURL
         }
         return resolvedURL
-    }
-
-    static func preferredEndpointHost(primary: String, secondary: String) -> String {
-        let trimmedPrimary = primary.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedSecondary = secondary.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if trimmedPrimary.isEmpty {
-            return trimmedSecondary
-        }
-
-        if Self.looksLikeSingleLabelHost(trimmedPrimary), Self.looksLikeIPOrFQDN(trimmedSecondary) {
-            return trimmedSecondary
-        }
-
-        return trimmedPrimary
     }
 
     private static func versionComponents(_ rawVersion: String) -> [Int] {
@@ -1980,14 +1952,6 @@ final class AppServerClient: ObservableObject {
         default:
             return false
         }
-    }
-
-    private static func looksLikeSingleLabelHost(_ value: String) -> Bool {
-        value.contains(".") == false && value.contains(":") == false
-    }
-
-    private static func looksLikeIPOrFQDN(_ value: String) -> Bool {
-        value.contains(".") || value.contains(":")
     }
 
     private static func errorCategory(for error: Error) -> AppServerErrorCategory {

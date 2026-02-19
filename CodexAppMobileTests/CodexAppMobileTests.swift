@@ -361,29 +361,18 @@ final class CodexAppMobileTests: XCTestCase {
     }
 
     @MainActor
-    func testAppServerClientResolveAppServerURLRewritesWildcardHost() throws {
+    func testAppServerClientResolveAppServerURLKeepsValidInput() throws {
         let resolved = try AppServerClient.resolveAppServerURL(
-            raw: "ws://0.0.0.0:8080",
-            fallbackHost: "100.103.155.65"
+            raw: "ws://100.103.155.65:8080"
         )
         XCTAssertEqual(resolved.absoluteString, "ws://100.103.155.65:8080")
     }
 
     @MainActor
-    func testAppServerClientResolveAppServerURLAddsSchemeAndPort() throws {
-        let resolved = try AppServerClient.resolveAppServerURL(
-            raw: "100.103.155.65",
-            fallbackHost: "100.103.155.65"
-        )
-        XCTAssertEqual(resolved.absoluteString, "ws://100.103.155.65:8080")
-    }
-
-    @MainActor
-    func testAppServerClientResolveAppServerURLRejectsUnroutableFallback() {
+    func testAppServerClientResolveAppServerURLRejectsUnroutableHost() {
         XCTAssertThrowsError(
             try AppServerClient.resolveAppServerURL(
-                raw: "ws://0.0.0.0:8080",
-                fallbackHost: "127.0.0.1"
+                raw: "ws://0.0.0.0:8080"
             )
         ) { error in
             guard case AppServerClientError.invalidEndpointHost(let host) = error else {
@@ -394,12 +383,16 @@ final class CodexAppMobileTests: XCTestCase {
     }
 
     @MainActor
-    func testAppServerClientPreferredEndpointHostUsesSecondaryWhenPrimaryIsSingleLabel() {
-        let resolved = AppServerClient.preferredEndpointHost(
-            primary: "mini",
-            secondary: "100.103.155.65"
-        )
-        XCTAssertEqual(resolved, "100.103.155.65")
+    func testAppServerClientResolveAppServerURLRejectsMissingScheme() {
+        XCTAssertThrowsError(
+            try AppServerClient.resolveAppServerURL(
+                raw: "100.103.155.65:8080"
+            )
+        ) { error in
+            guard case AppServerClientError.invalidURL = error else {
+                return XCTFail("Expected invalidURL error.")
+            }
+        }
     }
 
     @MainActor
