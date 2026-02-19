@@ -17,19 +17,6 @@ enum TransportKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum HostAuthMode: String, Codable, CaseIterable, Identifiable {
-    case remotePCManaged
-
-    var id: String { self.rawValue }
-
-    var displayName: String {
-        switch self {
-        case .remotePCManaged:
-            return "Remote PC Managed"
-        }
-    }
-}
-
 enum CodexApprovalPolicy: String, Codable, CaseIterable, Identifiable {
     case untrusted
     case onFailure = "on-failure"
@@ -60,7 +47,6 @@ struct RemoteHost: Identifiable, Codable, Equatable {
     var username: String
     var appServerURL: String
     var preferredTransport: TransportKind
-    var authMode: HostAuthMode
     var createdAt: Date
     var updatedAt: Date
 
@@ -72,7 +58,6 @@ struct RemoteHost: Identifiable, Codable, Equatable {
         username: String,
         appServerURL: String,
         preferredTransport: TransportKind = .appServerWS,
-        authMode: HostAuthMode = .remotePCManaged,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -83,7 +68,6 @@ struct RemoteHost: Identifiable, Codable, Equatable {
         self.username = username
         self.appServerURL = appServerURL
         self.preferredTransport = preferredTransport
-        self.authMode = authMode
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -99,9 +83,9 @@ struct RemoteHostDraft {
     var host: String
     var sshPort: Int
     var username: String
-    var appServerURL: String
+    var appServerHost: String
+    var appServerPort: Int
     var preferredTransport: TransportKind
-    var authMode: HostAuthMode
     var password: String
 
     static let empty = RemoteHostDraft(
@@ -109,9 +93,9 @@ struct RemoteHostDraft {
         host: "",
         sshPort: 22,
         username: "",
-        appServerURL: "",
+        appServerHost: "",
+        appServerPort: 8080,
         preferredTransport: .appServerWS,
-        authMode: .remotePCManaged,
         password: ""
     )
 
@@ -124,7 +108,19 @@ struct RemoteHostDraft {
               !trimmedHost.isEmpty,
               !trimmedUser.isEmpty,
               (1...65535).contains(self.sshPort),
-              let url = URL(string: self.appServerURL),
+              (1...65535).contains(self.appServerPort)
+        else {
+            return false
+        }
+
+        let trimmedAppServerHost = self.appServerHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedAppServerHost.contains("://") {
+            return false
+        }
+
+        let endpointHost = trimmedAppServerHost.isEmpty ? trimmedHost : trimmedAppServerHost
+        let endpoint = RemoteHost.defaultAppServerURL(host: endpointHost, port: self.appServerPort)
+        guard let url = URL(string: endpoint),
               let scheme = url.scheme?.lowercased(),
               scheme == "ws" || scheme == "wss"
         else {
@@ -139,18 +135,18 @@ struct RemoteHostDraft {
         host: String,
         sshPort: Int,
         username: String,
-        appServerURL: String,
+        appServerHost: String,
+        appServerPort: Int,
         preferredTransport: TransportKind,
-        authMode: HostAuthMode,
         password: String
     ) {
         self.name = name
         self.host = host
         self.sshPort = sshPort
         self.username = username
-        self.appServerURL = appServerURL
+        self.appServerHost = appServerHost
+        self.appServerPort = appServerPort
         self.preferredTransport = preferredTransport
-        self.authMode = authMode
         self.password = password
     }
 
@@ -159,9 +155,15 @@ struct RemoteHostDraft {
         self.host = host.host
         self.sshPort = host.sshPort
         self.username = host.username
-        self.appServerURL = host.appServerURL
+        if let components = URLComponents(string: host.appServerURL),
+           let endpointHost = components.host {
+            self.appServerHost = endpointHost == host.host ? "" : endpointHost
+            self.appServerPort = components.port ?? 8080
+        } else {
+            self.appServerHost = ""
+            self.appServerPort = 8080
+        }
         self.preferredTransport = host.preferredTransport
-        self.authMode = host.authMode
         self.password = password
     }
 }
@@ -440,7 +442,12 @@ final class RemoteHostStore: ObservableObject {
         let trimmedName = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedHost = draft.host.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedUser = draft.username.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedURL = draft.appServerURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAppServerHost = draft.appServerHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedAppServerHost = trimmedAppServerHost.isEmpty ? trimmedHost : trimmedAppServerHost
+        let resolvedAppServerURL = RemoteHost.defaultAppServerURL(
+            host: resolvedAppServerHost,
+            port: draft.appServerPort
+        )
         var updatedHosts = self.hosts
 
         if let hostID,
@@ -450,9 +457,8 @@ final class RemoteHostStore: ObservableObject {
             hostRecord.host = trimmedHost
             hostRecord.sshPort = draft.sshPort
             hostRecord.username = trimmedUser
-            hostRecord.appServerURL = trimmedURL
+            hostRecord.appServerURL = resolvedAppServerURL
             hostRecord.preferredTransport = draft.preferredTransport
-            hostRecord.authMode = draft.authMode
             hostRecord.updatedAt = Date()
             updatedHosts[index] = hostRecord
             self.credentialStore.save(password: draft.password, for: hostID)
@@ -462,9 +468,8 @@ final class RemoteHostStore: ObservableObject {
                 host: trimmedHost,
                 sshPort: draft.sshPort,
                 username: trimmedUser,
-                appServerURL: trimmedURL,
-                preferredTransport: draft.preferredTransport,
-                authMode: draft.authMode
+                appServerURL: resolvedAppServerURL,
+                preferredTransport: draft.preferredTransport
             )
             updatedHosts.append(hostRecord)
             self.credentialStore.save(password: draft.password, for: hostRecord.id)
@@ -2323,39 +2328,50 @@ struct RemoteHostEditorView: View {
     @State private var hostAddress: String
     @State private var sshPortText: String
     @State private var username: String
-    @State private var appServerURL: String
+    @State private var appServerHost: String
+    @State private var appServerPortText: String
     @State private var password: String
     @State private var preferredTransport: TransportKind
-    @State private var authMode: HostAuthMode
 
     init(host: RemoteHost?, initialPassword: String, onSave: @escaping (RemoteHostDraft) -> Void) {
         self.host = host
         self.initialPassword = initialPassword
         self.onSave = onSave
 
-        _displayName = State(initialValue: host?.name ?? "")
-        _hostAddress = State(initialValue: host?.host ?? "")
-        _sshPortText = State(initialValue: String(host?.sshPort ?? 22))
-        _username = State(initialValue: host?.username ?? "")
-        _appServerURL = State(initialValue: host?.appServerURL ?? "")
-        _password = State(initialValue: initialPassword)
-        _preferredTransport = State(initialValue: host?.preferredTransport ?? .appServerWS)
-        _authMode = State(initialValue: host?.authMode ?? .remotePCManaged)
+        let initialDraft: RemoteHostDraft
+        if let host {
+            initialDraft = RemoteHostDraft(host: host, password: initialPassword)
+        } else {
+            initialDraft = .empty
+        }
+
+        _displayName = State(initialValue: initialDraft.name)
+        _hostAddress = State(initialValue: initialDraft.host)
+        _sshPortText = State(initialValue: String(initialDraft.sshPort))
+        _username = State(initialValue: initialDraft.username)
+        _appServerHost = State(initialValue: initialDraft.appServerHost)
+        _appServerPortText = State(initialValue: String(initialDraft.appServerPort))
+        _password = State(initialValue: initialDraft.password)
+        _preferredTransport = State(initialValue: initialDraft.preferredTransport)
     }
 
-    private var parsedPort: Int {
+    private var parsedSSHPort: Int {
         Int(self.sshPortText) ?? 22
+    }
+
+    private var parsedAppServerPort: Int {
+        Int(self.appServerPortText) ?? 8080
     }
 
     private var draft: RemoteHostDraft {
         RemoteHostDraft(
             name: self.displayName,
             host: self.hostAddress,
-            sshPort: self.parsedPort,
+            sshPort: self.parsedSSHPort,
             username: self.username,
-            appServerURL: self.appServerURL,
+            appServerHost: self.appServerHost,
+            appServerPort: self.parsedAppServerPort,
             preferredTransport: self.preferredTransport,
-            authMode: self.authMode,
             password: self.password
         )
     }
@@ -2376,36 +2392,21 @@ struct RemoteHostEditorView: View {
                 }
 
                 Section("App Server") {
-                    TextField("ws://100.x.x.x:8080", text: self.$appServerURL)
+                    TextField("Host (default: Basic Host)", text: self.$appServerHost)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
-                        .textContentType(.URL)
+                    TextField("Port", text: self.$appServerPortText)
+                        .keyboardType(.numberPad)
 
                     Picker("Transport", selection: self.$preferredTransport) {
                         ForEach(TransportKind.allCases) { transport in
                             Text(transport.displayName).tag(transport)
                         }
                     }
-
-                    Picker("Auth", selection: self.$authMode) {
-                        ForEach(HostAuthMode.allCases) { mode in
-                            Text(mode.displayName).tag(mode)
-                        }
-                    }
                 }
 
                 Section("SSH") {
                     SecureField("Password (optional)", text: self.$password)
-                }
-
-                if self.host == nil {
-                    Section {
-                        Button("Generate app-server URL from host") {
-                            let normalized = self.hostAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !normalized.isEmpty else { return }
-                            self.appServerURL = RemoteHost.defaultAppServerURL(host: normalized)
-                        }
-                    }
                 }
             }
             .navigationTitle(self.host == nil ? "New Host" : "Edit Host")

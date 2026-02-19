@@ -128,9 +128,9 @@ final class CodexAppMobileTests: XCTestCase {
                 host: "a.example.com",
                 sshPort: 22,
                 username: "alice",
-                appServerURL: "ws://a.example.com:8080",
+                appServerHost: "",
+                appServerPort: 8080,
                 preferredTransport: .appServerWS,
-                authMode: .remotePCManaged,
                 password: "old-password"
             )
         )
@@ -147,9 +147,9 @@ final class CodexAppMobileTests: XCTestCase {
                 host: "z.example.com",
                 sshPort: 2222,
                 username: "zack",
-                appServerURL: "ws://z.example.com:9000",
+                appServerHost: "z.example.com",
+                appServerPort: 9000,
                 preferredTransport: .ssh,
-                authMode: .remotePCManaged,
                 password: "new-password"
             )
         )
@@ -184,9 +184,9 @@ final class CodexAppMobileTests: XCTestCase {
                 host: "a.example.com",
                 sshPort: 22,
                 username: "alice",
-                appServerURL: "ws://a.example.com:8080",
+                appServerHost: "",
+                appServerPort: 8080,
                 preferredTransport: .appServerWS,
-                authMode: .remotePCManaged,
                 password: ""
             )
         )
@@ -197,9 +197,9 @@ final class CodexAppMobileTests: XCTestCase {
                 host: "b.example.com",
                 sshPort: 22,
                 username: "bob",
-                appServerURL: "ws://b.example.com:8080",
+                appServerHost: "",
+                appServerPort: 8080,
                 preferredTransport: .appServerWS,
-                authMode: .remotePCManaged,
                 password: ""
             )
         )
