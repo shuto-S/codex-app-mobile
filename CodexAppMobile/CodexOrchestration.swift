@@ -1021,6 +1021,7 @@ struct JSONRPCEnvelope: Codable, Equatable {
 
 enum AppServerClientError: LocalizedError {
     case invalidURL
+    case invalidEndpointHost(String)
     case notConnected
     case timeout(method: String)
     case remote(code: Int, message: String)
@@ -1032,6 +1033,8 @@ enum AppServerClientError: LocalizedError {
         switch self {
         case .invalidURL:
             return "Invalid app-server URL. Use ws:// or wss://."
+        case .invalidEndpointHost(let host):
+            return "Invalid app-server host (\(host)). Use a reachable host or Tailscale IP, not 0.0.0.0/localhost."
         case .notConnected:
             return "Not connected to app-server."
         case .timeout(let method):
@@ -1441,12 +1444,8 @@ final class AppServerClient: ObservableObject {
     }
 
     private func openConnection(to host: RemoteHost, resetReconnectAttempts: Bool) async throws {
-        guard let url = URL(string: host.appServerURL),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "ws" || scheme == "wss"
-        else {
-            throw AppServerClientError.invalidURL
-        }
+        let fallbackEndpointHost = Self.preferredEndpointHost(primary: host.host, secondary: host.name)
+        let url = try Self.resolveAppServerURL(raw: host.appServerURL, fallbackHost: fallbackEndpointHost)
 
         self.reconnectTask?.cancel()
         self.teardownConnection(closeCode: .normalClosure)
@@ -1459,7 +1458,7 @@ final class AppServerClient: ObservableObject {
         self.lastErrorMessage = ""
         self.autoReconnectEnabled = true
         self.lastHost = host
-        self.connectedEndpoint = host.appServerURL
+        self.connectedEndpoint = url.absoluteString
         self.diagnostics = AppServerDiagnostics(
             minimumRequiredVersion: Self.minimumSupportedCLIVersion
         )
@@ -1491,7 +1490,7 @@ final class AppServerClient: ObservableObject {
             }
             self.state = .connected
             self.diagnostics.lastCheckedAt = Date()
-            self.appendEvent("Connected: \(host.name) @ \(host.appServerURL)")
+            self.appendEvent("Connected: \(host.name) @ \(url.absoluteString)")
         } catch {
             self.lastErrorMessage = self.userFacingMessage(for: error)
             self.state = .disconnected
@@ -1887,6 +1886,62 @@ final class AppServerClient: ObservableObject {
         return true
     }
 
+    static func resolveAppServerURL(raw: String, fallbackHost: String) throws -> URL {
+        var normalizedRaw = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedRaw.isEmpty else {
+            throw AppServerClientError.invalidURL
+        }
+
+        if normalizedRaw.contains("://") == false {
+            normalizedRaw = "ws://\(normalizedRaw)"
+        }
+
+        guard var components = URLComponents(string: normalizedRaw),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "ws" || scheme == "wss"
+        else {
+            throw AppServerClientError.invalidURL
+        }
+
+        guard let endpointHost = components.host?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !endpointHost.isEmpty
+        else {
+            throw AppServerClientError.invalidURL
+        }
+
+        if Self.isUnroutableEndpointHost(endpointHost) {
+            let fallback = fallbackHost.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !fallback.isEmpty, Self.isUnroutableEndpointHost(fallback) == false else {
+                throw AppServerClientError.invalidEndpointHost(endpointHost)
+            }
+            components.host = fallback
+        }
+
+        if components.port == nil {
+            components.port = 8080
+        }
+
+        guard let resolvedURL = components.url else {
+            throw AppServerClientError.invalidURL
+        }
+        return resolvedURL
+    }
+
+    static func preferredEndpointHost(primary: String, secondary: String) -> String {
+        let trimmedPrimary = primary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSecondary = secondary.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmedPrimary.isEmpty {
+            return trimmedSecondary
+        }
+
+        if Self.looksLikeSingleLabelHost(trimmedPrimary), Self.looksLikeIPOrFQDN(trimmedSecondary) {
+            return trimmedSecondary
+        }
+
+        return trimmedPrimary
+    }
+
     private static func versionComponents(_ rawVersion: String) -> [Int] {
         let matches = rawVersion.matches(of: /(\d+)/)
         return matches.compactMap { Int($0.output.1) }
@@ -1918,12 +1973,29 @@ final class AppServerClient: ObservableObject {
         return cursor
     }
 
+    private static func isUnroutableEndpointHost(_ host: String) -> Bool {
+        switch host.lowercased() {
+        case "0.0.0.0", "::", "::1", "localhost", "127.0.0.1":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func looksLikeSingleLabelHost(_ value: String) -> Bool {
+        value.contains(".") == false && value.contains(":") == false
+    }
+
+    private static func looksLikeIPOrFQDN(_ value: String) -> Bool {
+        value.contains(".") || value.contains(":")
+    }
+
     private static func errorCategory(for error: Error) -> AppServerErrorCategory {
         if let appServerError = error as? AppServerClientError {
             switch appServerError {
             case .incompatibleVersion:
                 return .compatibility
-            case .invalidURL, .notConnected, .timeout:
+            case .invalidURL, .invalidEndpointHost, .notConnected, .timeout:
                 return .connection
             case .malformedResponse, .unsupportedMessage:
                 return .protocolError

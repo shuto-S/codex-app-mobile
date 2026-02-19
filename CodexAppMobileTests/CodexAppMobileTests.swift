@@ -361,6 +361,48 @@ final class CodexAppMobileTests: XCTestCase {
     }
 
     @MainActor
+    func testAppServerClientResolveAppServerURLRewritesWildcardHost() throws {
+        let resolved = try AppServerClient.resolveAppServerURL(
+            raw: "ws://0.0.0.0:8080",
+            fallbackHost: "100.103.155.65"
+        )
+        XCTAssertEqual(resolved.absoluteString, "ws://100.103.155.65:8080")
+    }
+
+    @MainActor
+    func testAppServerClientResolveAppServerURLAddsSchemeAndPort() throws {
+        let resolved = try AppServerClient.resolveAppServerURL(
+            raw: "100.103.155.65",
+            fallbackHost: "100.103.155.65"
+        )
+        XCTAssertEqual(resolved.absoluteString, "ws://100.103.155.65:8080")
+    }
+
+    @MainActor
+    func testAppServerClientResolveAppServerURLRejectsUnroutableFallback() {
+        XCTAssertThrowsError(
+            try AppServerClient.resolveAppServerURL(
+                raw: "ws://0.0.0.0:8080",
+                fallbackHost: "127.0.0.1"
+            )
+        ) { error in
+            guard case AppServerClientError.invalidEndpointHost(let host) = error else {
+                return XCTFail("Expected invalidEndpointHost error.")
+            }
+            XCTAssertEqual(host, "0.0.0.0")
+        }
+    }
+
+    @MainActor
+    func testAppServerClientPreferredEndpointHostUsesSecondaryWhenPrimaryIsSingleLabel() {
+        let resolved = AppServerClient.preferredEndpointHost(
+            primary: "mini",
+            secondary: "100.103.155.65"
+        )
+        XCTAssertEqual(resolved, "100.103.155.65")
+    }
+
+    @MainActor
     func testAppServerClientUserFacingMessageCategories() {
         let client = AppServerClient()
 
@@ -373,6 +415,11 @@ final class CodexAppMobileTests: XCTestCase {
             for: AppServerClientError.timeout(method: "thread/list")
         )
         XCTAssertTrue(connectionMessage.contains("[Connection]"))
+
+        let invalidHostMessage = client.userFacingMessage(
+            for: AppServerClientError.invalidEndpointHost("0.0.0.0")
+        )
+        XCTAssertTrue(invalidHostMessage.contains("[Connection]"))
     }
 
     @MainActor
