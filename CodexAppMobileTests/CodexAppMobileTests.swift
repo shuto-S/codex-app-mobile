@@ -108,6 +108,113 @@ final class CodexAppMobileTests: XCTestCase {
         XCTAssertEqual(store.hosts[0].appServerURL, "ws://legacy.example.com:8080")
     }
 
+    @MainActor
+    func testRemoteHostStoreUpsertUpdatesExistingHost() {
+        let suiteName = "RemoteHostStoreUpsert.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Failed to create temporary UserDefaults suite.")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let credentialStore = InMemoryHostCredentialStore()
+        let store = RemoteHostStore(defaults: defaults, credentialStore: credentialStore)
+        store.upsert(
+            hostID: nil,
+            draft: RemoteHostDraft(
+                name: "Host A",
+                host: "a.example.com",
+                sshPort: 22,
+                username: "alice",
+                appServerURL: "ws://a.example.com:8080",
+                preferredTransport: .appServerWS,
+                authMode: .remotePCManaged,
+                password: "old-password"
+            )
+        )
+
+        guard let hostID = store.hosts.first?.id else {
+            XCTFail("Expected a host to be created.")
+            return
+        }
+
+        store.upsert(
+            hostID: hostID,
+            draft: RemoteHostDraft(
+                name: "Host Z",
+                host: "z.example.com",
+                sshPort: 2222,
+                username: "zack",
+                appServerURL: "ws://z.example.com:9000",
+                preferredTransport: .ssh,
+                authMode: .remotePCManaged,
+                password: "new-password"
+            )
+        )
+
+        XCTAssertEqual(store.hosts.count, 1)
+        XCTAssertEqual(store.hosts[0].name, "Host Z")
+        XCTAssertEqual(store.hosts[0].host, "z.example.com")
+        XCTAssertEqual(store.hosts[0].sshPort, 2222)
+        XCTAssertEqual(store.hosts[0].username, "zack")
+        XCTAssertEqual(store.hosts[0].appServerURL, "ws://z.example.com:9000")
+        XCTAssertEqual(store.hosts[0].preferredTransport, .ssh)
+        XCTAssertEqual(store.password(for: hostID), "new-password")
+    }
+
+    @MainActor
+    func testRemoteHostStoreDeleteRemovesHostFromPersistedList() {
+        let suiteName = "RemoteHostStoreDelete.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Failed to create temporary UserDefaults suite.")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let credentialStore = InMemoryHostCredentialStore()
+        let store = RemoteHostStore(defaults: defaults, credentialStore: credentialStore)
+        store.upsert(
+            hostID: nil,
+            draft: RemoteHostDraft(
+                name: "Host A",
+                host: "a.example.com",
+                sshPort: 22,
+                username: "alice",
+                appServerURL: "ws://a.example.com:8080",
+                preferredTransport: .appServerWS,
+                authMode: .remotePCManaged,
+                password: ""
+            )
+        )
+        store.upsert(
+            hostID: nil,
+            draft: RemoteHostDraft(
+                name: "Host B",
+                host: "b.example.com",
+                sshPort: 22,
+                username: "bob",
+                appServerURL: "ws://b.example.com:8080",
+                preferredTransport: .appServerWS,
+                authMode: .remotePCManaged,
+                password: ""
+            )
+        )
+
+        let removedHostID = store.hosts[0].id
+        store.delete(hostID: removedHostID)
+
+        XCTAssertEqual(store.hosts.count, 1)
+        XCTAssertFalse(store.hosts.contains(where: { $0.id == removedHostID }))
+
+        let reloaded = RemoteHostStore(defaults: defaults, credentialStore: credentialStore)
+        XCTAssertEqual(reloaded.hosts.count, 1)
+        XCTAssertFalse(reloaded.hosts.contains(where: { $0.id == removedHostID }))
+    }
+
     func testProjectWorkspaceDecodesLegacyConnectionID() throws {
         let payload = """
         {

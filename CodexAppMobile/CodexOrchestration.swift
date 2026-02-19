@@ -441,17 +441,20 @@ final class RemoteHostStore: ObservableObject {
         let trimmedHost = draft.host.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedUser = draft.username.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedURL = draft.appServerURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        var updatedHosts = self.hosts
 
         if let hostID,
-           let index = self.hosts.firstIndex(where: { $0.id == hostID }) {
-            self.hosts[index].name = trimmedName
-            self.hosts[index].host = trimmedHost
-            self.hosts[index].sshPort = draft.sshPort
-            self.hosts[index].username = trimmedUser
-            self.hosts[index].appServerURL = trimmedURL
-            self.hosts[index].preferredTransport = draft.preferredTransport
-            self.hosts[index].authMode = draft.authMode
-            self.hosts[index].updatedAt = Date()
+           let index = updatedHosts.firstIndex(where: { $0.id == hostID }) {
+            var hostRecord = updatedHosts[index]
+            hostRecord.name = trimmedName
+            hostRecord.host = trimmedHost
+            hostRecord.sshPort = draft.sshPort
+            hostRecord.username = trimmedUser
+            hostRecord.appServerURL = trimmedURL
+            hostRecord.preferredTransport = draft.preferredTransport
+            hostRecord.authMode = draft.authMode
+            hostRecord.updatedAt = Date()
+            updatedHosts[index] = hostRecord
             self.credentialStore.save(password: draft.password, for: hostID)
         } else {
             let hostRecord = RemoteHost(
@@ -463,17 +466,16 @@ final class RemoteHostStore: ObservableObject {
                 preferredTransport: draft.preferredTransport,
                 authMode: draft.authMode
             )
-            self.hosts.append(hostRecord)
+            updatedHosts.append(hostRecord)
             self.credentialStore.save(password: draft.password, for: hostRecord.id)
         }
 
-        self.sortAndPersist()
+        self.replaceHosts(updatedHosts, persist: true)
     }
 
     func delete(hostID: UUID) {
-        self.hosts.removeAll(where: { $0.id == hostID })
+        self.replaceHosts(self.hosts.filter { $0.id != hostID }, persist: true)
         self.credentialStore.deletePassword(for: hostID)
-        self.persistHosts()
     }
 
     func password(for hostID: UUID) -> String {
@@ -487,20 +489,17 @@ final class RemoteHostStore: ObservableObject {
     private func loadHosts() {
         if let data = self.defaults.data(forKey: self.hostsKey),
            let decoded = try? JSONDecoder().decode([RemoteHost].self, from: data) {
-            self.hosts = decoded
-            self.hosts.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            self.replaceHosts(decoded, persist: false)
             return
         }
 
         if let data = self.defaults.data(forKey: self.legacyRemoteHostsKey),
            let decoded = try? JSONDecoder().decode([RemoteHost].self, from: data) {
-            self.hosts = decoded
-            self.sortAndPersist()
+            self.replaceHosts(decoded, persist: true)
             return
         }
 
-        self.hosts = self.migrateFromLegacyProfilesIfNeeded()
-        self.sortAndPersist()
+        self.replaceHosts(self.migrateFromLegacyProfilesIfNeeded(), persist: true)
     }
 
     private func migrateFromLegacyProfilesIfNeeded() -> [RemoteHost] {
@@ -522,9 +521,11 @@ final class RemoteHostStore: ObservableObject {
         }
     }
 
-    private func sortAndPersist() {
-        self.hosts.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        self.persistHosts()
+    private func replaceHosts(_ hosts: [RemoteHost], persist: Bool) {
+        self.hosts = hosts.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        if persist {
+            self.persistHosts()
+        }
     }
 
     private func persistHosts() {
@@ -2189,9 +2190,7 @@ struct ContentView: View {
 struct HostsTabView: View {
     @EnvironmentObject private var appState: AppState
 
-    @State private var isPresentingEditor = false
-    @State private var editingHost: RemoteHost?
-    @State private var editingPassword = ""
+    @State private var editorContext: HostEditorContext?
 
     var body: some View {
         NavigationStack {
@@ -2236,9 +2235,10 @@ struct HostsTabView: View {
                                 }
 
                                 Button("Edit") {
-                                    self.editingHost = host
-                                    self.editingPassword = self.appState.remoteHostStore.password(for: host.id)
-                                    self.isPresentingEditor = true
+                                    self.editorContext = HostEditorContext(
+                                        host: host,
+                                        initialPassword: self.appState.remoteHostStore.password(for: host.id)
+                                    )
                                 }
                                 .tint(.orange)
                             }
@@ -2250,9 +2250,7 @@ struct HostsTabView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        self.editingHost = nil
-                        self.editingPassword = ""
-                        self.isPresentingEditor = true
+                        self.editorContext = HostEditorContext(host: nil, initialPassword: "")
                     } label: {
                         Label("Add", systemImage: "plus")
                     }
@@ -2260,16 +2258,22 @@ struct HostsTabView: View {
                 }
             }
         }
-        .sheet(isPresented: self.$isPresentingEditor) {
+        .sheet(item: self.$editorContext) { context in
             RemoteHostEditorView(
-                host: self.editingHost,
-                initialPassword: self.editingPassword
+                host: context.host,
+                initialPassword: context.initialPassword
             ) { draft in
-                self.appState.remoteHostStore.upsert(hostID: self.editingHost?.id, draft: draft)
+                self.appState.remoteHostStore.upsert(hostID: context.host?.id, draft: draft)
                 self.appState.cleanupSessionOrphans()
             }
         }
     }
+}
+
+private struct HostEditorContext: Identifiable {
+    let id = UUID()
+    let host: RemoteHost?
+    let initialPassword: String
 }
 
 struct RemoteHostEditorView: View {
