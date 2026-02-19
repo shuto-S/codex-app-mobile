@@ -106,6 +106,40 @@ final class CodexAppMobileTests: XCTestCase {
         XCTAssertEqual(store.hosts[0].host, legacyProfile.host)
         XCTAssertEqual(store.hosts[0].username, legacyProfile.username)
         XCTAssertEqual(store.hosts[0].appServerURL, "ws://legacy.example.com:8080")
+        XCTAssertEqual(store.hosts[0].preferredTransport, .ssh)
+    }
+
+    func testRemoteHostDefaultsToSSHTransport() {
+        let host = RemoteHost(
+            name: "Host A",
+            host: "a.example.com",
+            sshPort: 22,
+            username: "alice",
+            appServerURL: "ws://a.example.com:8080"
+        )
+
+        XCTAssertEqual(host.preferredTransport, .ssh)
+        XCTAssertEqual(RemoteHostDraft.empty.preferredTransport, .ssh)
+    }
+
+    func testRemoteHostDecodeLegacyPayloadDefaultsTransportToSSH() throws {
+        let payload = """
+        {
+          "id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+          "name":"Legacy Host",
+          "host":"legacy.example.com",
+          "sshPort":22,
+          "username":"legacy-user",
+          "appServerURL":"ws://legacy.example.com:8080",
+          "createdAt":"2026-02-18T00:00:00Z",
+          "updatedAt":"2026-02-18T00:00:00Z"
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let host = try decoder.decode(RemoteHost.self, from: Data(payload.utf8))
+
+        XCTAssertEqual(host.preferredTransport, .ssh)
     }
 
     @MainActor
@@ -329,6 +363,37 @@ final class CodexAppMobileTests: XCTestCase {
         XCTAssertEqual(envelope.params?["delta"]?.stringValue, "hello")
     }
 
+    func testJSONRPCEnvelopeDecodesNotificationWithoutJSONRPCHeader() throws {
+        let payload = """
+        {"method":"item/agentMessage/delta","params":{"threadId":"t1","delta":"hello"}}
+        """
+        let envelope = try JSONDecoder().decode(JSONRPCEnvelope.self, from: Data(payload.utf8))
+
+        XCTAssertNil(envelope.jsonrpc)
+        XCTAssertEqual(envelope.method, "item/agentMessage/delta")
+        XCTAssertEqual(envelope.params?["threadId"]?.stringValue, "t1")
+        XCTAssertEqual(envelope.params?["delta"]?.stringValue, "hello")
+    }
+
+    func testJSONRPCEnvelopeEncodeOmitsJSONRPCHeaderByDefault() throws {
+        let envelope = JSONRPCEnvelope(
+            id: .number(1),
+            method: "initialize",
+            params: .object([
+                "clientInfo": .object([
+                    "name": .string("CodexAppMobile"),
+                    "version": .string("0.1.0"),
+                ])
+            ])
+        )
+        let encoded = try JSONEncoder().encode(envelope)
+        let payload = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+
+        XCTAssertNotNil(payload)
+        XCTAssertNil(payload?["jsonrpc"])
+        XCTAssertEqual(payload?["method"] as? String, "initialize")
+    }
+
     func testAppServerMessageRouterResolvesResponse() async throws {
         let router = AppServerMessageRouter()
         let requestID = await router.makeRequestID()
@@ -413,6 +478,11 @@ final class CodexAppMobileTests: XCTestCase {
             for: AppServerClientError.invalidEndpointHost("0.0.0.0")
         )
         XCTAssertTrue(invalidHostMessage.contains("[Connection]"))
+
+        let handshakeMessage = client.userFacingMessage(
+            for: URLError(.networkConnectionLost)
+        )
+        XCTAssertTrue(handshakeMessage.contains("WebSocket handshake failed"))
     }
 
     @MainActor
