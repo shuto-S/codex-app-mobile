@@ -3118,8 +3118,20 @@ struct ProjectEditorView: View {
     }
 }
 
+private enum SessionChatRole {
+    case user
+    case assistant
+}
+
+private struct SessionChatMessage: Identifiable, Equatable {
+    let id: String
+    let role: SessionChatRole
+    let text: String
+}
+
 struct SessionWorkbenchView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.dismiss) private var dismiss
 
     let host: RemoteHost
 
@@ -3136,6 +3148,9 @@ struct SessionWorkbenchView: View {
     @State private var editingWorkspace: ProjectWorkspace?
     @State private var activePendingRequest: AppServerPendingRequest?
     @State private var sshTranscriptByThread: [String: String] = [:]
+    @State private var isMenuOpen = false
+    @State private var expandedWorkspaceIDs: Set<UUID> = []
+    @FocusState private var isPromptFieldFocused: Bool
 
     private let sshCodexExecService = SSHCodexExecService()
 
@@ -3152,9 +3167,9 @@ struct SessionWorkbenchView: View {
         self.appState.projectStore.workspaces(for: self.host.id)
     }
 
-    private var threads: [CodexThreadSummary] {
+    private func threads(for workspaceID: UUID) -> [CodexThreadSummary] {
         self.appState.threadBookmarkStore
-            .threads(for: self.selectedWorkspaceID)
+            .threads(for: workspaceID)
             .filter { $0.archived == self.showArchived }
     }
 
@@ -3166,283 +3181,79 @@ struct SessionWorkbenchView: View {
         return self.appState.appServerClient.transcriptByThread[selectedThreadID] ?? ""
     }
 
-    private var connectionStateText: String {
-        if self.isSSHTransport {
-            return "ready (SSH on-demand)"
-        }
-        return self.appState.appServerClient.state.rawValue
+    private var selectedWorkspaceTitle: String {
+        self.selectedWorkspace?.displayName ?? "プロジェクト"
+    }
+
+    private var parsedChatMessages: [SessionChatMessage] {
+        Self.parseChatMessages(from: self.selectedThreadTranscript)
+    }
+
+    private var isPromptEmpty: Bool {
+        self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var menuWidth: CGFloat {
+        304
     }
 
     var body: some View {
-        List {
-            Section("Status") {
-                Text("Host: \(self.host.name)")
-                Text("\(self.host.username)@\(self.host.host):\(self.host.sshPort)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
+        ZStack(alignment: .leading) {
+            self.chatBackground
+                .ignoresSafeArea()
 
-                Text("Transport: \(self.host.preferredTransport.displayName)")
-                Text("State: \(self.connectionStateText)")
-
-                if !self.isSSHTransport,
-                   !self.appState.appServerClient.connectedEndpoint.isEmpty {
-                    Text("Endpoint: \(self.appState.appServerClient.connectedEndpoint)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-
-                if !self.isSSHTransport,
-                   !self.appState.appServerClient.lastErrorMessage.isEmpty {
-                    Text(self.appState.appServerClient.lastErrorMessage)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-
-                if !self.localErrorMessage.isEmpty {
-                    Text(self.localErrorMessage)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-
-                if !self.localStatusMessage.isEmpty {
-                    Text(self.localStatusMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    Button("Connect") {
-                        self.connectHost()
-                    }
-                    .disabled(
-                        self.isSSHTransport
-                        ? self.isRunningSSHAction
-                        : self.appState.appServerClient.state == .connected
-                    )
-                    .codexActionButtonStyle()
-
-                    Button("Disconnect") {
-                        self.disconnectHost()
-                    }
-                    .disabled(
-                        self.isSSHTransport
-                        ? true
-                        : self.appState.appServerClient.state == .disconnected
-                    )
-                    .codexActionButtonStyle()
-
-                    Button("Refresh") {
-                        self.refreshThreads()
-                    }
-                    .disabled(self.selectedWorkspace == nil || self.isRefreshingThreads || self.isRunningSSHAction)
-                    .codexActionButtonStyle()
-                }
-
-                Toggle("Show Archived", isOn: self.$showArchived)
-
-                HStack {
-                    Button("Open in Terminal") {
-                        self.openInTerminal()
-                    }
-                    .codexActionButtonStyle()
-
-                    Button("Diagnostics") {
-                        self.isPresentingDiagnostics = true
-                    }
-                    .disabled(self.isSSHTransport)
-                    .codexActionButtonStyle()
-                }
+            VStack(spacing: 0) {
+                self.chatTimeline
+                self.chatComposer
             }
 
-            Section("Projects") {
-                if self.workspaces.isEmpty {
-                    Text("No projects for this host.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(self.workspaces) { workspace in
-                        Button {
-                            self.selectedWorkspaceID = workspace.id
-                            self.selectedThreadID = nil
-                            self.appState.hostSessionStore.selectProject(hostID: self.host.id, projectID: workspace.id)
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(workspace.displayName)
-                                        .font(.headline)
-                                    Text(workspace.remotePath)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 8)
-                                if self.selectedWorkspaceID == workspace.id {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(.green)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button("Delete", role: .destructive) {
-                                self.appState.projectStore.delete(workspaceID: workspace.id)
-                                if self.selectedWorkspaceID == workspace.id {
-                                    self.selectedWorkspaceID = nil
-                                    self.selectedThreadID = nil
-                                    self.appState.hostSessionStore.selectProject(hostID: self.host.id, projectID: nil)
-                                    self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: nil)
-                                }
-                            }
-
-                            Button("Edit") {
-                                self.editingWorkspace = workspace
-                                self.isPresentingProjectEditor = true
-                            }
-                            .tint(.orange)
+            if self.isMenuOpen {
+                Color.black.opacity(0.18)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .onTapGesture {
+                        self.isPromptFieldFocused = false
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+                            self.isMenuOpen = false
                         }
                     }
-                }
-
-                Button {
-                    self.editingWorkspace = nil
-                    self.isPresentingProjectEditor = true
-                } label: {
-                    Label("Add Project", systemImage: "plus")
-                }
-                .codexActionButtonStyle()
+                    .zIndex(1)
             }
 
-            Section("Threads") {
-                if self.selectedWorkspace == nil {
-                    Text("Select a project first.")
-                        .foregroundStyle(.secondary)
-                } else if self.threads.isEmpty {
-                    Text("No threads for selected project.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(self.threads) { summary in
-                        Button {
-                            self.selectedThreadID = summary.threadID
-                            self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: summary.threadID)
-                            self.loadThread(summary.threadID)
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(summary.preview.isEmpty ? "(empty preview)" : summary.preview)
-                                        .font(.subheadline)
-                                        .lineLimit(2)
-                                    Text(summary.threadID)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 8)
-                                if self.selectedThreadID == summary.threadID {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(.green)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button(self.showArchived ? "Unarchive" : "Archive") {
-                                self.archiveThread(summary: summary, archived: !self.showArchived)
-                            }
-                            .tint(self.showArchived ? .green : .blue)
-
-                            Button("Delete", role: .destructive) {
-                                self.appState.threadBookmarkStore.remove(threadID: summary.threadID, workspaceID: summary.workspaceID)
-                                if self.selectedThreadID == summary.threadID {
-                                    self.selectedThreadID = nil
-                                    self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: nil)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Section("Prompt") {
-                TextField("Send prompt", text: self.$prompt, axis: .vertical)
-                    .lineLimit(1...5)
-                    .textInputAutocapitalization(.sentences)
-
-                HStack {
-                    Button("Send") {
-                        self.sendPrompt(forceNewThread: false)
-                    }
-                    .disabled(
-                        self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || self.isRunningSSHAction
-                    )
-                    .codexActionButtonStyle()
-
-                    Button("New Thread + Send") {
-                        self.sendPrompt(forceNewThread: true)
-                    }
-                    .disabled(
-                        self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || self.isRunningSSHAction
-                    )
-                    .codexActionButtonStyle()
-
-                    Button("Interrupt") {
-                        self.interruptActiveTurn()
-                    }
-                    .disabled(
-                        self.isSSHTransport
-                        || self.appState.appServerClient.activeTurnID(for: self.selectedThreadID) == nil
-                    )
-                    .codexActionButtonStyle()
-                }
-            }
-
-            if !self.isSSHTransport {
-                Section("Pending Actions") {
-                    if self.appState.appServerClient.pendingRequests.isEmpty {
-                        Text("No pending approvals.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(self.appState.appServerClient.pendingRequests) { request in
-                            Button {
-                                self.activePendingRequest = request
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(request.title)
-                                        .font(.subheadline)
-                                    Text(request.method)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Section("Transcript") {
-                if let selectedThreadID,
-                   !selectedThreadID.isEmpty {
-                    Text(self.selectedThreadTranscript.isEmpty ? "No output yet." : self.selectedThreadTranscript)
-                        .font(.system(.footnote, design: .monospaced))
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Text("Select thread to view output.")
-                        .foregroundStyle(.secondary)
-                }
-            }
+            self.sideMenu
+                .zIndex(2)
         }
-        .navigationTitle(self.host.name)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            self.chatHeader
+        }
+        .animation(.spring(response: 0.32, dampingFraction: 0.88), value: self.isMenuOpen)
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
         .onAppear {
             self.appState.selectHost(self.host.id)
             self.appState.hostSessionStore.markOpened(hostID: self.host.id)
             self.restoreSelectionFromSession()
+            if self.selectedWorkspaceID == nil,
+               let firstWorkspace = self.workspaces.first {
+                self.selectWorkspace(firstWorkspace)
+            }
+            if let selectedWorkspaceID {
+                self.expandedWorkspaceIDs.insert(selectedWorkspaceID)
+            }
             if self.isSSHTransport {
                 self.appState.appServerClient.disconnect()
+            }
+            if self.selectedWorkspace != nil {
+                self.refreshThreads()
             }
         }
         .onChange(of: self.showArchived) {
             self.refreshThreads()
+        }
+        .onChange(of: self.selectedWorkspaceID) {
+            if let selectedWorkspaceID {
+                self.expandedWorkspaceIDs.insert(selectedWorkspaceID)
+            }
         }
         .sheet(isPresented: self.$isPresentingProjectEditor) {
             ProjectEditorView(
@@ -3466,6 +3277,727 @@ struct SessionWorkbenchView: View {
             PendingRequestSheet(request: request)
                 .environmentObject(self.appState)
         }
+    }
+
+    private var chatBackground: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.88, green: 0.94, blue: 1.00),
+                    Color(red: 0.95, green: 0.98, blue: 1.00),
+                    Color(red: 0.90, green: 0.96, blue: 0.96),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            Circle()
+                .fill(Color.accentColor.opacity(0.24))
+                .frame(width: 320, height: 320)
+                .blur(radius: 50)
+                .offset(x: -170, y: -250)
+
+            Circle()
+                .fill(Color.cyan.opacity(0.18))
+                .frame(width: 300, height: 300)
+                .blur(radius: 56)
+                .offset(x: 180, y: 230)
+        }
+    }
+
+    private var chatHeader: some View {
+        HStack(spacing: 12) {
+            Button {
+                self.isPromptFieldFocused = false
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                    self.isMenuOpen.toggle()
+                }
+            } label: {
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 38, height: 38)
+                    .background {
+                        self.glassCircleBackground(size: 38)
+                    }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.primary)
+
+            VStack(spacing: 1) {
+                Text(self.selectedWorkspaceTitle)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(self.host.name)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+
+            Button {
+                self.isPromptFieldFocused = false
+                self.createNewThread()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 18, weight: .bold))
+                    .frame(width: 38, height: 38)
+                    .background {
+                        self.glassCircleBackground(size: 38, tint: Color.accentColor.opacity(0.28))
+                    }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.accentColor)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background {
+            self.glassCardBackground(cornerRadius: 26, tint: Color.white.opacity(0.24))
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+    }
+
+    private var chatTimeline: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 12) {
+                    if !self.localErrorMessage.isEmpty {
+                        Label(self.localErrorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background {
+                                self.glassCardBackground(cornerRadius: 14, tint: Color.red.opacity(0.18))
+                            }
+                    }
+
+                    if !self.localStatusMessage.isEmpty {
+                        Label(self.localStatusMessage, systemImage: "checkmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background {
+                                self.glassCardBackground(cornerRadius: 14)
+                            }
+                    }
+
+                    if !self.isSSHTransport,
+                       !self.appState.appServerClient.pendingRequests.isEmpty {
+                        Button {
+                            self.activePendingRequest = self.appState.appServerClient.pendingRequests.first
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "clock.badge.exclamationmark")
+                                Text("承認待ち \(self.appState.appServerClient.pendingRequests.count) 件")
+                                    .font(.subheadline.weight(.semibold))
+                                Spacer()
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background {
+                                self.glassCardBackground(cornerRadius: 14, tint: Color.orange.opacity(0.18))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if self.selectedWorkspace == nil {
+                        VStack(spacing: 10) {
+                            Image(systemName: "folder.badge.plus")
+                                .font(.system(size: 28, weight: .light))
+                            Text("プロジェクトを作成または選択してください。")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 240)
+                        .background {
+                            self.glassCardBackground(cornerRadius: 22)
+                        }
+                    } else if self.selectedThreadID == nil {
+                        VStack(spacing: 10) {
+                            Image(systemName: "bubble.left.and.bubble.right")
+                                .font(.system(size: 26, weight: .light))
+                            Text("スレッドを選択するか、＋で新規スレッドを作成してください。")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 240)
+                        .background {
+                            self.glassCardBackground(cornerRadius: 22)
+                        }
+                    } else if self.parsedChatMessages.isEmpty {
+                        VStack(spacing: 10) {
+                            Image(systemName: "text.bubble")
+                                .font(.system(size: 26, weight: .light))
+                            Text("まだメッセージはありません。")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 220)
+                        .background {
+                            self.glassCardBackground(cornerRadius: 22)
+                        }
+                    } else {
+                        ForEach(self.parsedChatMessages) { message in
+                            HStack(alignment: .bottom, spacing: 0) {
+                                if message.role == .user {
+                                    Spacer(minLength: 48)
+                                }
+
+                                Text(message.text)
+                                    .font(.subheadline)
+                                    .foregroundStyle(message.role == .user ? Color.white : Color.primary)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 11)
+                                    .textSelection(.enabled)
+                                    .background {
+                                        self.chatBubbleBackground(for: message.role)
+                                    }
+                                    .frame(maxWidth: 300, alignment: message.role == .user ? .trailing : .leading)
+
+                                if message.role == .assistant {
+                                    Spacer(minLength: 48)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
+                        }
+                    }
+
+                    Color.clear
+                        .frame(height: 1)
+                        .id("chat-bottom")
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 14)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .onAppear {
+                self.scrollToBottom(proxy: proxy)
+            }
+            .onChange(of: self.selectedThreadTranscript) {
+                self.scrollToBottom(proxy: proxy)
+            }
+            .onChange(of: self.selectedThreadID) {
+                self.scrollToBottom(proxy: proxy)
+            }
+        }
+    }
+
+    private var chatComposer: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            TextField("メッセージを入力...", text: self.$prompt, axis: .vertical)
+                .lineLimit(1...4)
+                .textInputAutocapitalization(.sentences)
+                .focused(self.$isPromptFieldFocused)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color.white.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            Button {
+                self.isPromptFieldFocused = false
+                self.sendPrompt(forceNewThread: false)
+            } label: {
+                Image(systemName: "paperplane.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 40, height: 40)
+                    .background {
+                        self.glassCircleBackground(size: 40, tint: Color.accentColor.opacity(0.52))
+                    }
+            }
+            .buttonStyle(.plain)
+            .disabled(
+                self.isPromptEmpty
+                || self.isRunningSSHAction
+                || self.selectedWorkspace == nil
+            )
+            .opacity(
+                self.isPromptEmpty || self.selectedWorkspace == nil
+                ? 0.45
+                : 1
+            )
+        }
+        .padding(8)
+        .background {
+            self.glassCardBackground(cornerRadius: 24, tint: Color.white.opacity(0.24))
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 10)
+    }
+
+    private var sideMenu: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(self.host.name)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text(self.host.host)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Button {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                        self.isMenuOpen = false
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 34, height: 34)
+                        .background {
+                            self.glassCircleBackground(size: 34)
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+
+            ScrollView {
+                VStack(spacing: 8) {
+                    Toggle(isOn: self.$showArchived) {
+                        Label("アーカイブを表示", systemImage: "archivebox")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .toggleStyle(.switch)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background {
+                        self.glassCardBackground(cornerRadius: 14)
+                    }
+
+                    if self.workspaces.isEmpty {
+                        Text("プロジェクトがありません。")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 14)
+                            .background {
+                                self.glassCardBackground(cornerRadius: 14)
+                            }
+                    } else {
+                        ForEach(self.workspaces) { workspace in
+                            let workspaceThreads = self.threads(for: workspace.id)
+                            let isExpanded = self.expandedWorkspaceIDs.contains(workspace.id)
+                            let isCurrentWorkspace = self.selectedWorkspaceID == workspace.id
+
+                            VStack(spacing: 6) {
+                                Button {
+                                    self.toggleWorkspace(workspace)
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundStyle(.secondary)
+                                        Text(workspace.displayName)
+                                            .font(.subheadline.weight(.semibold))
+                                            .lineLimit(1)
+                                        Spacer(minLength: 8)
+                                        Text("\(workspaceThreads.count)")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 10)
+                                    .background {
+                                        self.glassCardBackground(
+                                            cornerRadius: 14,
+                                            tint: isCurrentWorkspace
+                                            ? Color.accentColor.opacity(0.20)
+                                            : Color.white.opacity(0.18)
+                                        )
+                                    }
+                                }
+                                .buttonStyle(.plain)
+
+                                if isExpanded {
+                                    if workspaceThreads.isEmpty {
+                                        Text("スレッドなし")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 9)
+                                    } else {
+                                        ForEach(workspaceThreads) { summary in
+                                            Button {
+                                                self.selectThread(summary, workspaceID: workspace.id)
+                                            } label: {
+                                                HStack(spacing: 8) {
+                                                    Image(systemName: "bubble.left")
+                                                        .font(.system(size: 12, weight: .medium))
+                                                    Text(summary.preview.isEmpty ? "新規スレッド" : summary.preview)
+                                                        .font(.subheadline)
+                                                        .lineLimit(1)
+                                                    Spacer(minLength: 8)
+                                                }
+                                                .foregroundStyle(
+                                                    self.selectedThreadID == summary.threadID
+                                                    ? Color.accentColor
+                                                    : Color.primary
+                                                )
+                                                .padding(.horizontal, 12)
+                                                .padding(.vertical, 10)
+                                                .background {
+                                                    self.glassCardBackground(
+                                                        cornerRadius: 12,
+                                                        tint: self.selectedThreadID == summary.threadID
+                                                        ? Color.accentColor.opacity(0.22)
+                                                        : Color.white.opacity(0.12)
+                                                    )
+                                                }
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Button {
+                        self.editingWorkspace = nil
+                        self.isPresentingProjectEditor = true
+                        self.isMenuOpen = false
+                    } label: {
+                        Label("プロジェクト追加", systemImage: "plus")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background {
+                                self.glassCardBackground(cornerRadius: 14, tint: Color.accentColor.opacity(0.18))
+                            }
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.vertical, 2)
+            }
+
+            VStack(spacing: 8) {
+                Button {
+                    self.isMenuOpen = false
+                    self.refreshThreads()
+                } label: {
+                    Label("スレッド更新", systemImage: "arrow.clockwise")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background {
+                            self.glassCardBackground(cornerRadius: 14)
+                        }
+                }
+                .buttonStyle(.plain)
+                .disabled(self.selectedWorkspace == nil || self.isRefreshingThreads || self.isRunningSSHAction)
+                .opacity(self.selectedWorkspace == nil ? 0.5 : 1)
+
+                HStack(spacing: 8) {
+                    Button {
+                        self.isMenuOpen = false
+                        self.openInTerminal()
+                    } label: {
+                        Label("Terminal", systemImage: "terminal")
+                            .font(.caption.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background {
+                                self.glassCardBackground(cornerRadius: 12)
+                            }
+                    }
+                    .buttonStyle(.plain)
+
+                    if !self.isSSHTransport {
+                        Button {
+                            self.isMenuOpen = false
+                            self.isPresentingDiagnostics = true
+                        } label: {
+                            Label("Diagnostics", systemImage: "waveform.path.ecg")
+                                .font(.caption.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .background {
+                                    self.glassCardBackground(cornerRadius: 12)
+                                }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Button {
+                    self.isMenuOpen = false
+                    self.dismiss()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "chevron.left")
+                        Text("ホスト一覧に戻る")
+                            .fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background {
+                        self.glassCardBackground(cornerRadius: 14)
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.primary)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 12)
+        .frame(width: self.menuWidth)
+        .frame(maxHeight: .infinity)
+        .background {
+            self.glassCardBackground(cornerRadius: 30, tint: Color.white.opacity(0.24))
+        }
+        .padding(.leading, 8)
+        .padding(.vertical, 8)
+        .offset(x: self.isMenuOpen ? 0 : -(self.menuWidth + 20))
+        .shadow(color: .black.opacity(self.isMenuOpen ? 0.14 : 0), radius: 16, x: 0, y: 10)
+    }
+
+    @ViewBuilder
+    private func glassCardBackground(cornerRadius: CGFloat, tint: Color = Color.white.opacity(0.18)) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        if #available(iOS 26.0, *) {
+            shape
+                .fill(tint)
+                .glassEffect(.regular, in: shape)
+        } else {
+            shape
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    shape.strokeBorder(Color.white.opacity(0.30), lineWidth: 0.8)
+                )
+        }
+    }
+
+    @ViewBuilder
+    private func glassCircleBackground(size: CGFloat, tint: Color = Color.white.opacity(0.20)) -> some View {
+        let circle = Circle()
+        if #available(iOS 26.0, *) {
+            circle
+                .fill(tint)
+                .glassEffect(.regular, in: circle)
+        } else {
+            circle
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    circle.strokeBorder(Color.white.opacity(0.30), lineWidth: 0.8)
+                )
+        }
+    }
+
+    @ViewBuilder
+    private func chatBubbleBackground(for role: SessionChatRole) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+
+        if role == .user {
+            if #available(iOS 26.0, *) {
+                shape
+                    .fill(Color.accentColor.opacity(0.52))
+                    .glassEffect(.regular, in: shape)
+            } else {
+                shape
+                    .fill(Color.accentColor)
+                    .overlay(
+                        shape.strokeBorder(Color.white.opacity(0.28), lineWidth: 0.8)
+                    )
+            }
+        } else {
+            if #available(iOS 26.0, *) {
+                shape
+                    .fill(Color.white.opacity(0.22))
+                    .glassEffect(.regular, in: shape)
+            } else {
+                shape
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        shape.strokeBorder(Color.white.opacity(0.30), lineWidth: 0.8)
+                    )
+            }
+        }
+    }
+    private func scrollToBottom(proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.18)) {
+                proxy.scrollTo("chat-bottom", anchor: .bottom)
+            }
+        }
+    }
+
+    private func toggleWorkspace(_ workspace: ProjectWorkspace) {
+        self.selectWorkspace(workspace)
+        if self.expandedWorkspaceIDs.contains(workspace.id) {
+            self.expandedWorkspaceIDs.remove(workspace.id)
+        } else {
+            self.expandedWorkspaceIDs.insert(workspace.id)
+        }
+    }
+
+    private func selectWorkspace(_ workspace: ProjectWorkspace) {
+        self.selectedWorkspaceID = workspace.id
+        let workspaceThreads = self.threads(for: workspace.id)
+        if let selectedThreadID,
+           workspaceThreads.contains(where: { $0.threadID == selectedThreadID }) {
+            // Keep current thread.
+        } else {
+            self.selectedThreadID = workspaceThreads.first?.threadID
+            self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: self.selectedThreadID)
+            if let selectedThreadID {
+                self.loadThread(selectedThreadID)
+            }
+        }
+        self.appState.hostSessionStore.selectProject(hostID: self.host.id, projectID: workspace.id)
+    }
+
+    private func selectThread(_ summary: CodexThreadSummary, workspaceID: UUID) {
+        self.selectedWorkspaceID = workspaceID
+        self.selectedThreadID = summary.threadID
+        self.appState.hostSessionStore.selectProject(hostID: self.host.id, projectID: workspaceID)
+        self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: summary.threadID)
+        self.loadThread(summary.threadID)
+        self.isMenuOpen = false
+    }
+
+    private func createNewThread() {
+        self.localErrorMessage = ""
+        self.localStatusMessage = ""
+
+        guard let selectedWorkspace else {
+            self.localErrorMessage = "先にプロジェクトを選択してください。"
+            return
+        }
+
+        if self.isSSHTransport {
+            self.selectedThreadID = nil
+            self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: nil)
+            self.localStatusMessage = "次の送信で新規スレッドを開始します。"
+            return
+        }
+
+        Task {
+            do {
+                if self.appState.appServerClient.state != .connected {
+                    try await self.appState.appServerClient.connect(to: self.host)
+                }
+
+                let threadID = try await self.appState.appServerClient.threadStart(
+                    cwd: selectedWorkspace.remotePath,
+                    approvalPolicy: selectedWorkspace.defaultApprovalPolicy,
+                    model: selectedWorkspace.defaultModel
+                )
+
+                self.selectedThreadID = threadID
+                self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: threadID)
+                self.appState.threadBookmarkStore.upsert(
+                    summary: CodexThreadSummary(
+                        threadID: threadID,
+                        hostID: self.host.id,
+                        workspaceID: selectedWorkspace.id,
+                        preview: "新規スレッド",
+                        updatedAt: Date(),
+                        archived: false,
+                        cwd: selectedWorkspace.remotePath
+                    )
+                )
+                self.localStatusMessage = "新規スレッドを作成しました。"
+            } catch {
+                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+            }
+        }
+    }
+
+    private static func parseChatMessages(from transcript: String) -> [SessionChatMessage] {
+        let normalized = transcript.replacingOccurrences(of: "\r\n", with: "\n")
+        let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+
+        var messages: [SessionChatMessage] = []
+        var currentRole: SessionChatRole?
+        var buffer: [String] = []
+
+        func flushCurrent() {
+            guard let currentRole else { return }
+            let text = buffer.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return }
+            messages.append(
+                SessionChatMessage(
+                    id: "msg-\(messages.count)",
+                    role: currentRole,
+                    text: text
+                )
+            )
+        }
+
+        for line in lines {
+            if line.hasPrefix("=== Turn ") {
+                flushCurrent()
+                currentRole = nil
+                buffer = []
+                continue
+            }
+
+            if line.hasPrefix("User: ") {
+                flushCurrent()
+                currentRole = .user
+                buffer = [String(line.dropFirst("User: ".count))]
+                continue
+            }
+
+            if line.hasPrefix("> ") {
+                flushCurrent()
+                currentRole = .user
+                buffer = [String(line.dropFirst(2))]
+                continue
+            }
+
+            if line.hasPrefix("Assistant: ") {
+                flushCurrent()
+                currentRole = .assistant
+                buffer = [String(line.dropFirst("Assistant: ".count))]
+                continue
+            }
+
+            if line.hasPrefix("Plan: ")
+                || line.hasPrefix("Reasoning: ")
+                || line.hasPrefix("$ ")
+                || line.hasPrefix("File change ")
+                || line.hasPrefix("Item: ") {
+                if currentRole != .assistant {
+                    flushCurrent()
+                    currentRole = .assistant
+                    buffer = []
+                }
+                buffer.append(line)
+                continue
+            }
+
+            if line.isEmpty {
+                if !buffer.isEmpty {
+                    buffer.append("")
+                }
+                continue
+            }
+
+            if currentRole == nil {
+                currentRole = .assistant
+            }
+            buffer.append(line)
+        }
+
+        flushCurrent()
+        return messages
     }
 
     private func restoreSelectionFromSession() {
