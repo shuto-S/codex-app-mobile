@@ -17,19 +17,6 @@ enum TransportKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum HostAuthMode: String, Codable, CaseIterable, Identifiable {
-    case remotePCManaged
-
-    var id: String { self.rawValue }
-
-    var displayName: String {
-        switch self {
-        case .remotePCManaged:
-            return "Remote PC Managed"
-        }
-    }
-}
-
 enum CodexApprovalPolicy: String, Codable, CaseIterable, Identifiable {
     case untrusted
     case onFailure = "on-failure"
@@ -60,7 +47,6 @@ struct RemoteHost: Identifiable, Codable, Equatable {
     var username: String
     var appServerURL: String
     var preferredTransport: TransportKind
-    var authMode: HostAuthMode
     var createdAt: Date
     var updatedAt: Date
 
@@ -71,8 +57,7 @@ struct RemoteHost: Identifiable, Codable, Equatable {
         sshPort: Int,
         username: String,
         appServerURL: String,
-        preferredTransport: TransportKind = .appServerWS,
-        authMode: HostAuthMode = .remotePCManaged,
+        preferredTransport: TransportKind = .ssh,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -83,7 +68,6 @@ struct RemoteHost: Identifiable, Codable, Equatable {
         self.username = username
         self.appServerURL = appServerURL
         self.preferredTransport = preferredTransport
-        self.authMode = authMode
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -92,6 +76,45 @@ struct RemoteHost: Identifiable, Codable, Equatable {
         let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
         return "ws://\(normalizedHost):\(port)"
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case host
+        case sshPort
+        case username
+        case appServerURL
+        case preferredTransport
+        case createdAt
+        case updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.name = try container.decode(String.self, forKey: .name)
+        self.host = try container.decode(String.self, forKey: .host)
+        self.sshPort = try container.decodeIfPresent(Int.self, forKey: .sshPort) ?? 22
+        self.username = try container.decode(String.self, forKey: .username)
+        self.appServerURL = try container.decodeIfPresent(String.self, forKey: .appServerURL)
+            ?? Self.defaultAppServerURL(host: self.host)
+        self.preferredTransport = try container.decodeIfPresent(TransportKind.self, forKey: .preferredTransport) ?? .ssh
+        self.createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        self.updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.id, forKey: .id)
+        try container.encode(self.name, forKey: .name)
+        try container.encode(self.host, forKey: .host)
+        try container.encode(self.sshPort, forKey: .sshPort)
+        try container.encode(self.username, forKey: .username)
+        try container.encode(self.appServerURL, forKey: .appServerURL)
+        try container.encode(self.preferredTransport, forKey: .preferredTransport)
+        try container.encode(self.createdAt, forKey: .createdAt)
+        try container.encode(self.updatedAt, forKey: .updatedAt)
+    }
 }
 
 struct RemoteHostDraft {
@@ -99,9 +122,9 @@ struct RemoteHostDraft {
     var host: String
     var sshPort: Int
     var username: String
-    var appServerURL: String
+    var appServerHost: String
+    var appServerPort: Int
     var preferredTransport: TransportKind
-    var authMode: HostAuthMode
     var password: String
 
     static let empty = RemoteHostDraft(
@@ -109,9 +132,9 @@ struct RemoteHostDraft {
         host: "",
         sshPort: 22,
         username: "",
-        appServerURL: "",
-        preferredTransport: .appServerWS,
-        authMode: .remotePCManaged,
+        appServerHost: "",
+        appServerPort: 8080,
+        preferredTransport: .ssh,
         password: ""
     )
 
@@ -124,7 +147,19 @@ struct RemoteHostDraft {
               !trimmedHost.isEmpty,
               !trimmedUser.isEmpty,
               (1...65535).contains(self.sshPort),
-              let url = URL(string: self.appServerURL),
+              (1...65535).contains(self.appServerPort)
+        else {
+            return false
+        }
+
+        let trimmedAppServerHost = self.appServerHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedAppServerHost.contains("://") {
+            return false
+        }
+
+        let endpointHost = trimmedAppServerHost.isEmpty ? trimmedHost : trimmedAppServerHost
+        let endpoint = RemoteHost.defaultAppServerURL(host: endpointHost, port: self.appServerPort)
+        guard let url = URL(string: endpoint),
               let scheme = url.scheme?.lowercased(),
               scheme == "ws" || scheme == "wss"
         else {
@@ -139,18 +174,18 @@ struct RemoteHostDraft {
         host: String,
         sshPort: Int,
         username: String,
-        appServerURL: String,
+        appServerHost: String,
+        appServerPort: Int,
         preferredTransport: TransportKind,
-        authMode: HostAuthMode,
         password: String
     ) {
         self.name = name
         self.host = host
         self.sshPort = sshPort
         self.username = username
-        self.appServerURL = appServerURL
+        self.appServerHost = appServerHost
+        self.appServerPort = appServerPort
         self.preferredTransport = preferredTransport
-        self.authMode = authMode
         self.password = password
     }
 
@@ -159,9 +194,15 @@ struct RemoteHostDraft {
         self.host = host.host
         self.sshPort = host.sshPort
         self.username = host.username
-        self.appServerURL = host.appServerURL
+        if let components = URLComponents(string: host.appServerURL),
+           let endpointHost = components.host {
+            self.appServerHost = endpointHost == host.host ? "" : endpointHost
+            self.appServerPort = components.port ?? 8080
+        } else {
+            self.appServerHost = ""
+            self.appServerPort = 8080
+        }
         self.preferredTransport = host.preferredTransport
-        self.authMode = host.authMode
         self.password = password
     }
 }
@@ -440,18 +481,25 @@ final class RemoteHostStore: ObservableObject {
         let trimmedName = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedHost = draft.host.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedUser = draft.username.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedURL = draft.appServerURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAppServerHost = draft.appServerHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedAppServerHost = trimmedAppServerHost.isEmpty ? trimmedHost : trimmedAppServerHost
+        let resolvedAppServerURL = RemoteHost.defaultAppServerURL(
+            host: resolvedAppServerHost,
+            port: draft.appServerPort
+        )
+        var updatedHosts = self.hosts
 
         if let hostID,
-           let index = self.hosts.firstIndex(where: { $0.id == hostID }) {
-            self.hosts[index].name = trimmedName
-            self.hosts[index].host = trimmedHost
-            self.hosts[index].sshPort = draft.sshPort
-            self.hosts[index].username = trimmedUser
-            self.hosts[index].appServerURL = trimmedURL
-            self.hosts[index].preferredTransport = draft.preferredTransport
-            self.hosts[index].authMode = draft.authMode
-            self.hosts[index].updatedAt = Date()
+           let index = updatedHosts.firstIndex(where: { $0.id == hostID }) {
+            var hostRecord = updatedHosts[index]
+            hostRecord.name = trimmedName
+            hostRecord.host = trimmedHost
+            hostRecord.sshPort = draft.sshPort
+            hostRecord.username = trimmedUser
+            hostRecord.appServerURL = resolvedAppServerURL
+            hostRecord.preferredTransport = draft.preferredTransport
+            hostRecord.updatedAt = Date()
+            updatedHosts[index] = hostRecord
             self.credentialStore.save(password: draft.password, for: hostID)
         } else {
             let hostRecord = RemoteHost(
@@ -459,21 +507,19 @@ final class RemoteHostStore: ObservableObject {
                 host: trimmedHost,
                 sshPort: draft.sshPort,
                 username: trimmedUser,
-                appServerURL: trimmedURL,
-                preferredTransport: draft.preferredTransport,
-                authMode: draft.authMode
+                appServerURL: resolvedAppServerURL,
+                preferredTransport: draft.preferredTransport
             )
-            self.hosts.append(hostRecord)
+            updatedHosts.append(hostRecord)
             self.credentialStore.save(password: draft.password, for: hostRecord.id)
         }
 
-        self.sortAndPersist()
+        self.replaceHosts(updatedHosts, persist: true)
     }
 
     func delete(hostID: UUID) {
-        self.hosts.removeAll(where: { $0.id == hostID })
+        self.replaceHosts(self.hosts.filter { $0.id != hostID }, persist: true)
         self.credentialStore.deletePassword(for: hostID)
-        self.persistHosts()
     }
 
     func password(for hostID: UUID) -> String {
@@ -487,20 +533,17 @@ final class RemoteHostStore: ObservableObject {
     private func loadHosts() {
         if let data = self.defaults.data(forKey: self.hostsKey),
            let decoded = try? JSONDecoder().decode([RemoteHost].self, from: data) {
-            self.hosts = decoded
-            self.hosts.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            self.replaceHosts(decoded, persist: false)
             return
         }
 
         if let data = self.defaults.data(forKey: self.legacyRemoteHostsKey),
            let decoded = try? JSONDecoder().decode([RemoteHost].self, from: data) {
-            self.hosts = decoded
-            self.sortAndPersist()
+            self.replaceHosts(decoded, persist: true)
             return
         }
 
-        self.hosts = self.migrateFromLegacyProfilesIfNeeded()
-        self.sortAndPersist()
+        self.replaceHosts(self.migrateFromLegacyProfilesIfNeeded(), persist: true)
     }
 
     private func migrateFromLegacyProfilesIfNeeded() -> [RemoteHost] {
@@ -522,9 +565,11 @@ final class RemoteHostStore: ObservableObject {
         }
     }
 
-    private func sortAndPersist() {
-        self.hosts.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        self.persistHosts()
+    private func replaceHosts(_ hosts: [RemoteHost], persist: Bool) {
+        self.hosts = hosts.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        if persist {
+            self.persistHosts()
+        }
     }
 
     private func persistHosts() {
@@ -685,7 +730,8 @@ enum AppRootTab: Hashable {
     case terminal
 }
 
-struct TerminalLaunchContext: Equatable {
+struct TerminalLaunchContext: Equatable, Identifiable {
+    let id: UUID = UUID()
     let hostID: UUID
     let projectPath: String?
     let threadID: String?
@@ -993,7 +1039,7 @@ struct JSONRPCErrorPayload: Codable, Equatable {
 }
 
 struct JSONRPCEnvelope: Codable, Equatable {
-    let jsonrpc: String
+    let jsonrpc: String?
     let id: JSONValue?
     let method: String?
     let params: JSONValue?
@@ -1001,7 +1047,7 @@ struct JSONRPCEnvelope: Codable, Equatable {
     let error: JSONRPCErrorPayload?
 
     init(
-        jsonrpc: String = "2.0",
+        jsonrpc: String? = nil,
         id: JSONValue? = nil,
         method: String? = nil,
         params: JSONValue? = nil,
@@ -1019,6 +1065,7 @@ struct JSONRPCEnvelope: Codable, Equatable {
 
 enum AppServerClientError: LocalizedError {
     case invalidURL
+    case invalidEndpointHost(String)
     case notConnected
     case timeout(method: String)
     case remote(code: Int, message: String)
@@ -1030,6 +1077,8 @@ enum AppServerClientError: LocalizedError {
         switch self {
         case .invalidURL:
             return "Invalid app-server URL. Use ws:// or wss://."
+        case .invalidEndpointHost(let host):
+            return "Invalid app-server host (\(host)). Use a reachable host or Tailscale IP, not 0.0.0.0/localhost."
         case .notConnected:
             return "Not connected to app-server."
         case .timeout(let method):
@@ -1233,6 +1282,7 @@ final class AppServerClient: ObservableObject {
     private let maxReconnectAttempts = 3
     private var autoReconnectEnabled = false
     private var lastHost: RemoteHost?
+    private var hasReceivedMessageOnCurrentConnection = false
 
     private let requestTimeoutSeconds: TimeInterval = 30
 
@@ -1281,6 +1331,10 @@ final class AppServerClient: ObservableObject {
     }
 
     func userFacingMessage(for error: Error) -> String {
+        if let preferred = self.preferredUserFacingMessage(for: error) {
+            return preferred
+        }
+
         let category = Self.errorCategory(for: error)
         let baseMessage: String
         if let localizedError = error as? LocalizedError,
@@ -1439,12 +1493,7 @@ final class AppServerClient: ObservableObject {
     }
 
     private func openConnection(to host: RemoteHost, resetReconnectAttempts: Bool) async throws {
-        guard let url = URL(string: host.appServerURL),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "ws" || scheme == "wss"
-        else {
-            throw AppServerClientError.invalidURL
-        }
+        let url = try Self.resolveAppServerURL(raw: host.appServerURL)
 
         self.reconnectTask?.cancel()
         self.teardownConnection(closeCode: .normalClosure)
@@ -1457,13 +1506,14 @@ final class AppServerClient: ObservableObject {
         self.lastErrorMessage = ""
         self.autoReconnectEnabled = true
         self.lastHost = host
-        self.connectedEndpoint = host.appServerURL
+        self.connectedEndpoint = url.absoluteString
         self.diagnostics = AppServerDiagnostics(
             minimumRequiredVersion: Self.minimumSupportedCLIVersion
         )
 
         let task = self.session.webSocketTask(with: url)
         self.webSocketTask = task
+        self.hasReceivedMessageOnCurrentConnection = false
         task.resume()
 
         self.startReceiveLoop()
@@ -1480,6 +1530,11 @@ final class AppServerClient: ObservableObject {
                 ])
             )
             self.applyInitializeMetadata(from: initializeResult)
+            try await self.sendEnvelope(
+                JSONRPCEnvelope(
+                    method: "initialized"
+                )
+            )
             if let cliVersion = self.nonEmptyOrNil(self.diagnostics.cliVersion),
                !Self.isVersion(cliVersion, atLeast: Self.minimumSupportedCLIVersion) {
                 throw AppServerClientError.incompatibleVersion(
@@ -1489,7 +1544,7 @@ final class AppServerClient: ObservableObject {
             }
             self.state = .connected
             self.diagnostics.lastCheckedAt = Date()
-            self.appendEvent("Connected: \(host.name) @ \(host.appServerURL)")
+            self.appendEvent("Connected: \(host.name) @ \(url.absoluteString)")
         } catch {
             self.lastErrorMessage = self.userFacingMessage(for: error)
             self.state = .disconnected
@@ -1613,6 +1668,8 @@ final class AppServerClient: ObservableObject {
     }
 
     private func handleIncoming(_ message: URLSessionWebSocketTask.Message) async throws {
+        self.hasReceivedMessageOnCurrentConnection = true
+
         let data: Data
         switch message {
         case .data(let binaryData):
@@ -1695,6 +1752,10 @@ final class AppServerClient: ObservableObject {
         }
     }
 
+    func applyNotificationForTesting(method: String, params: JSONValue?) {
+        self.handleNotification(method: method, params: params)
+    }
+
     private func parsePendingRequest(id: JSONValue, method: String, params: JSONValue?) -> AppServerPendingRequest {
         let paramsObject = params?.objectValue ?? [:]
         let threadID = paramsObject["threadId"]?.stringValue ?? ""
@@ -1754,13 +1815,16 @@ final class AppServerClient: ObservableObject {
     }
 
     private func handleSocketFailure(_ error: Error) async {
+        let shouldAttemptReconnect = self.shouldAttemptReconnect(after: error)
+
         self.lastErrorMessage = self.userFacingMessage(for: error)
         self.state = .disconnected
         self.connectedEndpoint = ""
         self.activeTurnIDByThread.removeAll()
         self.teardownConnection(closeCode: .abnormalClosure)
 
-        guard self.autoReconnectEnabled,
+        guard shouldAttemptReconnect,
+              self.autoReconnectEnabled,
               let host = self.lastHost
         else {
             return
@@ -1800,6 +1864,7 @@ final class AppServerClient: ObservableObject {
 
         self.webSocketTask?.cancel(with: closeCode, reason: nil)
         self.webSocketTask = nil
+        self.hasReceivedMessageOnCurrentConnection = false
         self.pendingRequests.removeAll()
 
         Task {
@@ -1881,6 +1946,35 @@ final class AppServerClient: ObservableObject {
         return true
     }
 
+    static func resolveAppServerURL(raw: String) throws -> URL {
+        let normalizedRaw = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedRaw.isEmpty else {
+            throw AppServerClientError.invalidURL
+        }
+
+        guard let components = URLComponents(string: normalizedRaw),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "ws" || scheme == "wss"
+        else {
+            throw AppServerClientError.invalidURL
+        }
+
+        guard let endpointHost = components.host?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !endpointHost.isEmpty
+        else {
+            throw AppServerClientError.invalidURL
+        }
+
+        guard Self.isUnroutableEndpointHost(endpointHost) == false else {
+            throw AppServerClientError.invalidEndpointHost(endpointHost)
+        }
+
+        guard let resolvedURL = components.url else {
+            throw AppServerClientError.invalidURL
+        }
+        return resolvedURL
+    }
+
     private static func versionComponents(_ rawVersion: String) -> [Int] {
         let matches = rawVersion.matches(of: /(\d+)/)
         return matches.compactMap { Int($0.output.1) }
@@ -1912,12 +2006,21 @@ final class AppServerClient: ObservableObject {
         return cursor
     }
 
+    private static func isUnroutableEndpointHost(_ host: String) -> Bool {
+        switch host.lowercased() {
+        case "0.0.0.0", "::", "::1", "localhost", "127.0.0.1":
+            return true
+        default:
+            return false
+        }
+    }
+
     private static func errorCategory(for error: Error) -> AppServerErrorCategory {
         if let appServerError = error as? AppServerClientError {
             switch appServerError {
             case .incompatibleVersion:
                 return .compatibility
-            case .invalidURL, .notConnected, .timeout:
+            case .invalidURL, .invalidEndpointHost, .notConnected, .timeout:
                 return .connection
             case .malformedResponse, .unsupportedMessage:
                 return .protocolError
@@ -1949,6 +2052,30 @@ final class AppServerClient: ObservableObject {
             return .connection
         }
         return .unknown
+    }
+
+    private func preferredUserFacingMessage(for error: Error) -> String? {
+        guard let urlError = error as? URLError,
+              urlError.code == .networkConnectionLost,
+              !self.hasReceivedMessageOnCurrentConnection
+        else {
+            return nil
+        }
+
+        return "[Connection] WebSocket handshake failed before app-server initialization. codex app-server may reject iOS WebSocket extension negotiation (Sec-WebSocket-Extensions). Use Terminal tab, or connect through a WebSocket proxy."
+    }
+
+    private func shouldAttemptReconnect(after error: Error) -> Bool {
+        guard let urlError = error as? URLError else {
+            return true
+        }
+
+        if urlError.code == .networkConnectionLost,
+           !self.hasReceivedMessageOnCurrentConnection {
+            return false
+        }
+
+        return true
     }
 
     private static func errorCategoryFromRemote(code: Int, message: String) -> AppServerErrorCategory {
@@ -2184,9 +2311,7 @@ struct ContentView: View {
 struct HostsTabView: View {
     @EnvironmentObject private var appState: AppState
 
-    @State private var isPresentingEditor = false
-    @State private var editingHost: RemoteHost?
-    @State private var editingPassword = ""
+    @State private var editorContext: HostEditorContext?
 
     var body: some View {
         NavigationStack {
@@ -2231,9 +2356,10 @@ struct HostsTabView: View {
                                 }
 
                                 Button("Edit") {
-                                    self.editingHost = host
-                                    self.editingPassword = self.appState.remoteHostStore.password(for: host.id)
-                                    self.isPresentingEditor = true
+                                    self.editorContext = HostEditorContext(
+                                        host: host,
+                                        initialPassword: self.appState.remoteHostStore.password(for: host.id)
+                                    )
                                 }
                                 .tint(.orange)
                             }
@@ -2245,9 +2371,7 @@ struct HostsTabView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        self.editingHost = nil
-                        self.editingPassword = ""
-                        self.isPresentingEditor = true
+                        self.editorContext = HostEditorContext(host: nil, initialPassword: "")
                     } label: {
                         Label("Add", systemImage: "plus")
                     }
@@ -2255,16 +2379,22 @@ struct HostsTabView: View {
                 }
             }
         }
-        .sheet(isPresented: self.$isPresentingEditor) {
+        .sheet(item: self.$editorContext) { context in
             RemoteHostEditorView(
-                host: self.editingHost,
-                initialPassword: self.editingPassword
+                host: context.host,
+                initialPassword: context.initialPassword
             ) { draft in
-                self.appState.remoteHostStore.upsert(hostID: self.editingHost?.id, draft: draft)
+                self.appState.remoteHostStore.upsert(hostID: context.host?.id, draft: draft)
                 self.appState.cleanupSessionOrphans()
             }
         }
     }
+}
+
+private struct HostEditorContext: Identifiable {
+    let id = UUID()
+    let host: RemoteHost?
+    let initialPassword: String
 }
 
 struct RemoteHostEditorView: View {
@@ -2278,39 +2408,50 @@ struct RemoteHostEditorView: View {
     @State private var hostAddress: String
     @State private var sshPortText: String
     @State private var username: String
-    @State private var appServerURL: String
+    @State private var appServerHost: String
+    @State private var appServerPortText: String
     @State private var password: String
     @State private var preferredTransport: TransportKind
-    @State private var authMode: HostAuthMode
 
     init(host: RemoteHost?, initialPassword: String, onSave: @escaping (RemoteHostDraft) -> Void) {
         self.host = host
         self.initialPassword = initialPassword
         self.onSave = onSave
 
-        _displayName = State(initialValue: host?.name ?? "")
-        _hostAddress = State(initialValue: host?.host ?? "")
-        _sshPortText = State(initialValue: String(host?.sshPort ?? 22))
-        _username = State(initialValue: host?.username ?? "")
-        _appServerURL = State(initialValue: host?.appServerURL ?? "")
-        _password = State(initialValue: initialPassword)
-        _preferredTransport = State(initialValue: host?.preferredTransport ?? .appServerWS)
-        _authMode = State(initialValue: host?.authMode ?? .remotePCManaged)
+        let initialDraft: RemoteHostDraft
+        if let host {
+            initialDraft = RemoteHostDraft(host: host, password: initialPassword)
+        } else {
+            initialDraft = .empty
+        }
+
+        _displayName = State(initialValue: initialDraft.name)
+        _hostAddress = State(initialValue: initialDraft.host)
+        _sshPortText = State(initialValue: String(initialDraft.sshPort))
+        _username = State(initialValue: initialDraft.username)
+        _appServerHost = State(initialValue: initialDraft.appServerHost)
+        _appServerPortText = State(initialValue: String(initialDraft.appServerPort))
+        _password = State(initialValue: initialDraft.password)
+        _preferredTransport = State(initialValue: initialDraft.preferredTransport)
     }
 
-    private var parsedPort: Int {
+    private var parsedSSHPort: Int {
         Int(self.sshPortText) ?? 22
+    }
+
+    private var parsedAppServerPort: Int {
+        Int(self.appServerPortText) ?? 8080
     }
 
     private var draft: RemoteHostDraft {
         RemoteHostDraft(
             name: self.displayName,
             host: self.hostAddress,
-            sshPort: self.parsedPort,
+            sshPort: self.parsedSSHPort,
             username: self.username,
-            appServerURL: self.appServerURL,
+            appServerHost: self.appServerHost,
+            appServerPort: self.parsedAppServerPort,
             preferredTransport: self.preferredTransport,
-            authMode: self.authMode,
             password: self.password
         )
     }
@@ -2331,36 +2472,21 @@ struct RemoteHostEditorView: View {
                 }
 
                 Section("App Server") {
-                    TextField("ws://100.x.x.x:8080", text: self.$appServerURL)
+                    TextField("Host (default: Basic Host)", text: self.$appServerHost)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
-                        .textContentType(.URL)
+                    TextField("Port", text: self.$appServerPortText)
+                        .keyboardType(.numberPad)
 
                     Picker("Transport", selection: self.$preferredTransport) {
                         ForEach(TransportKind.allCases) { transport in
                             Text(transport.displayName).tag(transport)
                         }
                     }
-
-                    Picker("Auth", selection: self.$authMode) {
-                        ForEach(HostAuthMode.allCases) { mode in
-                            Text(mode.displayName).tag(mode)
-                        }
-                    }
                 }
 
                 Section("SSH") {
                     SecureField("Password (optional)", text: self.$password)
-                }
-
-                if self.host == nil {
-                    Section {
-                        Button("Generate app-server URL from host") {
-                            let normalized = self.hostAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !normalized.isEmpty else { return }
-                            self.appServerURL = RemoteHost.defaultAppServerURL(host: normalized)
-                        }
-                    }
                 }
             }
             .navigationTitle(self.host == nil ? "New Host" : "Edit Host")
@@ -2576,6 +2702,276 @@ private actor RemotePathBrowserService {
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
         return (currentPath, directories)
+    }
+}
+
+private struct SSHCodexExecResult {
+    let threadID: String
+    let assistantText: String
+}
+
+private enum SSHCodexExecError: LocalizedError {
+    case timeout
+    case malformedOutput
+    case noResponse
+    case commandFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .timeout:
+            return "codex exec timed out on remote host."
+        case .malformedOutput:
+            return "Could not parse codex exec output from remote host."
+        case .noResponse:
+            return "codex exec completed without a readable response."
+        case .commandFailed(let message):
+            return message
+        }
+    }
+}
+
+private actor SSHCodexExecService {
+    func checkCodexVersion(host: RemoteHost, password: String) async throws -> String {
+        let output = try await self.runRemoteCommand(
+            host: host,
+            password: password,
+            command: "codex --version",
+            timeoutSeconds: 20
+        )
+        let lines = Self.nonEmptyLines(from: output)
+        guard let versionLine = lines.first(where: { $0.lowercased().contains("codex") }) ?? lines.first else {
+            throw SSHCodexExecError.noResponse
+        }
+        return versionLine
+    }
+
+    func executePrompt(
+        host: RemoteHost,
+        password: String,
+        workspacePath: String,
+        prompt: String,
+        resumeThreadID: String?,
+        forceNewThread: Bool,
+        model: String?
+    ) async throws -> SSHCodexExecResult {
+        let command = Self.buildExecCommand(
+            workspacePath: workspacePath,
+            prompt: prompt,
+            resumeThreadID: resumeThreadID,
+            forceNewThread: forceNewThread,
+            model: model
+        )
+        let output = try await self.runRemoteCommand(
+            host: host,
+            password: password,
+            command: command,
+            timeoutSeconds: 300
+        )
+        return try Self.parseExecResult(output: output, fallbackThreadID: resumeThreadID)
+    }
+
+    private func runRemoteCommand(
+        host: RemoteHost,
+        password: String,
+        command: String,
+        timeoutSeconds: Int
+    ) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            let queue = DispatchQueue(label: "com.example.CodexAppMobile.ssh-codex-exec")
+            queue.async {
+                final class SharedState: @unchecked Sendable {
+                    var fullOutput = ""
+                    var completed = false
+                }
+
+                let state = SharedState()
+                let engine = SSHClientEngine()
+                let startMarker = "__CODEX_EXEC_START__"
+                let endMarker = "__CODEX_EXEC_END__"
+
+                let timeoutSource = DispatchSource.makeTimerSource(queue: queue)
+                timeoutSource.schedule(deadline: .now() + .seconds(timeoutSeconds))
+                timeoutSource.setEventHandler {
+                    guard !state.completed else { return }
+                    state.completed = true
+                    engine.disconnect()
+                    continuation.resume(throwing: SSHCodexExecError.timeout)
+                }
+                timeoutSource.resume()
+
+                let complete: @Sendable (Result<String, Error>) -> Void = { result in
+                    guard !state.completed else { return }
+                    state.completed = true
+                    timeoutSource.cancel()
+                    engine.disconnect()
+                    continuation.resume(with: result)
+                }
+
+                engine.onOutput = { chunk in
+                    state.fullOutput += chunk
+                    guard state.fullOutput.contains(endMarker) else { return }
+                    do {
+                        let parsed = try Self.parseDelimitedOutput(
+                            state.fullOutput,
+                            startMarker: startMarker,
+                            endMarker: endMarker
+                        )
+                        complete(.success(parsed))
+                    } catch {
+                        complete(.failure(error))
+                    }
+                }
+
+                engine.onError = { error in
+                    complete(.failure(error))
+                }
+
+                engine.onConnected = {
+                    let wrappedCommand = "printf '\(startMarker)\\n'; \(command) 2>&1; printf '\\n\(endMarker)\\n'"
+                    do {
+                        try engine.send(command: wrappedCommand + "\n")
+                    } catch {
+                        complete(.failure(error))
+                    }
+                }
+
+                do {
+                    try engine.connect(
+                        host: host.host,
+                        port: host.sshPort,
+                        username: host.username,
+                        password: password.isEmpty ? nil : password
+                    )
+                } catch {
+                    complete(.failure(error))
+                }
+            }
+        }
+    }
+
+    private static func buildExecCommand(
+        workspacePath: String,
+        prompt: String,
+        resumeThreadID: String?,
+        forceNewThread: Bool,
+        model: String?
+    ) -> String {
+        let escapedPath = self.escapeForSingleQuote(workspacePath)
+        let escapedPrompt = self.escapeForSingleQuote(prompt)
+        let trimmedModel = model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let modelArgument: String
+        if trimmedModel.isEmpty {
+            modelArgument = ""
+        } else {
+            modelArgument = " --model '\(self.escapeForSingleQuote(trimmedModel))'"
+        }
+
+        if !forceNewThread,
+           let resumeThreadID,
+           !resumeThreadID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let escapedThreadID = self.escapeForSingleQuote(resumeThreadID)
+            return "cd '\(escapedPath)' && codex exec resume --json --skip-git-repo-check\(modelArgument) '\(escapedThreadID)' '\(escapedPrompt)'"
+        }
+
+        return "cd '\(escapedPath)' && codex exec --json --skip-git-repo-check\(modelArgument) '\(escapedPrompt)'"
+    }
+
+    private static func parseDelimitedOutput(
+        _ output: String,
+        startMarker: String,
+        endMarker: String
+    ) throws -> String {
+        guard let startRange = output.range(of: startMarker),
+              let endRange = output.range(of: endMarker),
+              startRange.upperBound <= endRange.lowerBound
+        else {
+            throw SSHCodexExecError.malformedOutput
+        }
+
+        return String(output[startRange.upperBound..<endRange.lowerBound])
+    }
+
+    private static func parseExecResult(output: String, fallbackThreadID: String?) throws -> SSHCodexExecResult {
+        var resolvedThreadID = fallbackThreadID
+        var assistantChunks: [String] = []
+        var errorLines: [String] = []
+        var nonJSONLines: [String] = []
+
+        for line in self.nonEmptyLines(from: output) {
+            guard line.hasPrefix("{"),
+                  let data = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let type = object["type"] as? String else {
+                nonJSONLines.append(line)
+                if line.lowercased().contains("error") {
+                    errorLines.append(line)
+                }
+                continue
+            }
+
+            switch type {
+            case "thread.started":
+                if let threadID = object["thread_id"] as? String,
+                   !threadID.isEmpty {
+                    resolvedThreadID = threadID
+                }
+            case "item.completed":
+                guard let item = object["item"] as? [String: Any],
+                      let itemType = item["type"] as? String else {
+                    continue
+                }
+                if itemType == "agent_message",
+                   let text = item["text"] as? String,
+                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    assistantChunks.append(text)
+                }
+            case "error":
+                if let message = object["message"] as? String,
+                   !message.isEmpty {
+                    errorLines.append(message)
+                }
+            default:
+                continue
+            }
+        }
+
+        if !errorLines.isEmpty && assistantChunks.isEmpty {
+            throw SSHCodexExecError.commandFailed(errorLines.joined(separator: "\n"))
+        }
+
+        let assistantText: String
+        if assistantChunks.isEmpty {
+            assistantText = nonJSONLines.joined(separator: "\n")
+        } else {
+            assistantText = assistantChunks.joined(separator: "\n")
+        }
+
+        let trimmedText = assistantText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else {
+            throw SSHCodexExecError.noResponse
+        }
+
+        let threadID = resolvedThreadID ?? UUID().uuidString
+        return SSHCodexExecResult(threadID: threadID, assistantText: trimmedText)
+    }
+
+    private static func nonEmptyLines(from text: String) -> [String] {
+        text
+            .split(whereSeparator: \.isNewline)
+            .map { self.stripANSI(String($0)).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func escapeForSingleQuote(_ value: String) -> String {
+        value.replacingOccurrences(of: "'", with: "'\"'\"'")
+    }
+
+    private static func stripANSI(_ text: String) -> String {
+        text.replacingOccurrences(
+            of: #"\u{001B}\[[0-9;?]*[ -/]*[@-~]"#,
+            with: "",
+            options: .regularExpression
+        )
     }
 }
 
@@ -2796,12 +3192,21 @@ struct SessionWorkbenchView: View {
     @State private var selectedThreadID: String?
     @State private var prompt = ""
     @State private var localErrorMessage = ""
+    @State private var localStatusMessage = ""
     @State private var isRefreshingThreads = false
+    @State private var isRunningSSHAction = false
     @State private var showArchived = false
     @State private var isPresentingDiagnostics = false
     @State private var isPresentingProjectEditor = false
     @State private var editingWorkspace: ProjectWorkspace?
     @State private var activePendingRequest: AppServerPendingRequest?
+    @State private var sshTranscriptByThread: [String: String] = [:]
+
+    private let sshCodexExecService = SSHCodexExecService()
+
+    private var isSSHTransport: Bool {
+        self.host.preferredTransport == .ssh
+    }
 
     private var selectedWorkspace: ProjectWorkspace? {
         guard let selectedWorkspaceID else { return nil }
@@ -2813,12 +3218,24 @@ struct SessionWorkbenchView: View {
     }
 
     private var threads: [CodexThreadSummary] {
-        self.appState.threadBookmarkStore.threads(for: self.selectedWorkspaceID)
+        self.appState.threadBookmarkStore
+            .threads(for: self.selectedWorkspaceID)
+            .filter { $0.archived == self.showArchived }
     }
 
     private var selectedThreadTranscript: String {
         guard let selectedThreadID else { return "" }
+        if self.isSSHTransport {
+            return self.sshTranscriptByThread[selectedThreadID] ?? ""
+        }
         return self.appState.appServerClient.transcriptByThread[selectedThreadID] ?? ""
+    }
+
+    private var connectionStateText: String {
+        if self.isSSHTransport {
+            return "ready (SSH on-demand)"
+        }
+        return self.appState.appServerClient.state.rawValue
     }
 
     var body: some View {
@@ -2830,16 +3247,19 @@ struct SessionWorkbenchView: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
 
-                Text("State: \(self.appState.appServerClient.state.rawValue)")
+                Text("Transport: \(self.host.preferredTransport.displayName)")
+                Text("State: \(self.connectionStateText)")
 
-                if !self.appState.appServerClient.connectedEndpoint.isEmpty {
+                if !self.isSSHTransport,
+                   !self.appState.appServerClient.connectedEndpoint.isEmpty {
                     Text("Endpoint: \(self.appState.appServerClient.connectedEndpoint)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
 
-                if !self.appState.appServerClient.lastErrorMessage.isEmpty {
+                if !self.isSSHTransport,
+                   !self.appState.appServerClient.lastErrorMessage.isEmpty {
                     Text(self.appState.appServerClient.lastErrorMessage)
                         .font(.caption)
                         .foregroundStyle(.red)
@@ -2851,23 +3271,37 @@ struct SessionWorkbenchView: View {
                         .foregroundStyle(.red)
                 }
 
+                if !self.localStatusMessage.isEmpty {
+                    Text(self.localStatusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 HStack {
                     Button("Connect") {
                         self.connectHost()
                     }
-                    .disabled(self.appState.appServerClient.state == .connected)
+                    .disabled(
+                        self.isSSHTransport
+                        ? self.isRunningSSHAction
+                        : self.appState.appServerClient.state == .connected
+                    )
                     .codexActionButtonStyle()
 
                     Button("Disconnect") {
-                        self.appState.appServerClient.disconnect()
+                        self.disconnectHost()
                     }
-                    .disabled(self.appState.appServerClient.state == .disconnected)
+                    .disabled(
+                        self.isSSHTransport
+                        ? true
+                        : self.appState.appServerClient.state == .disconnected
+                    )
                     .codexActionButtonStyle()
 
                     Button("Refresh") {
                         self.refreshThreads()
                     }
-                    .disabled(self.selectedWorkspace == nil || self.isRefreshingThreads)
+                    .disabled(self.selectedWorkspace == nil || self.isRefreshingThreads || self.isRunningSSHAction)
                     .codexActionButtonStyle()
                 }
 
@@ -2882,6 +3316,7 @@ struct SessionWorkbenchView: View {
                     Button("Diagnostics") {
                         self.isPresentingDiagnostics = true
                     }
+                    .disabled(self.isSSHTransport)
                     .codexActionButtonStyle()
                 }
             }
@@ -3000,38 +3435,49 @@ struct SessionWorkbenchView: View {
                     Button("Send") {
                         self.sendPrompt(forceNewThread: false)
                     }
-                    .disabled(self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(
+                        self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || self.isRunningSSHAction
+                    )
                     .codexActionButtonStyle()
 
                     Button("New Thread + Send") {
                         self.sendPrompt(forceNewThread: true)
                     }
-                    .disabled(self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(
+                        self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || self.isRunningSSHAction
+                    )
                     .codexActionButtonStyle()
 
                     Button("Interrupt") {
                         self.interruptActiveTurn()
                     }
-                    .disabled(self.appState.appServerClient.activeTurnID(for: self.selectedThreadID) == nil)
+                    .disabled(
+                        self.isSSHTransport
+                        || self.appState.appServerClient.activeTurnID(for: self.selectedThreadID) == nil
+                    )
                     .codexActionButtonStyle()
                 }
             }
 
-            Section("Pending Actions") {
-                if self.appState.appServerClient.pendingRequests.isEmpty {
-                    Text("No pending approvals.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(self.appState.appServerClient.pendingRequests) { request in
-                        Button {
-                            self.activePendingRequest = request
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(request.title)
-                                    .font(.subheadline)
-                                Text(request.method)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+            if !self.isSSHTransport {
+                Section("Pending Actions") {
+                    if self.appState.appServerClient.pendingRequests.isEmpty {
+                        Text("No pending approvals.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(self.appState.appServerClient.pendingRequests) { request in
+                            Button {
+                                self.activePendingRequest = request
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(request.title)
+                                        .font(.subheadline)
+                                    Text(request.method)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
@@ -3056,6 +3502,9 @@ struct SessionWorkbenchView: View {
             self.appState.selectHost(self.host.id)
             self.appState.hostSessionStore.markOpened(hostID: self.host.id)
             self.restoreSelectionFromSession()
+            if self.isSSHTransport {
+                self.appState.appServerClient.disconnect()
+            }
         }
         .onChange(of: self.showArchived) {
             self.refreshThreads()
@@ -3103,13 +3552,40 @@ struct SessionWorkbenchView: View {
 
     private func connectHost() {
         self.localErrorMessage = ""
+        self.localStatusMessage = ""
+
+        if self.isSSHTransport {
+            self.isRunningSSHAction = true
+            let password = self.appState.remoteHostStore.password(for: self.host.id)
+            Task {
+                defer {
+                    self.isRunningSSHAction = false
+                }
+                do {
+                    let version = try await self.sshCodexExecService.checkCodexVersion(host: self.host, password: password)
+                    self.localStatusMessage = "SSH ready (\(version))."
+                } catch {
+                    self.localErrorMessage = self.userFacingSSHError(error)
+                }
+            }
+            return
+        }
+
         Task {
             do {
                 try await self.appState.appServerClient.connect(to: self.host)
+                self.localStatusMessage = "Connected to app-server."
             } catch {
                 self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
             }
         }
+    }
+
+    private func disconnectHost() {
+        if self.isSSHTransport {
+            return
+        }
+        self.appState.appServerClient.disconnect()
     }
 
     private func refreshThreads() {
@@ -3119,11 +3595,27 @@ struct SessionWorkbenchView: View {
         }
 
         self.localErrorMessage = ""
+        self.localStatusMessage = ""
         self.isRefreshingThreads = true
 
         Task {
             defer {
                 self.isRefreshingThreads = false
+            }
+
+            if self.isSSHTransport {
+                let localThreads = self.appState.threadBookmarkStore
+                    .threads(for: selectedWorkspace.id)
+                    .filter { $0.archived == self.showArchived }
+                if let selectedThreadID,
+                   localThreads.contains(where: { $0.threadID == selectedThreadID }) {
+                    // Keep current selection.
+                } else {
+                    self.selectedThreadID = localThreads.first?.threadID
+                    self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: self.selectedThreadID)
+                }
+                self.localStatusMessage = "SSH mode: showing locally saved threads."
+                return
             }
 
             do {
@@ -3170,6 +3662,16 @@ struct SessionWorkbenchView: View {
         }
 
         self.localErrorMessage = ""
+        self.localStatusMessage = ""
+
+        if self.isSSHTransport {
+            self.sendPromptViaSSH(
+                prompt: trimmedPrompt,
+                selectedWorkspace: selectedWorkspace,
+                forceNewThread: forceNewThread
+            )
+            return
+        }
 
         Task {
             do {
@@ -3228,7 +3730,78 @@ struct SessionWorkbenchView: View {
         }
     }
 
+    private func sendPromptViaSSH(
+        prompt: String,
+        selectedWorkspace: ProjectWorkspace,
+        forceNewThread: Bool
+    ) {
+        let password = self.appState.remoteHostStore.password(for: self.host.id)
+        let resumeThreadID = forceNewThread ? nil : self.selectedThreadID
+        self.isRunningSSHAction = true
+
+        Task {
+            defer {
+                self.isRunningSSHAction = false
+            }
+
+            do {
+                let result = try await self.sshCodexExecService.executePrompt(
+                    host: self.host,
+                    password: password,
+                    workspacePath: selectedWorkspace.remotePath,
+                    prompt: prompt,
+                    resumeThreadID: resumeThreadID,
+                    forceNewThread: forceNewThread,
+                    model: selectedWorkspace.defaultModel
+                )
+
+                self.selectedThreadID = result.threadID
+                self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: result.threadID)
+                self.appendSSHTranscript(prompt: prompt, response: result.assistantText, threadID: result.threadID)
+
+                self.appState.threadBookmarkStore.upsert(
+                    summary: CodexThreadSummary(
+                        threadID: result.threadID,
+                        hostID: self.host.id,
+                        workspaceID: selectedWorkspace.id,
+                        preview: prompt,
+                        updatedAt: Date(),
+                        archived: false,
+                        cwd: selectedWorkspace.remotePath
+                    )
+                )
+
+                self.prompt = ""
+                self.localStatusMessage = "Executed via codex exec over SSH."
+            } catch {
+                self.localErrorMessage = self.userFacingSSHError(error)
+            }
+        }
+    }
+
+    private func appendSSHTranscript(prompt: String, response: String, threadID: String) {
+        var existing = self.sshTranscriptByThread[threadID] ?? ""
+        if !existing.isEmpty {
+            existing += "\n\n"
+        }
+        existing += "> \(prompt)\n\(response)"
+        self.sshTranscriptByThread[threadID] = existing
+    }
+
+    private func userFacingSSHError(_ error: Error) -> String {
+        if let codexError = error as? SSHCodexExecError,
+           let description = codexError.errorDescription,
+           !description.isEmpty {
+            return "[SSH] \(description)"
+        }
+        let endpoint = HostKeyStore.endpointKey(host: self.host.host, port: self.host.sshPort)
+        return SSHConnectionErrorFormatter.message(for: error, endpoint: endpoint)
+    }
+
     private func loadThread(_ threadID: String) {
+        if self.isSSHTransport {
+            return
+        }
         Task {
             do {
                 _ = try await self.appState.appServerClient.threadRead(threadID: threadID)
@@ -3239,6 +3812,11 @@ struct SessionWorkbenchView: View {
     }
 
     private func interruptActiveTurn() {
+        if self.isSSHTransport {
+            self.localErrorMessage = "Interrupt is only available in App Server mode."
+            return
+        }
+
         guard let threadID = self.selectedThreadID,
               let turnID = self.appState.appServerClient.activeTurnID(for: threadID) else {
             self.localErrorMessage = "No active turn to interrupt."
@@ -3255,6 +3833,19 @@ struct SessionWorkbenchView: View {
     }
 
     private func archiveThread(summary: CodexThreadSummary, archived: Bool) {
+        if self.isSSHTransport {
+            var updated = summary
+            updated.archived = archived
+            updated.updatedAt = Date()
+            self.appState.threadBookmarkStore.upsert(summary: updated)
+            if archived,
+               self.selectedThreadID == summary.threadID {
+                self.selectedThreadID = nil
+                self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: nil)
+            }
+            return
+        }
+
         Task {
             do {
                 if self.appState.appServerClient.state != .connected {
