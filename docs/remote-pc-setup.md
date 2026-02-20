@@ -34,6 +34,23 @@ codex app-server --listen ws://0.0.0.0:8080
 - セキュリティ前提は Tailscale 閉域です。公開ネットワークへは直接公開しません。
 - iOS 側接続URLは `ws://<tailnet-ip>:8080` を使います。
 
+### 3.1 iOS ハンドシェイク失敗時（Sec-WebSocket-Extensions）
+
+`[Connection] WebSocket handshake failed before app-server initialization` が出る場合は、
+iOS クライアントが送る `Sec-WebSocket-Extensions` を app-server が受け付けず失敗している可能性があります。
+
+その場合は、同じリモートPCでヘッダを除去する軽量プロキシを起動してください。
+
+```bash
+node scripts/ws_strip_extensions_proxy.js \
+  --upstream ws://127.0.0.1:8080 \
+  --listen-host 0.0.0.0 \
+  --listen-port 18081
+```
+
+- iOS 側接続URLを `ws://<tailnet-ip>:18081` に変更します。
+- `codex app-server` はそのまま `ws://127.0.0.1:8080` で動かします。
+
 ## 4. Tailscale ACL（例）
 
 - iPhone のユーザー/デバイスからリモートPCの `8080/tcp` を許可します。
@@ -45,6 +62,7 @@ codex app-server --listen ws://0.0.0.0:8080
    - `Host`: リモートPCの tailnet IP
    - `App Server URL`: `ws://<tailnet-ip>:8080`
    - `Transport`: `App Server (WebSocket)`
+   - iOS ハンドシェイク失敗時: `ws://<tailnet-ip>:18081`（上記プロキシ）を設定
 2. `Hosts` タブから対象Hostをタップして `Sessions` タブへ遷移
 3. `SessionWorkbench` で Project を追加
    - `Add Project` から `remotePath` を設定（必要に応じて `Browse Remote Path`）

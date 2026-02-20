@@ -2064,7 +2064,7 @@ final class AppServerClient: ObservableObject {
             return nil
         }
 
-        return "[Connection] WebSocket handshake failed before app-server initialization. codex app-server may reject iOS WebSocket extension negotiation (Sec-WebSocket-Extensions). Use Terminal tab, or connect through a WebSocket proxy."
+        return "[Connection] WebSocket handshake failed before app-server initialization. codex app-server may reject iOS WebSocket extension negotiation (Sec-WebSocket-Extensions). Run scripts/ws_strip_extensions_proxy.js on the remote host and connect iOS to that proxy URL, or use Terminal tab."
     }
 
     private func shouldAttemptReconnect(after error: Error) -> Bool {
@@ -2298,10 +2298,18 @@ struct ContentView: View {
 struct HostsView: View {
     @EnvironmentObject private var appState: AppState
 
+    @State private var navigationPath: [UUID] = []
     @State private var editorContext: HostEditorContext?
+    @State private var loadingHostID: UUID?
+    @State private var loadingErrorMessage = ""
+    @State private var isPresentingLoadingError = false
+
+    private var isPreparingHost: Bool {
+        self.loadingHostID != nil
+    }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: self.$navigationPath) {
             Group {
                 if self.appState.remoteHostStore.hosts.isEmpty {
                     ContentUnavailableView(
@@ -2312,35 +2320,13 @@ struct HostsView: View {
                 } else {
                     List {
                         ForEach(self.appState.remoteHostStore.hosts) { host in
-                            NavigationLink {
-                                SessionWorkbenchView(host: host)
+                            Button {
+                                self.openHost(host)
                             } label: {
-                                HStack(alignment: .center, spacing: 10) {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(host.name)
-                                            .font(.headline)
-                                        Text("\(host.username)@\(host.host):\(host.sshPort)")
-                                            .font(.subheadline)
-                                            .foregroundStyle(.secondary)
-                                        Text(host.appServerURL)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .textSelection(.enabled)
-                                    }
-
-                                    Spacer(minLength: 8)
-
-                                    if self.appState.selectedHostID == host.id {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundStyle(.green)
-                                    }
-                                }
+                                self.hostRow(host: host)
                             }
-                            .simultaneousGesture(
-                                TapGesture().onEnded {
-                                    self.appState.selectHost(host.id)
-                                }
-                            )
+                            .buttonStyle(.plain)
+                            .contentShape(Rectangle())
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 Button("Delete", role: .destructive) {
                                     self.appState.removeHost(hostID: host.id)
@@ -2376,9 +2362,41 @@ struct HostsView: View {
                     } label: {
                         Label("Add", systemImage: "plus")
                     }
+                    .disabled(self.isPreparingHost)
                     .codexActionButtonStyle()
                 }
             }
+            .navigationDestination(for: UUID.self) { hostID in
+                if let host = self.appState.remoteHostStore.hosts.first(where: { $0.id == hostID }) {
+                    SessionWorkbenchView(host: host)
+                } else {
+                    ContentUnavailableView(
+                        "Host Not Found",
+                        systemImage: "network.slash",
+                        description: Text("The selected host no longer exists.")
+                    )
+                }
+            }
+        }
+        .disabled(self.isPreparingHost)
+        .overlay {
+            if self.isPreparingHost {
+                ZStack {
+                    Color.black.opacity(0.20)
+                        .ignoresSafeArea()
+
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .controlSize(.large)
+                }
+                .transition(.opacity)
+                .zIndex(1)
+            }
+        }
+        .alert("読み込みに失敗しました", isPresented: self.$isPresentingLoadingError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(self.loadingErrorMessage)
         }
         .sheet(item: self.$editorContext) { context in
             RemoteHostEditorView(
@@ -2389,6 +2407,96 @@ struct HostsView: View {
                 self.appState.cleanupSessionOrphans()
             }
         }
+    }
+
+    private func hostRow(host: RemoteHost) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(host.name)
+                    .font(.headline)
+                Text("\(host.username)@\(host.host):\(host.sshPort)")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text(host.appServerURL)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+
+            Spacer(minLength: 8)
+
+            if self.appState.selectedHostID == host.id {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            }
+        }
+    }
+
+    private func openHost(_ host: RemoteHost) {
+        guard self.isPreparingHost == false else {
+            return
+        }
+
+        self.loadingHostID = host.id
+        self.loadingErrorMessage = ""
+
+        Task { @MainActor in
+            defer {
+                self.loadingHostID = nil
+            }
+
+            do {
+                try await self.prepareHostForNavigation(host)
+                self.navigationPath.append(host.id)
+            } catch {
+                self.loadingErrorMessage = self.userFacingHostLoadingError(error, host: host)
+                self.isPresentingLoadingError = true
+            }
+        }
+    }
+
+    private func prepareHostForNavigation(_ host: RemoteHost) async throws {
+        self.appState.selectHost(host.id)
+        self.appState.hostSessionStore.markOpened(hostID: host.id)
+
+        guard host.preferredTransport == .appServerWS,
+              self.initialWorkspace(for: host.id) != nil
+        else {
+            return
+        }
+
+        try await self.appState.appServerClient.connect(to: host)
+        _ = try await self.appState.appServerClient.threadList(limit: 1)
+    }
+
+    private func initialWorkspace(for hostID: UUID) -> ProjectWorkspace? {
+        let workspaces = self.appState.projectStore.workspaces(for: hostID)
+        guard let first = workspaces.first else {
+            return nil
+        }
+
+        if let selectedWorkspaceID = self.appState.hostSessionStore
+            .session(for: hostID)?
+            .selectedProjectID,
+           let selected = workspaces.first(where: { $0.id == selectedWorkspaceID }) {
+            return selected
+        }
+
+        return first
+    }
+
+    private func userFacingHostLoadingError(_ error: Error, host: RemoteHost) -> String {
+        if host.preferredTransport == .appServerWS {
+            return self.appState.appServerClient.userFacingMessage(for: error)
+        }
+
+        if let localized = error as? LocalizedError,
+           let message = localized.errorDescription,
+           !message.isEmpty {
+            return message
+        }
+
+        return error.localizedDescription
     }
 }
 
