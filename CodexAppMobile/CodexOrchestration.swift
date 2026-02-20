@@ -238,8 +238,23 @@ struct ProjectWorkspace: Identifiable, Codable, Equatable {
     }
 
     var displayName: String {
-        let trimmed = self.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? self.remotePath : trimmed
+        let trimmedName = self.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedName.isEmpty {
+            return trimmedName
+        }
+
+        let trimmedPath = self.remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedPath == "/" || trimmedPath == "~" {
+            return trimmedPath
+        }
+
+        let normalizedPath = trimmedPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if let lastComponent = normalizedPath.split(separator: "/").last,
+           !lastComponent.isEmpty {
+            return String(lastComponent)
+        }
+
+        return trimmedPath
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -3468,19 +3483,48 @@ struct SessionWorkbenchView: View {
             }
             .frame(maxWidth: .infinity)
 
-            Button {
-                self.isPromptFieldFocused = false
-                self.createNewThread()
+            Menu {
+                Button {
+                    self.isPromptFieldFocused = false
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                        self.isMenuOpen = true
+                    }
+                } label: {
+                    Label("メニューを開く", systemImage: "sidebar.left")
+                }
+
+                Button {
+                    self.isPromptFieldFocused = false
+                    self.refreshThreads()
+                } label: {
+                    Label("スレッド更新", systemImage: "arrow.clockwise")
+                }
+                .disabled(self.selectedWorkspace == nil || self.isRefreshingThreads || self.isRunningSSHAction)
+
+                Button {
+                    self.isPromptFieldFocused = false
+                    self.editingWorkspace = nil
+                    self.isPresentingProjectEditor = true
+                } label: {
+                    Label("プロジェクト追加", systemImage: "plus")
+                }
+
+                Button {
+                    self.isPromptFieldFocused = false
+                    self.dismiss()
+                } label: {
+                    Label("ホスト一覧に戻る", systemImage: "chevron.left")
+                }
             } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 18, weight: .bold))
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 18, weight: .semibold))
                     .frame(width: 38, height: 38)
                     .background {
-                        self.glassCircleBackground(size: 38, tint: self.accentGlassTint(light: 0.24, dark: 0.20))
+                        self.glassCircleBackground(size: 38, tint: self.glassWhiteTint(light: 0.22, dark: 0.14))
                     }
             }
             .buttonStyle(.plain)
-            .foregroundStyle(Color.accentColor)
+            .foregroundStyle(Color.primary)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -3556,7 +3600,7 @@ struct SessionWorkbenchView: View {
                         VStack(spacing: 10) {
                             Image(systemName: "bubble.left.and.bubble.right")
                                 .font(.system(size: 26, weight: .light))
-                            Text("スレッドを選択するか、＋で新規スレッドを作成してください。")
+                            Text("スレッドを選択するか、メニューから新規スレッドを作成してください。")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
@@ -3798,6 +3842,24 @@ struct SessionWorkbenchView: View {
                             }
                         }
                     }
+
+                    Button {
+                        self.isPromptFieldFocused = false
+                        self.createNewThread()
+                        self.isMenuOpen = false
+                    } label: {
+                        Label("新規スレッド", systemImage: "plus.bubble")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background {
+                                self.glassCardBackground(cornerRadius: 14, tint: self.accentGlassTint(light: 0.16, dark: 0.12))
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(self.selectedWorkspace == nil || self.isRunningSSHAction)
+                    .opacity(self.selectedWorkspace == nil ? 0.5 : 1)
 
                     Button {
                         self.editingWorkspace = nil
