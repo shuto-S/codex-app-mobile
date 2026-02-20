@@ -42,6 +42,25 @@ enum CodexApprovalPolicy: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum CodexReasoningEffort: String, Codable, CaseIterable, Identifiable {
+    case low
+    case medium
+    case high
+
+    var id: String { self.rawValue }
+
+    var displayName: String {
+        switch self {
+        case .low:
+            return "Low"
+        case .medium:
+            return "Medium"
+        case .high:
+            return "High"
+        }
+    }
+}
+
 struct RemoteHost: Identifiable, Codable, Equatable {
     let id: UUID
     var name: String
@@ -1417,7 +1436,12 @@ final class AppServerClient: ObservableObject {
     }
 
     @discardableResult
-    func turnStart(threadID: String, inputText: String, model: String?) async throws -> String {
+    func turnStart(
+        threadID: String,
+        inputText: String,
+        model: String?,
+        effort: CodexReasoningEffort?
+    ) async throws -> String {
         var params: [String: JSONValue] = [
             "threadId": .string(threadID),
             "input": .array([
@@ -1431,6 +1455,9 @@ final class AppServerClient: ObservableObject {
         if let model,
            !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             params["model"] = .string(model)
+        }
+        if let effort {
+            params["effort"] = .string(effort.rawValue)
         }
 
         let result = try await self.request(method: "turn/start", params: .object(params))
@@ -2291,7 +2318,10 @@ struct ContentView: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        HostsView(remoteHostStore: self.appState.remoteHostStore)
+        HostsView(
+            remoteHostStore: self.appState.remoteHostStore,
+            appServerClient: self.appState.appServerClient
+        )
         .sheet(item: self.$appState.terminalLaunchContext) { _ in
             TerminalView()
         }
@@ -2301,9 +2331,11 @@ struct ContentView: View {
 struct HostsView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject var remoteHostStore: RemoteHostStore
+    @ObservedObject var appServerClient: AppServerClient
 
     @State private var navigationPath: [UUID] = []
     @State private var editorContext: HostEditorContext?
+    @State private var hostPendingDeletion: RemoteHost?
     @State private var loadingHostID: UUID?
     @State private var loadingErrorMessage = ""
     @State private var isPresentingLoadingError = false
@@ -2354,7 +2386,7 @@ struct HostsView: View {
                                 Divider()
 
                                 Button(role: .destructive) {
-                                    self.appState.removeHost(hostID: host.id)
+                                    self.hostPendingDeletion = host
                                 } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
@@ -2407,6 +2439,29 @@ struct HostsView: View {
         } message: {
             Text(self.loadingErrorMessage)
         }
+        .confirmationDialog(
+            "ホストを削除しますか？",
+            isPresented: Binding(
+                get: { self.hostPendingDeletion != nil },
+                set: { isPresented in
+                    if isPresented == false {
+                        self.hostPendingDeletion = nil
+                    }
+                }
+            ),
+            titleVisibility: .visible,
+            presenting: self.hostPendingDeletion
+        ) { host in
+            Button("削除", role: .destructive) {
+                self.appState.removeHost(hostID: host.id)
+                self.hostPendingDeletion = nil
+            }
+            Button("キャンセル", role: .cancel) {
+                self.hostPendingDeletion = nil
+            }
+        } message: { host in
+            Text("\"\(host.name)\" を削除します。この操作は取り消せません。")
+        }
         .sheet(item: self.$editorContext) { context in
             RemoteHostEditorView(
                 host: context.host,
@@ -2434,7 +2489,7 @@ struct HostsView: View {
 
             Spacer(minLength: 8)
 
-            if self.appState.selectedHostID == host.id {
+            if self.isConnectedSession(for: host) {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
             }
@@ -2458,7 +2513,7 @@ struct HostsView: View {
     }
 
     private func canDisconnectSession(for host: RemoteHost) -> Bool {
-        host.preferredTransport == .appServerWS
+        self.isConnectedSession(for: host)
     }
 
     private func disconnectSession(for host: RemoteHost) {
@@ -2467,6 +2522,24 @@ struct HostsView: View {
         }
         self.appState.selectHost(host.id)
         self.appState.appServerClient.disconnect()
+    }
+
+    private func isConnectedSession(for host: RemoteHost) -> Bool {
+        guard host.preferredTransport == .appServerWS,
+              self.appServerClient.state == .connected
+        else {
+            return false
+        }
+
+        return self.normalizedEndpoint(self.appServerClient.connectedEndpoint)
+            == self.normalizedEndpoint(host.appServerURL)
+    }
+
+    private func normalizedEndpoint(_ endpoint: String) -> String {
+        endpoint
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .lowercased()
     }
 
     private func openHost(_ host: RemoteHost) {
@@ -3412,6 +3485,8 @@ struct SessionWorkbenchView: View {
     @State private var sshTranscriptByThread: [String: String] = [:]
     @State private var isMenuOpen = false
     @State private var expandedWorkspaceIDs: Set<UUID> = []
+    @State private var selectedComposerModel = ""
+    @State private var selectedComposerReasoning: CodexReasoningEffort = .low
     @FocusState private var isPromptFieldFocused: Bool
 
     private let sshCodexExecService = SSHCodexExecService()
@@ -3479,6 +3554,59 @@ struct SessionWorkbenchView: View {
 
     private var isComposerInteractive: Bool {
         !self.isRunningSSHAction && self.selectedWorkspace != nil
+    }
+
+    private var composerModelDisplayName: String {
+        let selected = self.selectedComposerModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !selected.isEmpty {
+            return selected
+        }
+
+        let workspaceDefault = self.selectedWorkspace?.defaultModel.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !workspaceDefault.isEmpty {
+            return workspaceDefault
+        }
+
+        let currentModel = self.appState.appServerClient.diagnostics.currentModel
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !currentModel.isEmpty {
+            return currentModel
+        }
+
+        return "GPT-5.3-Codex"
+    }
+
+    private var composerModelForRequest: String? {
+        let selected = self.selectedComposerModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !selected.isEmpty {
+            return selected
+        }
+
+        let workspaceDefault = self.selectedWorkspace?.defaultModel.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !workspaceDefault.isEmpty {
+            return workspaceDefault
+        }
+
+        let currentModel = self.appState.appServerClient.diagnostics.currentModel
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return currentModel.isEmpty ? nil : currentModel
+    }
+
+    private var composerModelOptions: [String] {
+        var options: [String] = []
+        func appendIfNeeded(_ value: String) {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !options.contains(trimmed) else { return }
+            options.append(trimmed)
+        }
+
+        appendIfNeeded(self.selectedComposerModel)
+        appendIfNeeded(self.selectedWorkspace?.defaultModel ?? "")
+        appendIfNeeded(self.appState.appServerClient.diagnostics.currentModel)
+        appendIfNeeded("GPT-5.3-Codex")
+        appendIfNeeded("GPT-5.2-Thinking")
+
+        return options
     }
 
     private var menuWidth: CGFloat {
@@ -3568,6 +3696,7 @@ struct SessionWorkbenchView: View {
             if self.isSSHTransport {
                 self.appState.appServerClient.disconnect()
             }
+            self.syncComposerControlsWithWorkspace()
             if self.selectedWorkspace != nil {
                 self.refreshThreads()
             }
@@ -3576,6 +3705,7 @@ struct SessionWorkbenchView: View {
             if let selectedWorkspaceID {
                 self.expandedWorkspaceIDs.insert(selectedWorkspaceID)
             }
+            self.syncComposerControlsWithWorkspace()
         }
         .sheet(isPresented: self.$isPresentingProjectEditor) {
             ProjectEditorView(
@@ -3733,10 +3863,102 @@ struct SessionWorkbenchView: View {
         }
     }
 
+    @ViewBuilder
+    private func composerPickerChip(_ title: String, minWidth: CGFloat? = nil) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.72))
+        }
+        .foregroundStyle(Color.white.opacity(0.92))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(minWidth: minWidth, alignment: .leading)
+        .background {
+            self.glassCardBackground(cornerRadius: 14, tint: self.glassWhiteTint(light: 0.20, dark: 0.14))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(self.glassStrokeColor.opacity(0.56), lineWidth: 0.9)
+        }
+    }
+
+    @ViewBuilder
+    private var composerKeyboardDismissButton: some View {
+        Button {
+            self.isPromptFieldFocused = false
+        } label: {
+            Image(systemName: "keyboard.chevron.compact.down")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.92))
+                .frame(width: 44, height: 44)
+                .background {
+                    self.glassCircleBackground(
+                        size: 44,
+                        tint: self.glassWhiteTint(light: 0.20, dark: 0.14)
+                    )
+                }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var composerControlBar: some View {
+        HStack(spacing: 8) {
+            Menu {
+                ForEach(self.composerModelOptions, id: \.self) { model in
+                    Button {
+                        self.selectedComposerModel = model
+                    } label: {
+                        if model == self.composerModelDisplayName {
+                            Label(model, systemImage: "checkmark")
+                        } else {
+                            Text(model)
+                        }
+                    }
+                }
+            } label: {
+                self.composerPickerChip(self.composerModelDisplayName, minWidth: 150)
+            }
+            .buttonStyle(.plain)
+            .disabled(!self.isComposerInteractive)
+            .opacity(self.isComposerInteractive ? 1 : 0.68)
+
+            Menu {
+                ForEach(CodexReasoningEffort.allCases) { effort in
+                    Button {
+                        self.selectedComposerReasoning = effort
+                    } label: {
+                        if effort == self.selectedComposerReasoning {
+                            Label(effort.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(effort.displayName)
+                        }
+                    }
+                }
+            } label: {
+                self.composerPickerChip(self.selectedComposerReasoning.displayName, minWidth: 84)
+            }
+            .buttonStyle(.plain)
+            .disabled(!self.isComposerInteractive)
+            .opacity(self.isComposerInteractive ? 1 : 0.68)
+
+            Spacer(minLength: 8)
+
+            if self.isPromptFieldFocused {
+                self.composerKeyboardDismissButton
+            }
+        }
+    }
+
     private var chatComposer: some View {
         let isInactive = !self.isComposerInteractive
 
-        return VStack(alignment: .trailing, spacing: 8) {
+        return VStack(alignment: .leading, spacing: 8) {
+            self.composerControlBar
+
             HStack(alignment: .bottom, spacing: 10) {
                 ZStack(alignment: .leading) {
                     if self.prompt.isEmpty {
@@ -3797,26 +4019,6 @@ struct SessionWorkbenchView: View {
             .onTapGesture {
                 guard self.isComposerInteractive, self.isPromptEmpty else { return }
                 self.isPromptFieldFocused = true
-            }
-
-            if self.isPromptFieldFocused {
-                Button {
-                    self.isPromptFieldFocused = false
-                } label: {
-                    Image(systemName: "keyboard.chevron.compact.down")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(Color.white.opacity(0.92))
-                        .frame(width: 38, height: 38)
-                        .background {
-                            self.glassCircleBackground(
-                                size: 38,
-                                tint: self.glassWhiteTint(light: 0.20, dark: 0.14)
-                            )
-                        }
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 2)
-                .padding(.bottom, 3)
             }
         }
         .padding(.horizontal, 12)
@@ -4279,7 +4481,7 @@ struct SessionWorkbenchView: View {
                 let threadID = try await self.appState.appServerClient.threadStart(
                     cwd: selectedWorkspace.remotePath,
                     approvalPolicy: selectedWorkspace.defaultApprovalPolicy,
-                    model: selectedWorkspace.defaultModel
+                    model: self.composerModelForRequest
                 )
 
                 self.selectedThreadID = threadID
@@ -4299,6 +4501,24 @@ struct SessionWorkbenchView: View {
             } catch {
                 self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
             }
+        }
+    }
+
+    private func syncComposerControlsWithWorkspace() {
+        let selectedModel = self.selectedComposerModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard selectedModel.isEmpty else { return }
+
+        let workspaceDefault = self.selectedWorkspace?.defaultModel
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !workspaceDefault.isEmpty {
+            self.selectedComposerModel = workspaceDefault
+            return
+        }
+
+        let currentModel = self.appState.appServerClient.diagnostics.currentModel
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !currentModel.isEmpty {
+            self.selectedComposerModel = currentModel
         }
     }
 
@@ -4567,7 +4787,7 @@ struct SessionWorkbenchView: View {
                     threadID = try await self.appState.appServerClient.threadStart(
                         cwd: selectedWorkspace.remotePath,
                         approvalPolicy: selectedWorkspace.defaultApprovalPolicy,
-                        model: selectedWorkspace.defaultModel
+                        model: self.composerModelForRequest
                     )
                 }
 
@@ -4590,7 +4810,8 @@ struct SessionWorkbenchView: View {
                     _ = try await self.appState.appServerClient.turnStart(
                         threadID: threadID,
                         inputText: trimmedPrompt,
-                        model: selectedWorkspace.defaultModel
+                        model: self.composerModelForRequest,
+                        effort: self.selectedComposerReasoning
                     )
                 }
 
@@ -4635,7 +4856,7 @@ struct SessionWorkbenchView: View {
                     prompt: prompt,
                     resumeThreadID: resumeThreadID,
                     forceNewThread: forceNewThread,
-                    model: selectedWorkspace.defaultModel
+                    model: self.composerModelForRequest
                 )
 
                 self.selectedThreadID = result.threadID
