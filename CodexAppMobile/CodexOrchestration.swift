@@ -2331,28 +2331,33 @@ struct HostsView: View {
                             }
                             .buttonStyle(.plain)
                             .contentShape(Rectangle())
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button("Delete", role: .destructive) {
+                            .contextMenu {
+                                Button {
+                                    self.presentHostEditor(for: host)
+                                } label: {
+                                    Label("Edit", systemImage: "pencil")
+                                }
+
+                                Button {
+                                    self.launchTerminal(for: host)
+                                } label: {
+                                    Label("Terminal", systemImage: "terminal")
+                                }
+
+                                Button {
+                                    self.disconnectSession(for: host)
+                                } label: {
+                                    Label("セッションを切る", systemImage: "xmark.circle")
+                                }
+                                .disabled(self.canDisconnectSession(for: host) == false)
+
+                                Divider()
+
+                                Button(role: .destructive) {
                                     self.appState.removeHost(hostID: host.id)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
                                 }
-
-                                Button("Edit") {
-                                    self.editorContext = HostEditorContext(
-                                        host: host,
-                                        initialPassword: self.remoteHostStore.password(for: host.id)
-                                    )
-                                }
-                                .tint(.orange)
-
-                                Button("Terminal") {
-                                    self.appState.terminalLaunchContext = TerminalLaunchContext(
-                                        hostID: host.id,
-                                        projectPath: nil,
-                                        threadID: nil,
-                                        initialCommand: "codex"
-                                    )
-                                }
-                                .tint(.blue)
                             }
                         }
                     }
@@ -2434,6 +2439,34 @@ struct HostsView: View {
                     .foregroundStyle(.green)
             }
         }
+    }
+
+    private func presentHostEditor(for host: RemoteHost) {
+        self.editorContext = HostEditorContext(
+            host: host,
+            initialPassword: self.remoteHostStore.password(for: host.id)
+        )
+    }
+
+    private func launchTerminal(for host: RemoteHost) {
+        self.appState.terminalLaunchContext = TerminalLaunchContext(
+            hostID: host.id,
+            projectPath: nil,
+            threadID: nil,
+            initialCommand: "codex"
+        )
+    }
+
+    private func canDisconnectSession(for host: RemoteHost) -> Bool {
+        host.preferredTransport == .appServerWS
+    }
+
+    private func disconnectSession(for host: RemoteHost) {
+        guard self.canDisconnectSession(for: host) else {
+            return
+        }
+        self.appState.selectHost(host.id)
+        self.appState.appServerClient.disconnect()
     }
 
     private func openHost(_ host: RemoteHost) {
