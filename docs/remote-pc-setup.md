@@ -67,7 +67,6 @@ node scripts/ws_strip_extensions_proxy.js \
 1. `Hosts` タブで Host を追加
    - `Host`: リモートPCの tailnet IP
    - `App Server URL`: `ws://<tailnet-ip>:8080`
-   - `Transport`: `App Server (WebSocket)`
    - iOS ハンドシェイク失敗時: `ws://<tailnet-ip>:18081`（上記プロキシ）を設定
 2. `Hosts` タブから対象Hostをタップして `Sessions` タブへ遷移
 3. `SessionWorkbench` で Project を追加

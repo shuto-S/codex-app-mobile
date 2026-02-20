@@ -2520,7 +2520,6 @@ struct RemoteHostEditorView: View {
     @State private var appServerHost: String
     @State private var appServerPortText: String
     @State private var password: String
-    @State private var preferredTransport: TransportKind
 
     init(host: RemoteHost?, initialPassword: String, onSave: @escaping (RemoteHostDraft) -> Void) {
         self.host = host
@@ -2541,7 +2540,6 @@ struct RemoteHostEditorView: View {
         _appServerHost = State(initialValue: initialDraft.appServerHost)
         _appServerPortText = State(initialValue: String(initialDraft.appServerPort))
         _password = State(initialValue: initialDraft.password)
-        _preferredTransport = State(initialValue: initialDraft.preferredTransport)
     }
 
     private var parsedSSHPort: Int {
@@ -2560,7 +2558,7 @@ struct RemoteHostEditorView: View {
             username: self.username,
             appServerHost: self.appServerHost,
             appServerPort: self.parsedAppServerPort,
-            preferredTransport: self.preferredTransport,
+            preferredTransport: .appServerWS,
             password: self.password
         )
     }
@@ -2586,12 +2584,6 @@ struct RemoteHostEditorView: View {
                         .autocorrectionDisabled(true)
                     TextField("Port", text: self.$appServerPortText)
                         .keyboardType(.numberPad)
-
-                    Picker("Transport", selection: self.$preferredTransport) {
-                        ForEach(TransportKind.allCases) { transport in
-                            Text(transport.displayName).tag(transport)
-                        }
-                    }
                 }
 
                 Section("SSH") {
@@ -3377,8 +3369,6 @@ struct SessionWorkbenchView: View {
     @State private var localStatusMessage = ""
     @State private var isRefreshingThreads = false
     @State private var isRunningSSHAction = false
-    @State private var showArchived = false
-    @State private var isPresentingDiagnostics = false
     @State private var isPresentingProjectEditor = false
     @State private var editingWorkspace: ProjectWorkspace?
     @State private var activePendingRequest: AppServerPendingRequest?
@@ -3405,7 +3395,27 @@ struct SessionWorkbenchView: View {
     private func threads(for workspaceID: UUID) -> [CodexThreadSummary] {
         self.appState.threadBookmarkStore
             .threads(for: workspaceID)
-            .filter { $0.archived == self.showArchived }
+            .filter { !$0.archived }
+    }
+
+    private var selectedThreadSummary: CodexThreadSummary? {
+        guard let selectedWorkspaceID,
+              let selectedThreadID else {
+            return nil
+        }
+        return self.threads(for: selectedWorkspaceID).first(where: { $0.threadID == selectedThreadID })
+    }
+
+    private var selectedThreadTitle: String {
+        guard let summary = self.selectedThreadSummary else {
+            return "新規スレッド"
+        }
+        let title = summary.preview.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? "新規スレッド" : title
+    }
+
+    private var selectedWorkspaceTitle: String {
+        self.selectedWorkspace?.displayName ?? "プロジェクト"
     }
 
     private var selectedThreadTranscript: String {
@@ -3414,10 +3424,6 @@ struct SessionWorkbenchView: View {
             return self.sshTranscriptByThread[selectedThreadID] ?? ""
         }
         return self.appState.appServerClient.transcriptByThread[selectedThreadID] ?? ""
-    }
-
-    private var selectedWorkspaceTitle: String {
-        self.selectedWorkspace?.displayName ?? "プロジェクト"
     }
 
     private var parsedChatMessages: [SessionChatMessage] {
@@ -3477,11 +3483,19 @@ struct SessionWorkbenchView: View {
                     .zIndex(1)
             }
 
-            self.sideMenu
-                .zIndex(2)
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             self.chatHeader
+        }
+        .overlay(alignment: .leading) {
+            self.sideMenu
+                .zIndex(2)
+        }
+        .overlay(alignment: .leading) {
+            if !self.isMenuOpen {
+                self.menuEdgeOpenHandle
+                    .zIndex(3)
+            }
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.88), value: self.isMenuOpen)
         .navigationBarBackButtonHidden(true)
@@ -3504,9 +3518,6 @@ struct SessionWorkbenchView: View {
                 self.refreshThreads()
             }
         }
-        .onChange(of: self.showArchived) {
-            self.refreshThreads()
-        }
         .onChange(of: self.selectedWorkspaceID) {
             if let selectedWorkspaceID {
                 self.expandedWorkspaceIDs.insert(selectedWorkspaceID)
@@ -3525,10 +3536,6 @@ struct SessionWorkbenchView: View {
                 )
                 self.restoreSelectionFromSession()
             }
-        }
-        .sheet(isPresented: self.$isPresentingDiagnostics) {
-            HostDiagnosticsView()
-                .environmentObject(self.appState)
         }
         .sheet(item: self.$activePendingRequest) { request in
             PendingRequestSheet(request: request)
@@ -3549,79 +3556,46 @@ struct SessionWorkbenchView: View {
                 }
             } label: {
                 Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 20, weight: .semibold))
-                    .frame(width: 32, height: 32)
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 30, height: 30)
             }
             .buttonStyle(.plain)
             .foregroundStyle(Color.white)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(self.selectedWorkspaceTitle)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(self.selectedThreadTitle)
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(Color.white)
                     .lineLimit(1)
-                Text(self.isSSHTransport ? "SSH" : "App Server")
-                    .font(.caption.weight(.medium))
+                Text(self.selectedWorkspaceTitle)
+                    .font(.caption2.weight(.medium))
                     .foregroundStyle(Color.white.opacity(0.62))
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button {
-                self.isPromptFieldFocused = false
-                self.createNewThread()
-            } label: {
-                Image(systemName: "square.and.pencil")
-                    .font(.system(size: 19, weight: .semibold))
-                    .frame(width: 32, height: 32)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Color.white)
-            .disabled(self.selectedWorkspace == nil || self.isRunningSSHAction)
-            .opacity(self.selectedWorkspace == nil ? 0.45 : 1)
-
             Menu {
-                Button {
-                    self.isPromptFieldFocused = false
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
-                        self.isMenuOpen = true
+                if let selectedThreadSummary {
+                    Button(role: .destructive) {
+                        self.archiveThread(summary: selectedThreadSummary, archived: true)
+                    } label: {
+                        Label("アーカイブ", systemImage: "archivebox")
                     }
-                } label: {
-                    Label("メニューを開く", systemImage: "sidebar.left")
-                }
-
-                Button {
-                    self.isPromptFieldFocused = false
-                    self.refreshThreads()
-                } label: {
-                    Label("スレッド更新", systemImage: "arrow.clockwise")
-                }
-                .disabled(self.selectedWorkspace == nil || self.isRefreshingThreads || self.isRunningSSHAction)
-
-                Button {
-                    self.isPromptFieldFocused = false
-                    self.editingWorkspace = nil
-                    self.isPresentingProjectEditor = true
-                } label: {
-                    Label("プロジェクト追加", systemImage: "plus")
-                }
-
-                Button {
-                    self.isPromptFieldFocused = false
-                    self.dismiss()
-                } label: {
-                    Label("ホスト一覧に戻る", systemImage: "chevron.left")
+                } else {
+                    Text("アーカイブ対象なし")
                 }
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.system(size: 20, weight: .semibold))
-                    .frame(width: 32, height: 32)
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 30, height: 30)
             }
             .buttonStyle(.plain)
             .foregroundStyle(Color.white)
+            .disabled(self.selectedThreadSummary == nil)
+            .opacity(self.selectedThreadSummary == nil ? 0.42 : 1)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
         .background(Color.black)
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -3838,192 +3812,218 @@ struct SessionWorkbenchView: View {
     }
 
     private var sideMenu: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(self.host.name)
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text(self.host.host)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                Button {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
-                        self.isMenuOpen = false
+        GeometryReader { proxy in
+            VStack(spacing: 12) {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(self.host.name)
+                            .font(.headline)
+                            .lineLimit(1)
+                        Text(self.host.host)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 14, weight: .semibold))
-                        .frame(width: 34, height: 34)
-                        .background {
-                            self.glassCircleBackground(size: 34)
+                    Spacer()
+                    Button {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                            self.isMenuOpen = false
                         }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .semibold))
+                            .frame(width: 34, height: 34)
+                            .background {
+                                self.glassCircleBackground(size: 34)
+                            }
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-            }
 
-            ScrollView {
-                VStack(spacing: 8) {
-                    Toggle(isOn: self.$showArchived) {
-                        Label("アーカイブを表示", systemImage: "archivebox")
-                            .font(.subheadline.weight(.medium))
-                    }
-                    .toggleStyle(.switch)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background {
-                        self.glassCardBackground(cornerRadius: 14)
-                    }
+                ScrollView {
+                    VStack(spacing: 8) {
+                        Button {
+                            self.isPromptFieldFocused = false
+                            self.createNewThread()
+                            self.isMenuOpen = false
+                        } label: {
+                            Label("新規スレッド", systemImage: "plus.bubble")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                                .background {
+                                    self.glassCardBackground(cornerRadius: 14, tint: self.accentGlassTint(light: 0.16, dark: 0.12))
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(self.selectedWorkspace == nil || self.isRunningSSHAction)
+                        .opacity(self.selectedWorkspace == nil ? 0.5 : 1)
 
-                    if self.workspaces.isEmpty {
-                        Text("プロジェクトがありません。")
-                            .font(.subheadline)
+                        Text("Projects")
+                            .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 14)
-                            .background {
-                                self.glassCardBackground(cornerRadius: 14)
-                            }
-                    } else {
-                        ForEach(self.workspaces) { workspace in
-                            let workspaceThreads = self.threads(for: workspace.id)
-                            let isExpanded = self.expandedWorkspaceIDs.contains(workspace.id)
-                            let isCurrentWorkspace = self.selectedWorkspaceID == workspace.id
+                            .padding(.horizontal, 2)
+                            .padding(.top, 2)
 
-                            VStack(spacing: 6) {
-                                Button {
-                                    self.toggleWorkspace(workspace)
-                                } label: {
-                                    HStack(spacing: 8) {
-                                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundStyle(.secondary)
-                                        Text(workspace.displayName)
-                                            .font(.subheadline.weight(.semibold))
-                                            .lineLimit(1)
-                                        Spacer(minLength: 8)
-                                        Text("\(workspaceThreads.count)")
-                                            .font(.caption.weight(.semibold))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 10)
-                                    .background {
-                                        self.glassCardBackground(
-                                            cornerRadius: 14,
-                                            tint: isCurrentWorkspace
-                                            ? self.accentGlassTint(light: 0.18, dark: 0.14)
-                                            : self.glassWhiteTint(light: 0.18, dark: 0.10)
-                                        )
-                                    }
+                        if self.workspaces.isEmpty {
+                            Text("プロジェクトがありません。")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 14)
+                                .background {
+                                    self.glassCardBackground(cornerRadius: 14)
                                 }
-                                .buttonStyle(.plain)
+                        } else {
+                            ForEach(self.workspaces) { workspace in
+                                let workspaceThreads = self.threads(for: workspace.id)
+                                let isExpanded = self.expandedWorkspaceIDs.contains(workspace.id)
+                                let isCurrentWorkspace = self.selectedWorkspaceID == workspace.id
 
-                                if isExpanded {
-                                    if workspaceThreads.isEmpty {
-                                        Text("スレッドなし")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 9)
-                                    } else {
-                                        ForEach(workspaceThreads) { summary in
-                                            Button {
-                                                self.selectThread(summary, workspaceID: workspace.id)
-                                            } label: {
-                                                HStack(spacing: 8) {
-                                                    Image(systemName: "bubble.left")
-                                                        .font(.system(size: 12, weight: .medium))
-                                                    Text(summary.preview.isEmpty ? "新規スレッド" : summary.preview)
-                                                        .font(.subheadline)
-                                                        .lineLimit(1)
-                                                    Spacer(minLength: 8)
-                                                }
-                                                .foregroundStyle(
-                                                    self.selectedThreadID == summary.threadID
-                                                    ? Color.accentColor
-                                                    : Color.primary
-                                                )
-                                                .padding(.horizontal, 12)
-                                                .padding(.vertical, 10)
-                                                .background {
-                                                    self.glassCardBackground(
-                                                        cornerRadius: 12,
-                                                        tint: self.selectedThreadID == summary.threadID
-                                                        ? self.accentGlassTint(light: 0.18, dark: 0.14)
-                                                        : self.glassWhiteTint(light: 0.12, dark: 0.07)
-                                                    )
+                                VStack(spacing: 6) {
+                                    Button {
+                                        self.toggleWorkspace(workspace)
+                                    } label: {
+                                        HStack(spacing: 8) {
+                                            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                                                .font(.system(size: 12, weight: .semibold))
+                                                .foregroundStyle(.secondary)
+                                            Text(workspace.displayName)
+                                                .font(.subheadline.weight(.semibold))
+                                                .lineLimit(1)
+                                            Spacer(minLength: 8)
+                                            Text("\(workspaceThreads.count)")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 10)
+                                        .background {
+                                            self.glassCardBackground(
+                                                cornerRadius: 14,
+                                                tint: isCurrentWorkspace
+                                                ? self.accentGlassTint(light: 0.18, dark: 0.14)
+                                                : self.glassWhiteTint(light: 0.18, dark: 0.10)
+                                            )
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    if isExpanded {
+                                        if workspaceThreads.isEmpty {
+                                            Text("スレッドなし")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                                .padding(.leading, 30)
+                                                .padding(.trailing, 12)
+                                                .padding(.vertical, 9)
+                                        } else {
+                                            VStack(spacing: 6) {
+                                                ForEach(workspaceThreads) { summary in
+                                                    Button {
+                                                        self.selectThread(summary, workspaceID: workspace.id)
+                                                    } label: {
+                                                        HStack(spacing: 9) {
+                                                            Circle()
+                                                                .fill(
+                                                                    self.selectedThreadID == summary.threadID
+                                                                    ? Color.accentColor
+                                                                    : Color.white.opacity(0.35)
+                                                                )
+                                                                .frame(width: 6, height: 6)
+                                                            Text(summary.preview.isEmpty ? "新規スレッド" : summary.preview)
+                                                                .font(.subheadline)
+                                                                .lineLimit(1)
+                                                            Spacer(minLength: 8)
+                                                        }
+                                                        .foregroundStyle(
+                                                            self.selectedThreadID == summary.threadID
+                                                            ? Color.accentColor
+                                                            : Color.primary
+                                                        )
+                                                        .padding(.horizontal, 12)
+                                                        .padding(.vertical, 10)
+                                                        .background {
+                                                            self.glassCardBackground(
+                                                                cornerRadius: 12,
+                                                                tint: self.selectedThreadID == summary.threadID
+                                                                ? self.accentGlassTint(light: 0.20, dark: 0.16)
+                                                                : self.glassWhiteTint(light: 0.08, dark: 0.05)
+                                                            )
+                                                        }
+                                                        .overlay(alignment: .leading) {
+                                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                                                .fill(Color.clear)
+                                                                .overlay(alignment: .leading) {
+                                                                    Rectangle()
+                                                                        .fill(
+                                                                            self.selectedThreadID == summary.threadID
+                                                                            ? Color.accentColor
+                                                                            : Color.white.opacity(0.16)
+                                                                        )
+                                                                        .frame(width: 2)
+                                                                        .padding(.vertical, 8)
+                                                                }
+                                                        }
+                                                    }
+                                                    .buttonStyle(.plain)
                                                 }
                                             }
-                                            .buttonStyle(.plain)
+                                            .padding(.leading, 18)
+                                            .overlay(alignment: .leading) {
+                                                Rectangle()
+                                                    .fill(Color.white.opacity(0.12))
+                                                    .frame(width: 1)
+                                                    .padding(.vertical, 4)
+                                                    .padding(.leading, 8)
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
 
+                        Button {
+                            self.editingWorkspace = nil
+                            self.isPresentingProjectEditor = true
+                            self.isMenuOpen = false
+                        } label: {
+                            Label("プロジェクト追加", systemImage: "plus")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                                .background {
+                                    self.glassCardBackground(cornerRadius: 14, tint: self.accentGlassTint(light: 0.16, dark: 0.12))
+                                }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.vertical, 2)
+                }
+
+                VStack(spacing: 8) {
                     Button {
-                        self.isPromptFieldFocused = false
-                        self.createNewThread()
                         self.isMenuOpen = false
+                        self.refreshThreads()
                     } label: {
-                        Label("新規スレッド", systemImage: "plus.bubble")
+                        Label("スレッド更新", systemImage: "arrow.clockwise")
                             .font(.subheadline.weight(.semibold))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
                             .background {
-                                self.glassCardBackground(cornerRadius: 14, tint: self.accentGlassTint(light: 0.16, dark: 0.12))
+                                self.glassCardBackground(cornerRadius: 14)
                             }
                     }
                     .buttonStyle(.plain)
-                    .disabled(self.selectedWorkspace == nil || self.isRunningSSHAction)
+                    .disabled(self.selectedWorkspace == nil || self.isRefreshingThreads || self.isRunningSSHAction)
                     .opacity(self.selectedWorkspace == nil ? 0.5 : 1)
 
-                    Button {
-                        self.editingWorkspace = nil
-                        self.isPresentingProjectEditor = true
-                        self.isMenuOpen = false
-                    } label: {
-                        Label("プロジェクト追加", systemImage: "plus")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .background {
-                                self.glassCardBackground(cornerRadius: 14, tint: self.accentGlassTint(light: 0.16, dark: 0.12))
-                            }
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.vertical, 2)
-            }
-
-            VStack(spacing: 8) {
-                Button {
-                    self.isMenuOpen = false
-                    self.refreshThreads()
-                } label: {
-                    Label("スレッド更新", systemImage: "arrow.clockwise")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background {
-                            self.glassCardBackground(cornerRadius: 14)
-                        }
-                }
-                .buttonStyle(.plain)
-                .disabled(self.selectedWorkspace == nil || self.isRefreshingThreads || self.isRunningSSHAction)
-                .opacity(self.selectedWorkspace == nil ? 0.5 : 1)
-
-                HStack(spacing: 8) {
                     Button {
                         self.isMenuOpen = false
                         self.openInTerminal()
@@ -4038,54 +4038,65 @@ struct SessionWorkbenchView: View {
                     }
                     .buttonStyle(.plain)
 
-                    if !self.isSSHTransport {
-                        Button {
-                            self.isMenuOpen = false
-                            self.isPresentingDiagnostics = true
-                        } label: {
-                            Label("Diagnostics", systemImage: "waveform.path.ecg")
-                                .font(.caption.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
-                                .background {
-                                    self.glassCardBackground(cornerRadius: 12)
-                                }
+                    Button {
+                        self.isMenuOpen = false
+                        self.dismiss()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "chevron.left")
+                            Text("ホスト一覧に戻る")
+                                .fontWeight(.semibold)
                         }
-                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background {
+                            self.glassCardBackground(cornerRadius: 14)
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.primary)
                 }
-
-                Button {
-                    self.isMenuOpen = false
-                    self.dismiss()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "chevron.left")
-                        Text("ホスト一覧に戻る")
-                            .fontWeight(.semibold)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background {
-                        self.glassCardBackground(cornerRadius: 14)
-                    }
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.primary)
             }
+            .padding(.horizontal, 10)
+            .padding(.top, proxy.safeAreaInsets.top + 8)
+            .padding(.bottom, proxy.safeAreaInsets.bottom + 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 12)
         .frame(width: self.menuWidth)
-        .frame(maxHeight: .infinity)
-        .background {
-            self.glassCardBackground(cornerRadius: 30, tint: self.glassWhiteTint(light: 0.24, dark: 0.14))
-        }
-        .padding(.leading, 8)
-        .padding(.vertical, 8)
+        .background(Color(.systemBackground))
+        .ignoresSafeArea(.container, edges: .vertical)
         .offset(x: self.isMenuOpen ? 0 : -(self.menuWidth + 20))
         .shadow(color: .black.opacity(self.isMenuOpen ? 0.14 : 0), radius: 16, x: 0, y: 10)
+        .gesture(
+            DragGesture(minimumDistance: 12)
+                .onEnded { value in
+                    guard value.translation.width < -48 else { return }
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                        self.isMenuOpen = false
+                    }
+                }
+        )
+    }
+
+    private var menuEdgeOpenHandle: some View {
+        Color.clear
+            .frame(width: 22)
+            .contentShape(Rectangle())
+            .ignoresSafeArea(.container, edges: .vertical)
+            .gesture(
+                DragGesture(minimumDistance: 12)
+                    .onEnded { value in
+                        guard value.startLocation.x < 28,
+                              value.translation.width > 52 else {
+                            return
+                        }
+                        self.isPromptFieldFocused = false
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                            self.isMenuOpen = true
+                        }
+                    }
+            )
     }
 
     @ViewBuilder
@@ -4368,7 +4379,7 @@ struct SessionWorkbenchView: View {
             if self.isSSHTransport {
                 let localThreads = self.appState.threadBookmarkStore
                     .threads(for: selectedWorkspace.id)
-                    .filter { $0.archived == self.showArchived }
+                    .filter { !$0.archived }
                 if let selectedThreadID,
                    localThreads.contains(where: { $0.threadID == selectedThreadID }) {
                     // Keep current selection.
@@ -4385,7 +4396,7 @@ struct SessionWorkbenchView: View {
                     try await self.appState.appServerClient.connect(to: self.host)
                 }
 
-                let fetched = try await self.appState.appServerClient.threadList(archived: self.showArchived, limit: 100)
+                let fetched = try await self.appState.appServerClient.threadList(archived: false, limit: 100)
                 let scoped = fetched.filter { $0.cwd == selectedWorkspace.remotePath }
 
                 let summaries = scoped.map { thread in
@@ -4406,7 +4417,10 @@ struct SessionWorkbenchView: View {
                     with: summaries
                 )
 
-                if self.selectedThreadID == nil {
+                if let selectedThreadID = self.selectedThreadID,
+                   summaries.contains(where: { $0.threadID == selectedThreadID }) {
+                    // Keep current selection.
+                } else {
                     self.selectedThreadID = summaries.first?.threadID
                 }
             } catch {
