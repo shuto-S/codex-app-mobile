@@ -2571,7 +2571,20 @@ private actor RemotePathBrowserService {
 
                 engine.onConnected = {
                     let escapedPath = Self.escapeForSingleQuote(path)
-                    let command = "printf '\(startMarker)\\n'; cd '\(escapedPath)' 2>/dev/null || cd /; pwd; LC_ALL=C ls -1Ap; printf '\(endMarker)\\n'"
+                    let command = [
+                        "printf '\(startMarker)\\n';",
+                        "TARGET='\(escapedPath)';",
+                        "if [ -z \"$TARGET\" ] || [ \"$TARGET\" = \"~\" ]; then",
+                        "cd \"$HOME\" 2>/dev/null || cd /;",
+                        "elif [ \"${TARGET#~/}\" != \"$TARGET\" ]; then",
+                        "cd \"$HOME/${TARGET#~/}\" 2>/dev/null || cd /;",
+                        "else",
+                        "cd \"$TARGET\" 2>/dev/null || cd /;",
+                        "fi;",
+                        "pwd;",
+                        "LC_ALL=C find . -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sed 's#^\\./##' | LC_ALL=C sort;",
+                        "printf '\(endMarker)\\n'",
+                    ].joined(separator: " ")
                     do {
                         try engine.send(command: command + "\n")
                     } catch {
@@ -2628,10 +2641,15 @@ private actor RemotePathBrowserService {
         }
 
         let directories = lines.dropFirst().compactMap { raw -> RemoteDirectoryEntry? in
-            guard raw.hasSuffix("/") else { return nil }
-            let name = String(raw.dropLast())
+            let normalized = raw.hasSuffix("/") ? String(raw.dropLast()) : raw
+            let name = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
             guard name != "." && name != ".." && !name.isEmpty else { return nil }
-            let fullPath = currentPath == "/" ? "/\(name)" : "\(currentPath)/\(name)"
+            let fullPath: String
+            if name.hasPrefix("/") {
+                fullPath = name
+            } else {
+                fullPath = currentPath == "/" ? "/\(name)" : "\(currentPath)/\(name)"
+            }
             return RemoteDirectoryEntry(name: name, path: fullPath)
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -2922,36 +2940,97 @@ struct RemotePathBrowserView: View {
     @State private var entries: [RemoteDirectoryEntry] = []
     @State private var errorMessage = ""
     @State private var isLoading = false
+    @State private var inputPath = ""
+    @State private var activeLoadRequestID = 0
 
     private let service = RemotePathBrowserService()
 
     var body: some View {
         NavigationStack {
             List {
+                Section("Navigate") {
+                    HStack(spacing: 8) {
+                        TextField("/absolute/path or ~", text: self.$inputPath)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled(true)
+                            .font(.footnote.monospaced())
+                        Button("Open") {
+                            self.load(path: self.inputPath)
+                        }
+                        .disabled(self.isLoading)
+                    }
+
+                    HStack(spacing: 10) {
+                        Button {
+                            self.load(path: "~")
+                        } label: {
+                            Label("Home", systemImage: "house")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(self.isLoading)
+
+                        Button {
+                            self.load(path: "/")
+                        } label: {
+                            Label("Root", systemImage: "internaldrive")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(self.isLoading)
+
+                        Button {
+                            self.load(path: self.currentPath.isEmpty ? self.initialPath : self.currentPath)
+                        } label: {
+                            Label("Reload", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(self.isLoading)
+                    }
+                    .font(.footnote)
+                }
+
                 Section("Current") {
                     Text(self.currentPath.isEmpty ? self.initialPath : self.currentPath)
                         .font(.footnote)
+                        .fontDesign(.monospaced)
                         .textSelection(.enabled)
                 }
 
                 if let parentPath = self.parentPath(of: self.currentPath) {
                     Section {
-                        Button("..") {
+                        Button {
                             self.load(path: parentPath)
+                        } label: {
+                            Label("..", systemImage: "arrow.up.left")
                         }
+                        .disabled(self.isLoading)
                     }
                 }
 
                 Section("Directories") {
+                    if self.isLoading {
+                        ProgressView("Loading...")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     if self.entries.isEmpty {
                         Text(self.isLoading ? "Loading..." : "No subdirectories")
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(self.entries) { entry in
-                            Button(entry.name) {
+                            Button {
                                 self.load(path: entry.path)
+                            } label: {
+                                Label(entry.name, systemImage: "folder")
                             }
+                            .disabled(self.isLoading)
                         }
+                    }
+                }
+
+                if self.hostPassword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Section {
+                        Text("SSH password is empty. If authentication fails, set the password in host settings and retry.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -2964,6 +3043,9 @@ struct RemotePathBrowserView: View {
                 }
             }
             .navigationTitle("Remote Paths")
+            .refreshable {
+                self.load(path: self.currentPath.isEmpty ? self.initialPath : self.currentPath)
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close") {
@@ -2981,6 +3063,9 @@ struct RemotePathBrowserView: View {
                 }
             }
             .task {
+                if self.inputPath.isEmpty {
+                    self.inputPath = self.initialPath
+                }
                 if self.currentPath.isEmpty {
                     self.load(path: self.initialPath)
                 }
@@ -2997,26 +3082,52 @@ struct RemotePathBrowserView: View {
     }
 
     private func load(path: String) {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackPath = self.currentPath.isEmpty ? self.initialPath : self.currentPath
+        let targetPath = trimmedPath.isEmpty ? fallbackPath : trimmedPath
+
         self.errorMessage = ""
         self.isLoading = true
+        self.activeLoadRequestID += 1
+        let requestID = self.activeLoadRequestID
 
         Task {
             defer {
-                self.isLoading = false
+                if requestID == self.activeLoadRequestID {
+                    self.isLoading = false
+                }
             }
 
             do {
                 let (resolvedPath, directories) = try await self.service.listDirectories(
                     host: self.host,
                     password: self.hostPassword,
-                    path: path
+                    path: targetPath
                 )
+                guard requestID == self.activeLoadRequestID else { return }
                 self.currentPath = resolvedPath
                 self.entries = directories
+                self.inputPath = resolvedPath
             } catch {
-                self.errorMessage = error.localizedDescription
+                guard requestID == self.activeLoadRequestID else { return }
+                self.errorMessage = self.userFacingErrorMessage(for: error)
             }
         }
+    }
+
+    private func userFacingErrorMessage(for error: Error) -> String {
+        let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else {
+            return "Failed to load remote directories."
+        }
+
+        if message.localizedCaseInsensitiveContains("authentication failed") {
+            return "Authentication failed. Check username/password in host settings."
+        }
+        if message.localizedCaseInsensitiveContains("host key changed") {
+            return "Host key changed. Reconnect from Terminal and trust the new key."
+        }
+        return message
     }
 }
 
@@ -3132,6 +3243,7 @@ private struct SessionChatMessage: Identifiable, Equatable {
 struct SessionWorkbenchView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
 
     let host: RemoteHost
 
@@ -3197,6 +3309,22 @@ struct SessionWorkbenchView: View {
         304
     }
 
+    private var isDarkMode: Bool {
+        self.colorScheme == .dark
+    }
+
+    private func glassWhiteTint(light: Double, dark: Double) -> Color {
+        Color.white.opacity(self.isDarkMode ? dark : light)
+    }
+
+    private func accentGlassTint(light: Double, dark: Double) -> Color {
+        Color.accentColor.opacity(self.isDarkMode ? dark : light)
+    }
+
+    private var glassStrokeColor: Color {
+        self.glassWhiteTint(light: 0.30, dark: 0.20)
+    }
+
     var body: some View {
         ZStack(alignment: .leading) {
             self.chatBackground
@@ -3208,7 +3336,7 @@ struct SessionWorkbenchView: View {
             }
 
             if self.isMenuOpen {
-                Color.black.opacity(0.18)
+                Color.black.opacity(self.isDarkMode ? 0.34 : 0.18)
                     .ignoresSafeArea()
                     .transition(.opacity)
                     .onTapGesture {
@@ -3282,23 +3410,29 @@ struct SessionWorkbenchView: View {
     private var chatBackground: some View {
         ZStack {
             LinearGradient(
-                colors: [
-                    Color(red: 0.88, green: 0.94, blue: 1.00),
-                    Color(red: 0.95, green: 0.98, blue: 1.00),
-                    Color(red: 0.90, green: 0.96, blue: 0.96),
-                ],
+                colors: self.isDarkMode
+                    ? [
+                        Color(red: 0.09, green: 0.11, blue: 0.15),
+                        Color(red: 0.08, green: 0.10, blue: 0.14),
+                        Color(red: 0.08, green: 0.12, blue: 0.13),
+                    ]
+                    : [
+                        Color(red: 0.88, green: 0.94, blue: 1.00),
+                        Color(red: 0.95, green: 0.98, blue: 1.00),
+                        Color(red: 0.90, green: 0.96, blue: 0.96),
+                    ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
 
             Circle()
-                .fill(Color.accentColor.opacity(0.24))
+                .fill(self.accentGlassTint(light: 0.24, dark: 0.18))
                 .frame(width: 320, height: 320)
                 .blur(radius: 50)
                 .offset(x: -170, y: -250)
 
             Circle()
-                .fill(Color.cyan.opacity(0.18))
+                .fill(Color.cyan.opacity(self.isDarkMode ? 0.12 : 0.18))
                 .frame(width: 300, height: 300)
                 .blur(radius: 56)
                 .offset(x: 180, y: 230)
@@ -3342,7 +3476,7 @@ struct SessionWorkbenchView: View {
                     .font(.system(size: 18, weight: .bold))
                     .frame(width: 38, height: 38)
                     .background {
-                        self.glassCircleBackground(size: 38, tint: Color.accentColor.opacity(0.28))
+                        self.glassCircleBackground(size: 38, tint: self.accentGlassTint(light: 0.24, dark: 0.20))
                     }
             }
             .buttonStyle(.plain)
@@ -3351,7 +3485,7 @@ struct SessionWorkbenchView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background {
-            self.glassCardBackground(cornerRadius: 26, tint: Color.white.opacity(0.24))
+            self.glassCardBackground(cornerRadius: 26, tint: self.glassWhiteTint(light: 0.24, dark: 0.14))
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
@@ -3498,7 +3632,7 @@ struct SessionWorkbenchView: View {
                 .focused(self.$isPromptFieldFocused)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(Color.white.opacity(0.08))
+                .background(self.glassWhiteTint(light: 0.08, dark: 0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
 
             Button {
@@ -3510,7 +3644,7 @@ struct SessionWorkbenchView: View {
                     .foregroundStyle(Color.white)
                     .frame(width: 40, height: 40)
                     .background {
-                        self.glassCircleBackground(size: 40, tint: Color.accentColor.opacity(0.52))
+                        self.glassCircleBackground(size: 40, tint: self.accentGlassTint(light: 0.44, dark: 0.34))
                     }
             }
             .buttonStyle(.plain)
@@ -3527,7 +3661,7 @@ struct SessionWorkbenchView: View {
         }
         .padding(8)
         .background {
-            self.glassCardBackground(cornerRadius: 24, tint: Color.white.opacity(0.24))
+            self.glassCardBackground(cornerRadius: 24, tint: self.glassWhiteTint(light: 0.24, dark: 0.14))
         }
         .padding(.horizontal, 12)
         .padding(.top, 6)
@@ -3613,8 +3747,8 @@ struct SessionWorkbenchView: View {
                                         self.glassCardBackground(
                                             cornerRadius: 14,
                                             tint: isCurrentWorkspace
-                                            ? Color.accentColor.opacity(0.20)
-                                            : Color.white.opacity(0.18)
+                                            ? self.accentGlassTint(light: 0.18, dark: 0.14)
+                                            : self.glassWhiteTint(light: 0.18, dark: 0.10)
                                         )
                                     }
                                 }
@@ -3652,8 +3786,8 @@ struct SessionWorkbenchView: View {
                                                     self.glassCardBackground(
                                                         cornerRadius: 12,
                                                         tint: self.selectedThreadID == summary.threadID
-                                                        ? Color.accentColor.opacity(0.22)
-                                                        : Color.white.opacity(0.12)
+                                                        ? self.accentGlassTint(light: 0.18, dark: 0.14)
+                                                        : self.glassWhiteTint(light: 0.12, dark: 0.07)
                                                     )
                                                 }
                                             }
@@ -3676,7 +3810,7 @@ struct SessionWorkbenchView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
                             .background {
-                                self.glassCardBackground(cornerRadius: 14, tint: Color.accentColor.opacity(0.18))
+                                self.glassCardBackground(cornerRadius: 14, tint: self.accentGlassTint(light: 0.16, dark: 0.12))
                             }
                     }
                     .buttonStyle(.plain)
@@ -3759,7 +3893,7 @@ struct SessionWorkbenchView: View {
         .frame(width: self.menuWidth)
         .frame(maxHeight: .infinity)
         .background {
-            self.glassCardBackground(cornerRadius: 30, tint: Color.white.opacity(0.24))
+            self.glassCardBackground(cornerRadius: 30, tint: self.glassWhiteTint(light: 0.24, dark: 0.14))
         }
         .padding(.leading, 8)
         .padding(.vertical, 8)
@@ -3768,34 +3902,38 @@ struct SessionWorkbenchView: View {
     }
 
     @ViewBuilder
-    private func glassCardBackground(cornerRadius: CGFloat, tint: Color = Color.white.opacity(0.18)) -> some View {
+    private func glassCardBackground(cornerRadius: CGFloat, tint: Color? = nil) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let resolvedTint = tint ?? self.glassWhiteTint(light: 0.18, dark: 0.10)
         if #available(iOS 26.0, *) {
             shape
-                .fill(tint)
+                .fill(resolvedTint)
                 .glassEffect(.regular, in: shape)
         } else {
             shape
                 .fill(.ultraThinMaterial)
                 .overlay(
-                    shape.strokeBorder(Color.white.opacity(0.30), lineWidth: 0.8)
+                    shape.strokeBorder(self.glassStrokeColor, lineWidth: 0.8)
                 )
         }
     }
 
     @ViewBuilder
-    private func glassCircleBackground(size: CGFloat, tint: Color = Color.white.opacity(0.20)) -> some View {
+    private func glassCircleBackground(size: CGFloat, tint: Color? = nil) -> some View {
         let circle = Circle()
+        let resolvedTint = tint ?? self.glassWhiteTint(light: 0.20, dark: 0.12)
         if #available(iOS 26.0, *) {
             circle
-                .fill(tint)
+                .fill(resolvedTint)
                 .glassEffect(.regular, in: circle)
+                .frame(width: size, height: size)
         } else {
             circle
                 .fill(.ultraThinMaterial)
                 .overlay(
-                    circle.strokeBorder(Color.white.opacity(0.30), lineWidth: 0.8)
+                    circle.strokeBorder(self.glassStrokeColor, lineWidth: 0.8)
                 )
+                .frame(width: size, height: size)
         }
     }
 
@@ -3806,29 +3944,30 @@ struct SessionWorkbenchView: View {
         if role == .user {
             if #available(iOS 26.0, *) {
                 shape
-                    .fill(Color.accentColor.opacity(0.52))
+                    .fill(self.accentGlassTint(light: 0.42, dark: 0.30))
                     .glassEffect(.regular, in: shape)
             } else {
                 shape
-                    .fill(Color.accentColor)
+                    .fill(self.isDarkMode ? Color.accentColor.opacity(0.84) : Color.accentColor)
                     .overlay(
-                        shape.strokeBorder(Color.white.opacity(0.28), lineWidth: 0.8)
+                        shape.strokeBorder(self.glassWhiteTint(light: 0.28, dark: 0.20), lineWidth: 0.8)
                     )
             }
         } else {
             if #available(iOS 26.0, *) {
                 shape
-                    .fill(Color.white.opacity(0.22))
+                    .fill(self.glassWhiteTint(light: 0.22, dark: 0.12))
                     .glassEffect(.regular, in: shape)
             } else {
                 shape
                     .fill(.ultraThinMaterial)
                     .overlay(
-                        shape.strokeBorder(Color.white.opacity(0.30), lineWidth: 0.8)
+                        shape.strokeBorder(self.glassStrokeColor, lineWidth: 0.8)
                     )
             }
         }
     }
+
     private func scrollToBottom(proxy: ScrollViewProxy) {
         DispatchQueue.main.async {
             withAnimation(.easeOut(duration: 0.18)) {
