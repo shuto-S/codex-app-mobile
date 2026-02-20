@@ -42,22 +42,18 @@ enum CodexApprovalPolicy: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum CodexReasoningEffort: String, Codable, CaseIterable, Identifiable {
-    case low
-    case medium
-    case high
+struct CodexReasoningEffortOption: Equatable, Identifiable {
+    let value: String
+    let description: String?
 
-    var id: String { self.rawValue }
+    var id: String { self.value }
 
     var displayName: String {
-        switch self {
-        case .low:
-            return "Low"
-        case .medium:
-            return "Medium"
-        case .high:
-            return "High"
+        let trimmed = self.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.first else {
+            return "Reasoning"
         }
+        return first.uppercased() + trimmed.dropFirst()
     }
 }
 
@@ -1238,6 +1234,16 @@ struct RemoteThreadRecord: Equatable, Identifiable {
     let cwd: String
 }
 
+struct AppServerModelDescriptor: Equatable, Identifiable {
+    let model: String
+    let displayName: String
+    let reasoningEffortOptions: [CodexReasoningEffortOption]
+    let defaultReasoningEffort: String?
+    let isDefault: Bool
+
+    var id: String { self.model }
+}
+
 enum AppServerErrorCategory: String {
     case authentication
     case connection
@@ -1289,6 +1295,7 @@ final class AppServerClient: ObservableObject {
     @Published private(set) var pendingRequests: [AppServerPendingRequest] = []
     @Published private(set) var transcriptByThread: [String: String] = [:]
     @Published private(set) var activeTurnIDByThread: [String: String] = [:]
+    @Published private(set) var availableModels: [AppServerModelDescriptor] = []
     @Published private(set) var eventLog: [String] = []
     @Published private(set) var diagnostics = AppServerDiagnostics(
         minimumRequiredVersion: AppServerClient.minimumSupportedCLIVersion
@@ -1324,6 +1331,7 @@ final class AppServerClient: ObservableObject {
         self.reconnectTask = nil
         self.teardownConnection(closeCode: .goingAway)
         self.activeTurnIDByThread.removeAll()
+        self.availableModels = []
         self.state = .disconnected
         self.connectedEndpoint = ""
     }
@@ -1440,7 +1448,7 @@ final class AppServerClient: ObservableObject {
         threadID: String,
         inputText: String,
         model: String?,
-        effort: CodexReasoningEffort?
+        effort: String?
     ) async throws -> String {
         var params: [String: JSONValue] = [
             "threadId": .string(threadID),
@@ -1456,8 +1464,9 @@ final class AppServerClient: ObservableObject {
            !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             params["model"] = .string(model)
         }
-        if let effort {
-            params["effort"] = .string(effort.rawValue)
+        if let effort = effort?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !effort.isEmpty {
+            params["effort"] = .string(effort)
         }
 
         let result = try await self.request(method: "turn/start", params: .object(params))
@@ -1539,6 +1548,7 @@ final class AppServerClient: ObservableObject {
         self.autoReconnectEnabled = true
         self.lastHost = host
         self.connectedEndpoint = url.absoluteString
+        self.availableModels = []
         self.diagnostics = AppServerDiagnostics(
             minimumRequiredVersion: Self.minimumSupportedCLIVersion
         )
@@ -1575,6 +1585,9 @@ final class AppServerClient: ObservableObject {
                 )
             }
             self.state = .connected
+            Task { @MainActor [weak self] in
+                await self?.refreshModelCatalog()
+            }
             self.diagnostics.lastCheckedAt = Date()
             self.appendEvent("Connected: \(host.name) @ \(url.absoluteString)")
         } catch {
@@ -1956,6 +1969,115 @@ final class AppServerClient: ObservableObject {
         }
     }
 
+    private func refreshModelCatalog() async {
+        var entries: [ModelListEntryPayload] = []
+        var cursor: String?
+        var seenCursors: Set<String> = []
+
+        do {
+            while true {
+                var params: [String: JSONValue] = [
+                    "limit": .number(100),
+                    "includeHidden": .bool(false),
+                ]
+                if let cursor {
+                    params["cursor"] = .string(cursor)
+                }
+
+                let result = try await self.request(method: "model/list", params: .object(params))
+                let payload: ModelListResponsePayload = try self.decode(result, as: ModelListResponsePayload.self)
+                entries.append(contentsOf: payload.data)
+
+                guard let nextCursor = Self.nonEmpty(payload.nextCursor),
+                      !seenCursors.contains(nextCursor),
+                      entries.count < 300
+                else {
+                    break
+                }
+                seenCursors.insert(nextCursor)
+                cursor = nextCursor
+            }
+        } catch {
+            self.appendEvent("model/list unavailable: \(error.localizedDescription)")
+            return
+        }
+
+        let catalog = Self.parseModelCatalog(entries)
+        guard !catalog.isEmpty else { return }
+
+        self.availableModels = catalog
+        if self.nonEmptyOrNil(self.diagnostics.currentModel) == nil,
+           let preferredModel = catalog.first(where: { $0.isDefault })?.model ?? catalog.first?.model {
+            self.diagnostics.currentModel = preferredModel
+        }
+    }
+
+    private static func parseModelCatalog(_ entries: [ModelListEntryPayload]) -> [AppServerModelDescriptor] {
+        var models: [AppServerModelDescriptor] = []
+        var seenModels: Set<String> = []
+
+        for entry in entries {
+            guard let model = Self.nonEmpty(entry.model ?? entry.id),
+                  !seenModels.contains(model)
+            else {
+                continue
+            }
+            seenModels.insert(model)
+
+            let displayName = Self.nonEmpty(entry.displayName) ?? model
+            let defaultReasoningEffort = Self.normalizedReasoningEffort(entry.defaultReasoningEffort)
+
+            var reasoningOptions: [CodexReasoningEffortOption] = []
+            var seenEfforts: Set<String> = []
+            for item in entry.reasoningEffort {
+                guard let value = Self.normalizedReasoningEffort(item.effort),
+                      !seenEfforts.contains(value) else {
+                    continue
+                }
+                seenEfforts.insert(value)
+                reasoningOptions.append(
+                    CodexReasoningEffortOption(
+                        value: value,
+                        description: Self.nonEmpty(item.description)
+                    )
+                )
+            }
+
+            if let defaultReasoningEffort,
+               !seenEfforts.contains(defaultReasoningEffort) {
+                reasoningOptions.append(
+                    CodexReasoningEffortOption(
+                        value: defaultReasoningEffort,
+                        description: nil
+                    )
+                )
+            }
+
+            models.append(
+                AppServerModelDescriptor(
+                    model: model,
+                    displayName: displayName,
+                    reasoningEffortOptions: reasoningOptions,
+                    defaultReasoningEffort: defaultReasoningEffort,
+                    isDefault: entry.isDefault
+                )
+            )
+        }
+
+        return models
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func normalizedReasoningEffort(_ raw: String?) -> String? {
+        guard let raw = Self.nonEmpty(raw) else { return nil }
+        return raw.lowercased()
+    }
+
     private func nonEmptyOrNil(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
@@ -2251,6 +2373,108 @@ private extension URLSessionWebSocketTask {
 
 private struct ThreadListResponsePayload: Decodable {
     let data: [ThreadListEntryPayload]
+}
+
+private struct ModelListResponsePayload: Decodable {
+    let data: [ModelListEntryPayload]
+    let nextCursor: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case data
+        case nextCursor
+        case nextCursorSnake = "next_cursor"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.data = try container.decodeIfPresent([ModelListEntryPayload].self, forKey: .data) ?? []
+        self.nextCursor = try container.decodeIfPresent(String.self, forKey: .nextCursor)
+            ?? container.decodeIfPresent(String.self, forKey: .nextCursorSnake)
+    }
+}
+
+private struct ModelListEntryPayload: Decodable {
+    let id: String?
+    let model: String?
+    let displayName: String?
+    let reasoningEffort: [ModelReasoningEffortPayload]
+    let defaultReasoningEffort: String?
+    let isDefault: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case model
+        case displayName
+        case name
+        case reasoningEffort
+        case reasoningEffortSnake = "reasoning_effort"
+        case supportedReasoningEfforts
+        case supportedReasoningEffortsSnake = "supported_reasoning_efforts"
+        case defaultReasoningEffort
+        case defaultReasoningEffortSnake = "default_reasoning_effort"
+        case isDefault
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decodeIfPresent(String.self, forKey: .id)
+        self.model = try container.decodeIfPresent(String.self, forKey: .model)
+        self.displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
+            ?? container.decodeIfPresent(String.self, forKey: .name)
+        self.reasoningEffort = try Self.decodeReasoningEffortOptions(from: container, key: .reasoningEffort)
+            ?? Self.decodeReasoningEffortOptions(from: container, key: .reasoningEffortSnake)
+            ?? Self.decodeReasoningEffortOptions(from: container, key: .supportedReasoningEfforts)
+            ?? Self.decodeReasoningEffortOptions(from: container, key: .supportedReasoningEffortsSnake)
+            ?? []
+        self.defaultReasoningEffort = try container.decodeIfPresent(String.self, forKey: .defaultReasoningEffort)
+            ?? container.decodeIfPresent(String.self, forKey: .defaultReasoningEffortSnake)
+        self.isDefault = try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+    }
+
+    private static func decodeReasoningEffortOptions(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        key: CodingKeys
+    ) throws -> [ModelReasoningEffortPayload]? {
+        if let options = try container.decodeIfPresent([ModelReasoningEffortPayload].self, forKey: key) {
+            return options
+        }
+        if let values = try container.decodeIfPresent([String].self, forKey: key) {
+            return values.map { ModelReasoningEffortPayload(effort: $0, description: nil) }
+        }
+        return nil
+    }
+}
+
+private struct ModelReasoningEffortPayload: Decodable {
+    let effort: String
+    let description: String?
+
+    init(effort: String, description: String?) {
+        self.effort = effort
+        self.description = description
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case effort
+        case reasoningEffort
+        case reasoningEffortSnake = "reasoning_effort"
+        case id
+        case value
+        case name
+        case description
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.effort = try container.decodeIfPresent(String.self, forKey: .effort)
+            ?? container.decodeIfPresent(String.self, forKey: .reasoningEffort)
+            ?? container.decodeIfPresent(String.self, forKey: .reasoningEffortSnake)
+            ?? container.decodeIfPresent(String.self, forKey: .id)
+            ?? container.decodeIfPresent(String.self, forKey: .value)
+            ?? container.decodeIfPresent(String.self, forKey: .name)
+            ?? ""
+        self.description = try container.decodeIfPresent(String.self, forKey: .description)
+    }
 }
 
 private struct ThreadListEntryPayload: Decodable {
@@ -3486,7 +3710,7 @@ struct SessionWorkbenchView: View {
     @State private var isMenuOpen = false
     @State private var expandedWorkspaceIDs: Set<UUID> = []
     @State private var selectedComposerModel = ""
-    @State private var selectedComposerReasoning: CodexReasoningEffort = .low
+    @State private var selectedComposerReasoning = "low"
     @FocusState private var isPromptFieldFocused: Bool
 
     private let sshCodexExecService = SSHCodexExecService()
@@ -3556,24 +3780,49 @@ struct SessionWorkbenchView: View {
         !self.isRunningSSHAction && self.selectedWorkspace != nil
     }
 
-    private var composerModelDisplayName: String {
-        let selected = self.selectedComposerModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !selected.isEmpty {
-            return selected
+    private var fallbackReasoningEffortOptions: [CodexReasoningEffortOption] {
+        [
+            CodexReasoningEffortOption(value: "low", description: nil),
+            CodexReasoningEffortOption(value: "medium", description: nil),
+            CodexReasoningEffortOption(value: "high", description: nil),
+        ]
+    }
+
+    private var composerModelDescriptors: [AppServerModelDescriptor] {
+        var options: [AppServerModelDescriptor] = []
+        var seenModels: Set<String> = []
+
+        if !self.isSSHTransport {
+            for model in self.appState.appServerClient.availableModels {
+                let trimmed = model.model.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty, !seenModels.contains(trimmed) else { continue }
+                seenModels.insert(trimmed)
+                options.append(model)
+            }
         }
 
-        let workspaceDefault = self.selectedWorkspace?.defaultModel.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !workspaceDefault.isEmpty {
-            return workspaceDefault
+        func appendIfNeeded(_ rawModel: String, displayName: String? = nil, isDefault: Bool = false) {
+            let trimmed = rawModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !seenModels.contains(trimmed) else { return }
+            seenModels.insert(trimmed)
+            options.append(
+                AppServerModelDescriptor(
+                    model: trimmed,
+                    displayName: displayName ?? trimmed,
+                    reasoningEffortOptions: [],
+                    defaultReasoningEffort: nil,
+                    isDefault: isDefault
+                )
+            )
         }
 
-        let currentModel = self.appState.appServerClient.diagnostics.currentModel
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !currentModel.isEmpty {
-            return currentModel
-        }
+        appendIfNeeded(self.selectedComposerModel)
+        appendIfNeeded(self.selectedWorkspace?.defaultModel ?? "", isDefault: true)
+        appendIfNeeded(self.appState.appServerClient.diagnostics.currentModel, isDefault: true)
+        appendIfNeeded("gpt-5.3-codex", displayName: "GPT-5.3-Codex")
+        appendIfNeeded("gpt-5.2-codex", displayName: "GPT-5.2-Codex")
 
-        return "GPT-5.3-Codex"
+        return options
     }
 
     private var composerModelForRequest: String? {
@@ -3587,26 +3836,49 @@ struct SessionWorkbenchView: View {
             return workspaceDefault
         }
 
+        if let defaultModel = self.composerModelDescriptors.first(where: { $0.isDefault })?.model {
+            return defaultModel
+        }
+
         let currentModel = self.appState.appServerClient.diagnostics.currentModel
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return currentModel.isEmpty ? nil : currentModel
     }
 
-    private var composerModelOptions: [String] {
-        var options: [String] = []
-        func appendIfNeeded(_ value: String) {
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, !options.contains(trimmed) else { return }
-            options.append(trimmed)
+    private var selectedComposerModelDescriptor: AppServerModelDescriptor? {
+        guard let selectedModel = self.composerModelForRequest else { return nil }
+        return self.composerModelDescriptors.first(where: { $0.model == selectedModel })
+    }
+
+    private var composerModelDisplayName: String {
+        if let selectedComposerModelDescriptor {
+            return selectedComposerModelDescriptor.displayName
         }
 
-        appendIfNeeded(self.selectedComposerModel)
-        appendIfNeeded(self.selectedWorkspace?.defaultModel ?? "")
-        appendIfNeeded(self.appState.appServerClient.diagnostics.currentModel)
-        appendIfNeeded("GPT-5.3-Codex")
-        appendIfNeeded("GPT-5.2-Thinking")
+        if let defaultModel = self.composerModelDescriptors.first(where: { $0.isDefault }) {
+            return defaultModel.displayName
+        }
 
-        return options
+        return "GPT-5.3-Codex"
+    }
+
+    private var composerReasoningOptions: [CodexReasoningEffortOption] {
+        if let selectedComposerModelDescriptor,
+           !selectedComposerModelDescriptor.reasoningEffortOptions.isEmpty {
+            return selectedComposerModelDescriptor.reasoningEffortOptions
+        }
+        return self.fallbackReasoningEffortOptions
+    }
+
+    private var composerReasoningDisplayName: String {
+        let selected = self.selectedComposerReasoning.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let matched = self.composerReasoningOptions.first(where: { $0.value == selected }) {
+            return matched.displayName
+        }
+        if !selected.isEmpty {
+            return CodexReasoningEffortOption(value: selected, description: nil).displayName
+        }
+        return self.fallbackReasoningEffortOptions.first?.displayName ?? "Low"
     }
 
     private var menuWidth: CGFloat {
@@ -3705,6 +3977,12 @@ struct SessionWorkbenchView: View {
             if let selectedWorkspaceID {
                 self.expandedWorkspaceIDs.insert(selectedWorkspaceID)
             }
+            self.syncComposerControlsWithWorkspace()
+        }
+        .onChange(of: self.selectedComposerModel) {
+            self.syncComposerReasoningWithModel()
+        }
+        .onChange(of: self.appState.appServerClient.availableModels) {
             self.syncComposerControlsWithWorkspace()
         }
         .sheet(isPresented: self.$isPresentingProjectEditor) {
@@ -3875,13 +4153,12 @@ struct SessionWorkbenchView: View {
         }
         .foregroundStyle(Color.white.opacity(0.92))
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .frame(minWidth: minWidth, alignment: .leading)
+        .frame(minWidth: minWidth, minHeight: 44, maxHeight: 44, alignment: .leading)
         .background {
-            self.glassCardBackground(cornerRadius: 14, tint: self.glassWhiteTint(light: 0.20, dark: 0.14))
+            self.glassCardBackground(cornerRadius: 22, tint: self.glassWhiteTint(light: 0.20, dark: 0.14))
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .stroke(self.glassStrokeColor.opacity(0.56), lineWidth: 0.9)
         }
     }
@@ -3908,14 +4185,14 @@ struct SessionWorkbenchView: View {
     private var composerControlBar: some View {
         HStack(spacing: 8) {
             Menu {
-                ForEach(self.composerModelOptions, id: \.self) { model in
+                ForEach(self.composerModelDescriptors) { model in
                     Button {
-                        self.selectedComposerModel = model
+                        self.selectedComposerModel = model.model
                     } label: {
-                        if model == self.composerModelDisplayName {
-                            Label(model, systemImage: "checkmark")
+                        if model.model == self.composerModelForRequest {
+                            Label(model.displayName, systemImage: "checkmark")
                         } else {
-                            Text(model)
+                            Text(model.displayName)
                         }
                     }
                 }
@@ -3927,11 +4204,11 @@ struct SessionWorkbenchView: View {
             .opacity(self.isComposerInteractive ? 1 : 0.68)
 
             Menu {
-                ForEach(CodexReasoningEffort.allCases) { effort in
+                ForEach(self.composerReasoningOptions) { effort in
                     Button {
-                        self.selectedComposerReasoning = effort
+                        self.selectedComposerReasoning = effort.value
                     } label: {
-                        if effort == self.selectedComposerReasoning {
+                        if effort.value == self.selectedComposerReasoning {
                             Label(effort.displayName, systemImage: "checkmark")
                         } else {
                             Text(effort.displayName)
@@ -3939,7 +4216,7 @@ struct SessionWorkbenchView: View {
                     }
                 }
             } label: {
-                self.composerPickerChip(self.selectedComposerReasoning.displayName, minWidth: 84)
+                self.composerPickerChip(self.composerReasoningDisplayName, minWidth: 84)
             }
             .buttonStyle(.plain)
             .disabled(!self.isComposerInteractive)
@@ -4506,20 +4783,45 @@ struct SessionWorkbenchView: View {
 
     private func syncComposerControlsWithWorkspace() {
         let selectedModel = self.selectedComposerModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard selectedModel.isEmpty else { return }
+        if !selectedModel.isEmpty {
+            self.syncComposerReasoningWithModel()
+            return
+        }
 
         let workspaceDefault = self.selectedWorkspace?.defaultModel
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !workspaceDefault.isEmpty {
             self.selectedComposerModel = workspaceDefault
+        } else if let defaultModel = self.appState.appServerClient.availableModels.first(where: { $0.isDefault })?.model {
+            self.selectedComposerModel = defaultModel
+        } else {
+            let currentModel = self.appState.appServerClient.diagnostics.currentModel
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !currentModel.isEmpty {
+                self.selectedComposerModel = currentModel
+            }
+        }
+
+        self.syncComposerReasoningWithModel()
+    }
+
+    private func syncComposerReasoningWithModel() {
+        let normalizedCurrent = self.selectedComposerReasoning.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let options = self.composerReasoningOptions
+        guard !options.isEmpty else { return }
+
+        if options.contains(where: { $0.value == normalizedCurrent }) {
+            self.selectedComposerReasoning = normalizedCurrent
             return
         }
 
-        let currentModel = self.appState.appServerClient.diagnostics.currentModel
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !currentModel.isEmpty {
-            self.selectedComposerModel = currentModel
+        if let defaultEffort = self.selectedComposerModelDescriptor?.defaultReasoningEffort,
+           options.contains(where: { $0.value == defaultEffort }) {
+            self.selectedComposerReasoning = defaultEffort
+            return
         }
+
+        self.selectedComposerReasoning = options[0].value
     }
 
     private static func parseChatMessages(from transcript: String) -> [SessionChatMessage] {
