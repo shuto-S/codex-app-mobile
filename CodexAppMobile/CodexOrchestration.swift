@@ -3428,6 +3428,12 @@ struct SessionWorkbenchView: View {
         self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var canSendPrompt: Bool {
+        !self.isPromptEmpty
+            && !self.isRunningSSHAction
+            && self.selectedWorkspace != nil
+    }
+
     private var menuWidth: CGFloat {
         304
     }
@@ -3531,35 +3537,7 @@ struct SessionWorkbenchView: View {
     }
 
     private var chatBackground: some View {
-        ZStack {
-            LinearGradient(
-                colors: self.isDarkMode
-                    ? [
-                        Color(red: 0.09, green: 0.11, blue: 0.15),
-                        Color(red: 0.08, green: 0.10, blue: 0.14),
-                        Color(red: 0.08, green: 0.12, blue: 0.13),
-                    ]
-                    : [
-                        Color(red: 0.88, green: 0.94, blue: 1.00),
-                        Color(red: 0.95, green: 0.98, blue: 1.00),
-                        Color(red: 0.90, green: 0.96, blue: 0.96),
-                    ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-
-            Circle()
-                .fill(self.accentGlassTint(light: 0.24, dark: 0.18))
-                .frame(width: 320, height: 320)
-                .blur(radius: 50)
-                .offset(x: -170, y: -250)
-
-            Circle()
-                .fill(Color.cyan.opacity(self.isDarkMode ? 0.12 : 0.18))
-                .frame(width: 300, height: 300)
-                .blur(radius: 56)
-                .offset(x: 180, y: 230)
-        }
+        Color.black
     }
 
     private var chatHeader: some View {
@@ -3571,25 +3549,36 @@ struct SessionWorkbenchView: View {
                 }
             } label: {
                 Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 38, height: 38)
-                    .background {
-                        self.glassCircleBackground(size: 38)
-                    }
+                    .font(.system(size: 20, weight: .semibold))
+                    .frame(width: 32, height: 32)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(Color.primary)
+            .foregroundStyle(Color.white)
 
-            VStack(spacing: 1) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(self.selectedWorkspaceTitle)
-                    .font(.headline)
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(Color.white)
                     .lineLimit(1)
-                Text(self.host.name)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(self.isSSHTransport ? "SSH" : "App Server")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.white.opacity(0.62))
                     .lineLimit(1)
             }
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                self.isPromptFieldFocused = false
+                self.createNewThread()
+            } label: {
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 19, weight: .semibold))
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.white)
+            .disabled(self.selectedWorkspace == nil || self.isRunningSSHAction)
+            .opacity(self.selectedWorkspace == nil ? 0.45 : 1)
 
             Menu {
                 Button {
@@ -3624,52 +3613,43 @@ struct SessionWorkbenchView: View {
                     Label("ホスト一覧に戻る", systemImage: "chevron.left")
                 }
             } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 18, weight: .semibold))
-                    .frame(width: 38, height: 38)
-                    .background {
-                        self.glassCircleBackground(size: 38, tint: self.glassWhiteTint(light: 0.22, dark: 0.14))
-                    }
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 20, weight: .semibold))
+                    .frame(width: 32, height: 32)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(Color.primary)
+            .foregroundStyle(Color.white)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background {
-            self.glassCardBackground(cornerRadius: 26, tint: self.glassWhiteTint(light: 0.24, dark: 0.14))
+        .background(Color.black)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.white.opacity(0.14))
+                .frame(height: 0.5)
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-        .padding(.bottom, 6)
     }
 
     private var chatTimeline: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(spacing: 12) {
+                VStack(spacing: 14) {
                     if !self.localErrorMessage.isEmpty {
-                        Label(self.localErrorMessage, systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .background {
-                                self.glassCardBackground(cornerRadius: 14, tint: Color.red.opacity(0.18))
-                            }
+                        self.chatInfoBanner(
+                            text: self.localErrorMessage,
+                            icon: "exclamationmark.triangle.fill",
+                            foreground: .red,
+                            background: Color.red.opacity(0.12)
+                        )
                     }
 
                     if !self.localStatusMessage.isEmpty {
-                        Label(self.localStatusMessage, systemImage: "checkmark.circle")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .background {
-                                self.glassCardBackground(cornerRadius: 14)
-                            }
+                        self.chatInfoBanner(
+                            text: self.localStatusMessage,
+                            icon: "checkmark.circle",
+                            foreground: Color.white.opacity(0.78),
+                            background: Color.white.opacity(0.08)
+                        )
                     }
 
                     if !self.isSSHTransport,
@@ -3683,75 +3663,23 @@ struct SessionWorkbenchView: View {
                                     .font(.subheadline.weight(.semibold))
                                 Spacer()
                             }
+                            .foregroundStyle(Color.white)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
-                            .background {
-                                self.glassCardBackground(cornerRadius: 14, tint: Color.orange.opacity(0.18))
-                            }
+                            .background(Color.orange.opacity(0.18), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }
 
                     if self.selectedWorkspace == nil {
-                        VStack(spacing: 10) {
-                            Image(systemName: "folder.badge.plus")
-                                .font(.system(size: 28, weight: .light))
-                            Text("プロジェクトを作成または選択してください。")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 240)
-                        .background {
-                            self.glassCardBackground(cornerRadius: 22)
-                        }
+                        self.chatPlaceholder("プロジェクトを作成または選択してください。")
                     } else if self.selectedThreadID == nil {
-                        VStack(spacing: 10) {
-                            Image(systemName: "bubble.left.and.bubble.right")
-                                .font(.system(size: 26, weight: .light))
-                            Text("スレッドを選択するか、メニューから新規スレッドを作成してください。")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 240)
-                        .background {
-                            self.glassCardBackground(cornerRadius: 22)
-                        }
+                        self.chatPlaceholder("スレッドを選択するか、新規スレッドを作成してください。")
                     } else if self.parsedChatMessages.isEmpty {
-                        VStack(spacing: 10) {
-                            Image(systemName: "text.bubble")
-                                .font(.system(size: 26, weight: .light))
-                            Text("まだメッセージはありません。")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 220)
-                        .background {
-                            self.glassCardBackground(cornerRadius: 22)
-                        }
+                        self.chatPlaceholder("まだメッセージはありません。")
                     } else {
                         ForEach(self.parsedChatMessages) { message in
-                            HStack(alignment: .bottom, spacing: 0) {
-                                if message.role == .user {
-                                    Spacer(minLength: 48)
-                                }
-
-                                Text(message.text)
-                                    .font(.subheadline)
-                                    .foregroundStyle(message.role == .user ? Color.white : Color.primary)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 11)
-                                    .textSelection(.enabled)
-                                    .background {
-                                        self.chatBubbleBackground(for: message.role)
-                                    }
-                                    .frame(maxWidth: 300, alignment: message.role == .user ? .trailing : .leading)
-
-                                if message.role == .assistant {
-                                    Spacer(minLength: 48)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
+                            self.chatMessageRow(message)
                         }
                     }
 
@@ -3759,10 +3687,11 @@ struct SessionWorkbenchView: View {
                         .frame(height: 1)
                         .id("chat-bottom")
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-                .padding(.bottom, 14)
+                .padding(.horizontal, 18)
+                .padding(.top, 16)
+                .padding(.bottom, 18)
             }
+            .background(Color.black)
             .scrollDismissesKeyboard(.interactively)
             .onAppear {
                 self.scrollToBottom(proxy: proxy)
@@ -3777,47 +3706,135 @@ struct SessionWorkbenchView: View {
     }
 
     private var chatComposer: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField("メッセージを入力...", text: self.$prompt, axis: .vertical)
-                .lineLimit(1...4)
-                .textInputAutocapitalization(.sentences)
-                .focused(self.$isPromptFieldFocused)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(self.glassWhiteTint(light: 0.08, dark: 0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-
+        HStack(alignment: .bottom, spacing: 12) {
             Button {
                 self.isPromptFieldFocused = false
-                self.sendPrompt(forceNewThread: false)
+                self.createNewThread()
             } label: {
-                Image(systemName: "paperplane.fill")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Color.white)
-                    .frame(width: 40, height: 40)
-                    .background {
-                        self.glassCircleBackground(size: 40, tint: self.accentGlassTint(light: 0.44, dark: 0.34))
-                    }
+                Image(systemName: "plus")
+                    .font(.system(size: 22, weight: .light))
+                    .foregroundStyle(Color.white.opacity(0.88))
+                    .frame(width: 50, height: 50)
+                    .background(Color.white.opacity(0.12), in: Circle())
             }
             .buttonStyle(.plain)
-            .disabled(
-                self.isPromptEmpty
-                || self.isRunningSSHAction
-                || self.selectedWorkspace == nil
+            .disabled(self.selectedWorkspace == nil || self.isRunningSSHAction)
+            .opacity(self.selectedWorkspace == nil ? 0.45 : 1)
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(self.isSSHTransport ? "SSH" : "Thinking")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.blue.opacity(0.95))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.black.opacity(0.62), in: Capsule())
+                    Spacer()
+                }
+
+                HStack(alignment: .bottom, spacing: 10) {
+                    TextField("質問してみましょう", text: self.$prompt, axis: .vertical)
+                        .lineLimit(1...6)
+                        .textInputAutocapitalization(.sentences)
+                        .submitLabel(.send)
+                        .focused(self.$isPromptFieldFocused)
+                        .foregroundStyle(Color.white)
+                        .tint(Color.white)
+                        .onSubmit {
+                            if self.canSendPrompt {
+                                self.sendPrompt(forceNewThread: false)
+                            }
+                        }
+
+                    Button {
+                        self.isPromptFieldFocused = false
+                        self.sendPrompt(forceNewThread: false)
+                    } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(Color.black)
+                            .frame(width: 42, height: 42)
+                            .background(Color.white, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!self.canSendPrompt)
+                    .opacity(self.canSendPrompt ? 1 : 0.45)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(Color(red: 0.14, green: 0.14, blue: 0.16))
             )
-            .opacity(
-                self.isPromptEmpty || self.selectedWorkspace == nil
-                ? 0.45
-                : 1
-            )
-        }
-        .padding(8)
-        .background {
-            self.glassCardBackground(cornerRadius: 24, tint: self.glassWhiteTint(light: 0.24, dark: 0.14))
         }
         .padding(.horizontal, 12)
         .padding(.top, 6)
         .padding(.bottom, 10)
+        .background(Color.black)
+    }
+
+    @ViewBuilder
+    private func chatInfoBanner(
+        text: String,
+        icon: String,
+        foreground: Color,
+        background: Color
+    ) -> some View {
+        Label(text, systemImage: icon)
+            .font(.caption)
+            .foregroundStyle(foreground)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func chatPlaceholder(_ text: String) -> some View {
+        Text(text)
+            .font(.subheadline)
+            .foregroundStyle(Color.white.opacity(0.62))
+            .frame(maxWidth: .infinity, minHeight: 200, alignment: .center)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 16)
+            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func chatMessageRow(_ message: SessionChatMessage) -> some View {
+        if message.role == .assistant {
+            Text(self.markdownAttributedText(message.text))
+                .font(.body)
+                .foregroundStyle(Color.white)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+                .tint(Color.blue.opacity(0.94))
+        } else {
+            HStack {
+                Spacer(minLength: 48)
+                Text(self.markdownAttributedText(message.text))
+                    .font(.subheadline)
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 11)
+                    .textSelection(.enabled)
+                    .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .frame(maxWidth: 300, alignment: .trailing)
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+
+    private func markdownAttributedText(_ text: String) -> AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .full,
+            failurePolicy: .returnPartiallyParsedIfPossible
+        )
+        if let attributed = try? AttributedString(markdown: text, options: options) {
+            return attributed
+        }
+        return AttributedString(text)
     }
 
     private var sideMenu: some View {
@@ -4104,37 +4121,6 @@ struct SessionWorkbenchView: View {
                     circle.strokeBorder(self.glassStrokeColor, lineWidth: 0.8)
                 )
                 .frame(width: size, height: size)
-        }
-    }
-
-    @ViewBuilder
-    private func chatBubbleBackground(for role: SessionChatRole) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
-
-        if role == .user {
-            if #available(iOS 26.0, *) {
-                shape
-                    .fill(self.accentGlassTint(light: 0.42, dark: 0.30))
-                    .glassEffect(.regular, in: shape)
-            } else {
-                shape
-                    .fill(self.isDarkMode ? Color.accentColor.opacity(0.84) : Color.accentColor)
-                    .overlay(
-                        shape.strokeBorder(self.glassWhiteTint(light: 0.28, dark: 0.20), lineWidth: 0.8)
-                    )
-            }
-        } else {
-            if #available(iOS 26.0, *) {
-                shape
-                    .fill(self.glassWhiteTint(light: 0.22, dark: 0.12))
-                    .glassEffect(.regular, in: shape)
-            } else {
-                shape
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        shape.strokeBorder(self.glassStrokeColor, lineWidth: 0.8)
-                    )
-            }
         }
     }
 
