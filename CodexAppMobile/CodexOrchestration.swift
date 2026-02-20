@@ -1,5 +1,8 @@
 import Foundation
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 enum TransportKind: String, Codable, CaseIterable, Identifiable {
     case appServerWS
@@ -2288,7 +2291,7 @@ struct ContentView: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        HostsView()
+        HostsView(remoteHostStore: self.appState.remoteHostStore)
         .sheet(item: self.$appState.terminalLaunchContext) { _ in
             TerminalView()
         }
@@ -2297,6 +2300,7 @@ struct ContentView: View {
 
 struct HostsView: View {
     @EnvironmentObject private var appState: AppState
+    @ObservedObject var remoteHostStore: RemoteHostStore
 
     @State private var navigationPath: [UUID] = []
     @State private var editorContext: HostEditorContext?
@@ -2311,7 +2315,7 @@ struct HostsView: View {
     var body: some View {
         NavigationStack(path: self.$navigationPath) {
             Group {
-                if self.appState.remoteHostStore.hosts.isEmpty {
+                if self.remoteHostStore.hosts.isEmpty {
                     ContentUnavailableView(
                         "No Hosts",
                         systemImage: "network",
@@ -2319,7 +2323,7 @@ struct HostsView: View {
                     )
                 } else {
                     List {
-                        ForEach(self.appState.remoteHostStore.hosts) { host in
+                        ForEach(self.remoteHostStore.hosts) { host in
                             Button {
                                 self.openHost(host)
                             } label: {
@@ -2335,7 +2339,7 @@ struct HostsView: View {
                                 Button("Edit") {
                                     self.editorContext = HostEditorContext(
                                         host: host,
-                                        initialPassword: self.appState.remoteHostStore.password(for: host.id)
+                                        initialPassword: self.remoteHostStore.password(for: host.id)
                                     )
                                 }
                                 .tint(.orange)
@@ -2367,7 +2371,7 @@ struct HostsView: View {
                 }
             }
             .navigationDestination(for: UUID.self) { hostID in
-                if let host = self.appState.remoteHostStore.hosts.first(where: { $0.id == hostID }) {
+                if let host = self.remoteHostStore.hosts.first(where: { $0.id == hostID }) {
                     SessionWorkbenchView(host: host)
                 } else {
                     ContentUnavailableView(
@@ -2403,7 +2407,7 @@ struct HostsView: View {
                 host: context.host,
                 initialPassword: context.initialPassword
             ) { draft in
-                self.appState.remoteHostStore.upsert(hostID: context.host?.id, draft: draft)
+                self.remoteHostStore.upsert(hostID: context.host?.id, draft: draft)
                 self.appState.cleanupSessionOrphans()
             }
         }
@@ -3440,12 +3444,29 @@ struct SessionWorkbenchView: View {
             && self.selectedWorkspace != nil
     }
 
+    private var isComposerInteractive: Bool {
+        !self.isRunningSSHAction && self.selectedWorkspace != nil
+    }
+
     private var menuWidth: CGFloat {
         304
     }
 
     private var isDarkMode: Bool {
         self.colorScheme == .dark
+    }
+
+    private var windowSafeAreaTopInset: CGFloat {
+        #if canImport(UIKit)
+        let scenes = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+        let keyWindow = scenes
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)
+        return keyWindow?.safeAreaInsets.top ?? 0
+        #else
+        return 0
+        #endif
     }
 
     private func glassWhiteTint(light: Double, dark: Double) -> Color {
@@ -3680,71 +3701,94 @@ struct SessionWorkbenchView: View {
     }
 
     private var chatComposer: some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            Button {
-                self.isPromptFieldFocused = false
-                self.createNewThread()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 22, weight: .light))
-                    .foregroundStyle(Color.white.opacity(0.88))
-                    .frame(width: 50, height: 50)
-                    .background(Color.white.opacity(0.12), in: Circle())
-            }
-            .buttonStyle(.plain)
-            .disabled(self.selectedWorkspace == nil || self.isRunningSSHAction)
-            .opacity(self.selectedWorkspace == nil ? 0.45 : 1)
+        let isInactive = !self.isComposerInteractive
 
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text(self.isSSHTransport ? "SSH" : "Thinking")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.blue.opacity(0.95))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.black.opacity(0.62), in: Capsule())
-                    Spacer()
-                }
+        return VStack(alignment: .trailing, spacing: 8) {
+            HStack(alignment: .bottom, spacing: 10) {
+                ZStack(alignment: .leading) {
+                    if self.prompt.isEmpty {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundStyle(Color.white.opacity(0.38))
+                            .allowsHitTesting(false)
+                    }
 
-                HStack(alignment: .bottom, spacing: 10) {
-                    TextField("質問してみましょう", text: self.$prompt, axis: .vertical)
-                        .lineLimit(1...6)
+                    TextField("", text: self.$prompt, axis: .vertical)
+                        .lineLimit(1...4)
                         .textInputAutocapitalization(.sentences)
                         .submitLabel(.send)
                         .focused(self.$isPromptFieldFocused)
                         .foregroundStyle(Color.white)
                         .tint(Color.white)
+                        .frame(minHeight: 36)
+                        .disabled(isInactive)
+                        .opacity(isInactive ? 0.72 : 1)
                         .onSubmit {
                             if self.canSendPrompt {
                                 self.sendPrompt(forceNewThread: false)
                             }
                         }
-
-                    Button {
-                        self.isPromptFieldFocused = false
-                        self.sendPrompt(forceNewThread: false)
-                    } label: {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(Color.black)
-                            .frame(width: 42, height: 42)
-                            .background(Color.white, in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!self.canSendPrompt)
-                    .opacity(self.canSendPrompt ? 1 : 0.45)
                 }
+
+                Button {
+                    self.isPromptFieldFocused = false
+                    self.sendPrompt(forceNewThread: false)
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(isInactive ? Color.white.opacity(0.72) : Color.black)
+                        .frame(width: 36, height: 36)
+                        .background((isInactive ? Color.white.opacity(0.24) : Color.white), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!self.canSendPrompt)
+                .opacity(self.canSendPrompt ? 1 : 0.45)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(Color(red: 0.14, green: 0.14, blue: 0.16))
-            )
+            .padding(.vertical, 8)
+            .background {
+                if isInactive {
+                    self.glassCardBackground(cornerRadius: 24, tint: self.glassWhiteTint(light: 0.20, dark: 0.12))
+                } else {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .fill(Color(red: 0.14, green: 0.14, blue: 0.16))
+                }
+            }
+            .overlay {
+                if isInactive {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .stroke(self.glassStrokeColor.opacity(0.62), lineWidth: 1)
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .onTapGesture {
+                guard self.isComposerInteractive, self.isPromptEmpty else { return }
+                self.isPromptFieldFocused = true
+            }
+
+            if self.isPromptFieldFocused {
+                Button {
+                    self.isPromptFieldFocused = false
+                } label: {
+                    Image(systemName: "keyboard.chevron.compact.down")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .frame(width: 38, height: 38)
+                        .background {
+                            self.glassCircleBackground(
+                                size: 38,
+                                tint: self.glassWhiteTint(light: 0.20, dark: 0.14)
+                            )
+                        }
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 2)
+                .padding(.bottom, 3)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.top, 6)
-        .padding(.bottom, 10)
+        .padding(.bottom, 12)
         .background(Color.black)
     }
 
@@ -4009,7 +4053,7 @@ struct SessionWorkbenchView: View {
                 VStack(spacing: 8) {
                     Button {
                         self.isMenuOpen = false
-                        self.refreshThreads()
+                        self.refreshThreads(scope: .allProjects)
                     } label: {
                         Label("スレッド更新", systemImage: "arrow.clockwise")
                             .font(.subheadline.weight(.semibold))
@@ -4021,8 +4065,8 @@ struct SessionWorkbenchView: View {
                             }
                     }
                     .buttonStyle(.plain)
-                    .disabled(self.selectedWorkspace == nil || self.isRefreshingThreads || self.isRunningSSHAction)
-                    .opacity(self.selectedWorkspace == nil ? 0.5 : 1)
+                    .disabled(self.workspaces.isEmpty || self.isRefreshingThreads || self.isRunningSSHAction)
+                    .opacity(self.workspaces.isEmpty ? 0.5 : 1)
 
                     Button {
                         self.isMenuOpen = false
@@ -4059,8 +4103,8 @@ struct SessionWorkbenchView: View {
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.top, proxy.safeAreaInsets.top + 8)
-            .padding(.bottom, proxy.safeAreaInsets.bottom + 12)
+            .padding(.top, max(proxy.safeAreaInsets.top, self.windowSafeAreaTopInset) + 12)
+            .padding(.bottom, proxy.safeAreaInsets.bottom + 28)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(width: self.menuWidth)
@@ -4361,10 +4405,26 @@ struct SessionWorkbenchView: View {
         self.appState.appServerClient.disconnect()
     }
 
-    private func refreshThreads() {
-        guard let selectedWorkspace else {
-            self.localErrorMessage = "Select a project first."
-            return
+    private enum ThreadRefreshScope {
+        case selectedProject
+        case allProjects
+    }
+
+    private func refreshThreads(scope: ThreadRefreshScope = .selectedProject) {
+        let targetWorkspaces: [ProjectWorkspace]
+        switch scope {
+        case .selectedProject:
+            guard let selectedWorkspace else {
+                self.localErrorMessage = "Select a project first."
+                return
+            }
+            targetWorkspaces = [selectedWorkspace]
+        case .allProjects:
+            guard !self.workspaces.isEmpty else {
+                self.localErrorMessage = "プロジェクトがありません。"
+                return
+            }
+            targetWorkspaces = self.workspaces
         }
 
         self.localErrorMessage = ""
@@ -4377,17 +4437,21 @@ struct SessionWorkbenchView: View {
             }
 
             if self.isSSHTransport {
-                let localThreads = self.appState.threadBookmarkStore
-                    .threads(for: selectedWorkspace.id)
-                    .filter { !$0.archived }
-                if let selectedThreadID,
-                   localThreads.contains(where: { $0.threadID == selectedThreadID }) {
-                    // Keep current selection.
-                } else {
-                    self.selectedThreadID = localThreads.first?.threadID
-                    self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: self.selectedThreadID)
+                if let selectedWorkspace {
+                    let localThreads = self.appState.threadBookmarkStore
+                        .threads(for: selectedWorkspace.id)
+                        .filter { !$0.archived }
+                    if let selectedThreadID,
+                       localThreads.contains(where: { $0.threadID == selectedThreadID }) {
+                        // Keep current selection.
+                    } else {
+                        self.selectedThreadID = localThreads.first?.threadID
+                        self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: self.selectedThreadID)
+                    }
                 }
-                self.localStatusMessage = "SSH mode: showing locally saved threads."
+                self.localStatusMessage = scope == .allProjects
+                    ? "SSHモード: ローカル保存済みスレッドを全プロジェクト対象で表示しています。"
+                    : "SSH mode: showing locally saved threads."
                 return
             }
 
@@ -4396,32 +4460,42 @@ struct SessionWorkbenchView: View {
                     try await self.appState.appServerClient.connect(to: self.host)
                 }
 
-                let fetched = try await self.appState.appServerClient.threadList(archived: false, limit: 100)
-                let scoped = fetched.filter { $0.cwd == selectedWorkspace.remotePath }
+                let fetched = try await self.appState.appServerClient.threadList(archived: false, limit: 300)
 
-                let summaries = scoped.map { thread in
-                    CodexThreadSummary(
-                        threadID: thread.id,
+                for workspace in targetWorkspaces {
+                    let scoped = fetched.filter { $0.cwd == workspace.remotePath }
+                    let summaries = scoped.map { thread in
+                        CodexThreadSummary(
+                            threadID: thread.id,
+                            hostID: self.host.id,
+                            workspaceID: workspace.id,
+                            preview: thread.preview,
+                            updatedAt: thread.updatedAt,
+                            archived: thread.archived,
+                            cwd: thread.cwd
+                        )
+                    }
+
+                    self.appState.threadBookmarkStore.replaceThreads(
+                        for: workspace.id,
                         hostID: self.host.id,
-                        workspaceID: selectedWorkspace.id,
-                        preview: thread.preview,
-                        updatedAt: thread.updatedAt,
-                        archived: thread.archived,
-                        cwd: thread.cwd
+                        with: summaries
                     )
                 }
 
-                self.appState.threadBookmarkStore.replaceThreads(
-                    for: selectedWorkspace.id,
-                    hostID: self.host.id,
-                    with: summaries
-                )
+                if let selectedWorkspace {
+                    let selectedWorkspaceThreads = self.threads(for: selectedWorkspace.id)
+                    if let selectedThreadID = self.selectedThreadID,
+                       selectedWorkspaceThreads.contains(where: { $0.threadID == selectedThreadID }) {
+                        // Keep current selection.
+                    } else {
+                        self.selectedThreadID = selectedWorkspaceThreads.first?.threadID
+                        self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: self.selectedThreadID)
+                    }
+                }
 
-                if let selectedThreadID = self.selectedThreadID,
-                   summaries.contains(where: { $0.threadID == selectedThreadID }) {
-                    // Keep current selection.
-                } else {
-                    self.selectedThreadID = summaries.first?.threadID
+                if scope == .allProjects {
+                    self.localStatusMessage = "全プロジェクトのスレッドを更新しました。"
                 }
             } catch {
                 self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)

@@ -693,11 +693,6 @@ struct TerminalSessionView: View {
 
         self.viewModel.send(command: pendingInitialCommand + "\n")
         self.pendingInitialCommand = nil
-
-        if let launchContext = self.appState.terminalLaunchContext,
-           launchContext.hostID == self.host.id {
-            self.appState.terminalLaunchContext = nil
-        }
     }
 
 }
