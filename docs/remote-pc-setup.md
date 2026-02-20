@@ -31,6 +31,12 @@ tailscale ip -4
 codex app-server --listen ws://0.0.0.0:8080
 ```
 
+または、このリポジトリでは app-server + iOS拡張ヘッダ回避プロキシをまとめて起動できます。
+
+```bash
+make run-app-server
+```
+
 - セキュリティ前提は Tailscale 閉域です。公開ネットワークへは直接公開しません。
 - iOS 側接続URLは `ws://<tailnet-ip>:8080` を使います。
 
