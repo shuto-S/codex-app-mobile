@@ -502,6 +502,18 @@ final class CodexAppMobileTests: XCTestCase {
         let client = AppServerClient()
 
         client.applyNotificationForTesting(
+            method: "turn/started",
+            params: .object([
+                "threadId": .string("thread-1"),
+                "turn": .object([
+                    "id": .string("turn-1")
+                ])
+            ])
+        )
+        XCTAssertEqual(client.activeTurnID(for: "thread-1"), "turn-1")
+        XCTAssertEqual(client.turnStreamingPhase(for: "thread-1"), .thinking)
+
+        client.applyNotificationForTesting(
             method: "item/agentMessage/delta",
             params: .object([
                 "threadId": .string("thread-1"),
@@ -515,17 +527,7 @@ final class CodexAppMobileTests: XCTestCase {
                 "delta": .string(" world")
             ])
         )
-
-        client.applyNotificationForTesting(
-            method: "turn/started",
-            params: .object([
-                "threadId": .string("thread-1"),
-                "turn": .object([
-                    "id": .string("turn-1")
-                ])
-            ])
-        )
-        XCTAssertEqual(client.activeTurnID(for: "thread-1"), "turn-1")
+        XCTAssertEqual(client.turnStreamingPhase(for: "thread-1"), .responding)
 
         client.applyNotificationForTesting(
             method: "turn/completed",
@@ -539,5 +541,6 @@ final class CodexAppMobileTests: XCTestCase {
 
         XCTAssertEqual(client.transcriptByThread["thread-1"], "Hello world")
         XCTAssertNil(client.activeTurnID(for: "thread-1"))
+        XCTAssertNil(client.turnStreamingPhase(for: "thread-1"))
     }
 }
