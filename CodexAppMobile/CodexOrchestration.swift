@@ -5352,9 +5352,9 @@ struct SessionWorkbenchView: View {
                         .threads(for: selectedWorkspace.id)
                         .map { ($0.threadID, $0) }
                 )
-                let summaries = scoped.map { thread in
+                let summaries: [CodexThreadSummary] = scoped.map { thread in
                     let existing = existingByThreadID[thread.id]
-                    CodexThreadSummary(
+                    return CodexThreadSummary(
                         threadID: thread.id,
                         hostID: self.host.id,
                         workspaceID: selectedWorkspace.id,
@@ -5370,7 +5370,7 @@ struct SessionWorkbenchView: View {
                 self.appState.threadBookmarkStore.replaceThreads(
                     for: selectedWorkspace.id,
                     hostID: self.host.id,
-                    with: summaries as! [CodexThreadSummary]
+                    with: summaries
                 )
 
                 let selectedWorkspaceThreads = self.threads(for: selectedWorkspace.id)
