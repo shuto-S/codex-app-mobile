@@ -2398,26 +2398,22 @@ struct SessionWorkbenchView: View {
                 || line.hasPrefix("$ ")
                 || line.hasPrefix("File change ")
                 || line.hasPrefix("Item: ") {
-                if currentRole != .assistant {
-                    flushCurrent()
-                    currentRole = .assistant
-                    buffer = []
-                }
-                buffer.append(line)
+                flushCurrent()
+                currentRole = nil
+                buffer = []
                 continue
             }
 
             if line.isEmpty {
-                if !buffer.isEmpty {
+                if currentRole != nil && !buffer.isEmpty {
                     buffer.append("")
                 }
                 continue
             }
 
-            if currentRole == nil {
-                currentRole = .assistant
+            if currentRole != nil {
+                buffer.append(line)
             }
-            buffer.append(line)
         }
 
         flushCurrent()
