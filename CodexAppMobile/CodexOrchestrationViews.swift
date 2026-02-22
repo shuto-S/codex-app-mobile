@@ -69,7 +69,7 @@ struct HostsView: View {
                                 Button {
                                     self.disconnectSession(for: host)
                                 } label: {
-                                    Label("セッションを切る", systemImage: "xmark.circle")
+                                    Label("Disconnect", systemImage: "xmark.circle")
                                 }
                                 .disabled(self.canDisconnectSession(for: host) == false)
 
@@ -124,13 +124,13 @@ struct HostsView: View {
                 .zIndex(1)
             }
         }
-        .alert("読み込みに失敗しました", isPresented: self.$isPresentingLoadingError) {
+        .alert("Could not load", isPresented: self.$isPresentingLoadingError) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(self.loadingErrorMessage)
         }
-        .confirmationDialog(
-            "ホストを削除しますか？",
+        .alert(
+            "Delete this host?",
             isPresented: Binding(
                 get: { self.hostPendingDeletion != nil },
                 set: { isPresented in
@@ -139,18 +139,17 @@ struct HostsView: View {
                     }
                 }
             ),
-            titleVisibility: .visible,
             presenting: self.hostPendingDeletion
         ) { host in
-            Button("削除", role: .destructive) {
+            Button("Cancel", role: .cancel) {
+                self.hostPendingDeletion = nil
+            }
+            Button("Delete", role: .destructive) {
                 self.appState.removeHost(hostID: host.id)
                 self.hostPendingDeletion = nil
             }
-            Button("キャンセル", role: .cancel) {
-                self.hostPendingDeletion = nil
-            }
         } message: { host in
-            Text("\"\(host.name)\" を削除します。この操作は取り消せません。")
+            Text("Delete \"\(host.name)\"? This cannot be undone.")
         }
         .sheet(item: self.$editorContext) { context in
             RemoteHostEditorView(
@@ -393,9 +392,12 @@ struct RemoteHostEditorView: View {
             .navigationTitle(self.host == nil ? "New Host" : "Edit Host")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") {
+                    Button {
                         self.dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
                     }
+                    .accessibilityLabel("Cancel")
                     .codexActionButtonStyle()
                 }
 
@@ -963,9 +965,12 @@ struct RemotePathBrowserView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Close") {
+                    Button {
                         self.dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
                     }
+                    .accessibilityLabel("Close")
                     .codexActionButtonStyle()
                 }
 
@@ -1116,9 +1121,12 @@ struct ProjectEditorView: View {
             .navigationTitle(self.workspace == nil ? "New Project" : "Edit Project")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") {
+                    Button {
                         self.dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
                     }
+                    .accessibilityLabel("Cancel")
                     .codexActionButtonStyle()
                 }
 
@@ -1176,6 +1184,7 @@ struct SessionWorkbenchView: View {
     @State private var isRunningSSHAction = false
     @State private var isPresentingProjectEditor = false
     @State private var editingWorkspace: ProjectWorkspace?
+    @State private var workspacePendingDeletion: ProjectWorkspace?
     @State private var activePendingRequest: AppServerPendingRequest?
     @State private var sshTranscriptByThread: [String: String] = [:]
     @State private var isMenuOpen = false
@@ -1219,14 +1228,14 @@ struct SessionWorkbenchView: View {
 
     private var selectedThreadTitle: String {
         guard let summary = self.selectedThreadSummary else {
-            return "新規スレッド"
+            return "New Thread"
         }
         let title = summary.preview.trimmingCharacters(in: .whitespacesAndNewlines)
-        return title.isEmpty ? "新規スレッド" : title
+        return title.isEmpty ? "New Thread" : title
     }
 
     private var selectedWorkspaceTitle: String {
-        self.selectedWorkspace?.displayName ?? "プロジェクト"
+        self.selectedWorkspace?.displayName ?? "Project"
     }
 
     private var selectedThreadTranscript: String {
@@ -1295,9 +1304,9 @@ struct SessionWorkbenchView: View {
     private func assistantStreamingBaseText(for phase: AssistantStreamingPhase) -> String {
         switch phase {
         case .thinking:
-            return "AIが考え中"
+            return "Thinking"
         case .responding:
-            return "AIが回答を生成中"
+            return "Generating reply"
         }
     }
 
@@ -1514,18 +1523,45 @@ struct SessionWorkbenchView: View {
         .onChange(of: self.appState.appServerClient.availableModels) {
             self.syncComposerControlsWithWorkspace()
         }
+        .alert(
+            "Delete this project?",
+            isPresented: Binding(
+                get: { self.workspacePendingDeletion != nil },
+                set: { isPresented in
+                    if isPresented == false {
+                        self.workspacePendingDeletion = nil
+                    }
+                }
+            ),
+            presenting: self.workspacePendingDeletion
+        ) { workspace in
+            Button("Cancel", role: .cancel) {
+                self.workspacePendingDeletion = nil
+            }
+            Button("Delete", role: .destructive) {
+                self.deleteWorkspace(workspace)
+            }
+        } message: { workspace in
+            Text("Delete \"\(workspace.displayName)\"? This cannot be undone.")
+        }
         .sheet(isPresented: self.$isPresentingProjectEditor) {
             ProjectEditorView(
                 workspace: self.editingWorkspace,
                 host: self.host,
                 hostPassword: self.appState.remoteHostStore.password(for: self.host.id)
             ) { draft in
-                self.appState.projectStore.upsert(
+                let isCreatingWorkspace = self.editingWorkspace == nil
+                let savedWorkspaceID = self.appState.projectStore.upsert(
                     workspaceID: self.editingWorkspace?.id,
                     hostID: self.host.id,
                     draft: draft
                 )
-                self.restoreSelectionFromSession()
+                if isCreatingWorkspace {
+                    self.selectedWorkspaceID = savedWorkspaceID
+                    self.createNewThread()
+                } else {
+                    self.restoreSelectionFromSession()
+                }
             }
         }
         .sheet(item: self.$activePendingRequest) { request in
@@ -1570,10 +1606,10 @@ struct SessionWorkbenchView: View {
                     Button(role: .destructive) {
                         self.archiveThread(summary: selectedThreadSummary, archived: true)
                     } label: {
-                        Label("アーカイブ", systemImage: "archivebox")
+                        Label("Archive", systemImage: "archivebox")
                     }
                 } else {
-                    Text("アーカイブ対象なし")
+                    Text("No thread to archive")
                 }
             } label: {
                 Image(systemName: "ellipsis")
@@ -1624,7 +1660,7 @@ struct SessionWorkbenchView: View {
                         } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: "clock.badge.exclamationmark")
-                                Text("承認待ち \(self.appState.appServerClient.pendingRequests.count) 件")
+                                Text("\(self.appState.appServerClient.pendingRequests.count) approvals pending")
                                     .font(.subheadline.weight(.semibold))
                                 Spacer()
                             }
@@ -1637,11 +1673,11 @@ struct SessionWorkbenchView: View {
                     }
 
                     if self.selectedWorkspace == nil {
-                        self.chatPlaceholder("プロジェクトを作成または選択してください。")
+                        self.chatPlaceholder("Create or select a project.")
                     } else if self.selectedThreadID == nil {
-                        self.chatPlaceholder("新規スレッド準備中です。プロンプト送信時にスレッドを開始します。")
+                        self.chatPlaceholder("Ready for a new thread. Send a prompt to start.")
                     } else if self.parsedChatMessages.isEmpty {
-                        self.chatPlaceholder("まだメッセージはありません。")
+                        self.chatPlaceholder("No messages yet.")
                     } else {
                         ForEach(self.parsedChatMessages) { message in
                             self.chatMessageRow(message)
@@ -1968,7 +2004,7 @@ struct SessionWorkbenchView: View {
                             .padding(.top, 2)
 
                         if self.workspaces.isEmpty {
-                            Text("プロジェクトがありません。")
+                            Text("No projects.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1999,11 +2035,20 @@ struct SessionWorkbenchView: View {
                                     self.isPresentingProjectEditor = true
                                     self.isMenuOpen = false
                                 } label: {
-                                    Label("プロジェクト追加", systemImage: "plus")
+                                    Label("Add Project", systemImage: "plus")
+                                }
+
+                                if let selectedWorkspace {
+                                    Button(role: .destructive) {
+                                        self.workspacePendingDeletion = selectedWorkspace
+                                        self.isMenuOpen = false
+                                    } label: {
+                                        Label("Delete Project", systemImage: "trash")
+                                    }
                                 }
                             } label: {
                                 HStack(spacing: 8) {
-                                    Text(self.selectedWorkspace?.displayName ?? "プロジェクトを選択")
+                                    Text(self.selectedWorkspace?.displayName ?? "Select project")
                                         .font(.subheadline.weight(.semibold))
                                         .lineLimit(1)
                                     Spacer(minLength: 8)
@@ -2035,7 +2080,7 @@ struct SessionWorkbenchView: View {
                             self.createNewThread()
                             self.isMenuOpen = false
                         } label: {
-                            Label("新規スレッド", systemImage: "plus.bubble")
+                            Label("New Thread", systemImage: "plus.bubble")
                                 .font(.subheadline.weight(.semibold))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 12)
@@ -2049,14 +2094,14 @@ struct SessionWorkbenchView: View {
                         .opacity(self.selectedWorkspace == nil ? 0.5 : 1)
 
                         if self.selectedWorkspace == nil {
-                            Text("プロジェクトを選択してください。")
+                            Text("Select a project.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 9)
                         } else if self.selectedWorkspaceThreads.isEmpty {
-                            Text("スレッドなし")
+                            Text("No threads")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2078,7 +2123,7 @@ struct SessionWorkbenchView: View {
                                                     : Color.white.opacity(0.35)
                                                 )
                                                 .frame(width: 6, height: 6)
-                                            Text(summary.preview.isEmpty ? "新規スレッド" : summary.preview)
+                                            Text(summary.preview.isEmpty ? "New Thread" : summary.preview)
                                                 .font(.subheadline)
                                                 .lineLimit(1)
                                             Spacer(minLength: 8)
@@ -2142,7 +2187,7 @@ struct SessionWorkbenchView: View {
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "chevron.left")
-                            Text("ホスト一覧に戻る")
+                            Text("Back to hosts")
                                 .fontWeight(.semibold)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -2267,14 +2312,36 @@ struct SessionWorkbenchView: View {
         self.localStatusMessage = ""
 
         guard let selectedWorkspace else {
-            self.localErrorMessage = "先にプロジェクトを選択してください。"
+            self.localErrorMessage = "Select a project first."
             return
         }
 
         self.appState.hostSessionStore.selectProject(hostID: self.host.id, projectID: selectedWorkspace.id)
         self.selectedThreadID = nil
         self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: nil)
-        self.localStatusMessage = "新規スレッド準備中です。プロンプト送信時に開始します。"
+        self.localStatusMessage = "Ready for a new thread. Send a prompt to start."
+    }
+
+    private func deleteWorkspace(_ workspace: ProjectWorkspace) {
+        let replacementWorkspaceID = self.workspaces
+            .filter { $0.id != workspace.id }
+            .map(\.id)
+            .first
+
+        self.appState.removeWorkspace(
+            hostID: self.host.id,
+            workspaceID: workspace.id,
+            replacementWorkspaceID: replacementWorkspaceID
+        )
+
+        if self.selectedWorkspaceID == workspace.id {
+            self.selectedWorkspaceID = replacementWorkspaceID
+            self.selectedThreadID = nil
+        }
+
+        self.workspacePendingDeletion = nil
+        self.localErrorMessage = ""
+        self.localStatusMessage = "Project deleted."
     }
 
     private func syncComposerControlsWithWorkspace() {
@@ -2877,9 +2944,12 @@ struct HostDiagnosticsView: View {
             .navigationTitle("Diagnostics")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Close") {
+                    Button {
                         self.dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
                     }
+                    .accessibilityLabel("Close")
                     .codexActionButtonStyle()
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -3050,9 +3120,12 @@ struct PendingRequestSheet: View {
             .navigationTitle(self.request.title)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Close") {
+                    Button {
                         self.dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
                     }
+                    .accessibilityLabel("Close")
                     .codexActionButtonStyle()
                 }
             }

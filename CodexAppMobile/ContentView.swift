@@ -369,9 +369,12 @@ struct KnownHostsView: View {
             .navigationTitle("Known Hosts")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Close") {
+                    Button {
                         self.dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
                     }
+                    .accessibilityLabel("Close")
                     .codexActionButtonStyle()
                 }
 
@@ -475,9 +478,12 @@ struct SSHHostEditorView: View {
             .navigationTitle(self.profile == nil ? "New Host" : "Edit Host")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") {
+                    Button {
                         self.dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
                     }
+                    .accessibilityLabel("Cancel")
                     .codexActionButtonStyle()
                 }
 
@@ -1584,7 +1590,7 @@ final class SessionOutputHandler: ChannelInboundHandler, @unchecked Sendable {
                 continue
             }
 
-            // UTF-8 は最大 4 バイトのため、4 バイト以下は次チャンクを待つ。
+            // UTF-8 uses up to 4 bytes, so wait for the next chunk when 4 bytes or less remain.
             if self.pendingUTF8Data.count <= 4 {
                 return
             }

@@ -662,10 +662,12 @@ final class ProjectStore: ObservableObject {
         return self.workspaces.filter { $0.hostID == hostID }
     }
 
-    func upsert(workspaceID: UUID?, hostID: UUID, draft: ProjectWorkspaceDraft) {
+    @discardableResult
+    func upsert(workspaceID: UUID?, hostID: UUID, draft: ProjectWorkspaceDraft) -> UUID {
         let trimmedPath = draft.remotePath.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedName = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedModel = draft.defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedWorkspaceID: UUID
 
         if let workspaceID,
            let index = self.workspaces.firstIndex(where: { $0.id == workspaceID }) {
@@ -675,19 +677,21 @@ final class ProjectStore: ObservableObject {
             self.workspaces[index].defaultModel = trimmedModel
             self.workspaces[index].defaultApprovalPolicy = draft.defaultApprovalPolicy
             self.workspaces[index].updatedAt = Date()
+            resolvedWorkspaceID = workspaceID
         } else {
-            self.workspaces.append(
-                ProjectWorkspace(
-                    hostID: hostID,
-                    name: trimmedName,
-                    remotePath: trimmedPath,
-                    defaultModel: trimmedModel,
-                    defaultApprovalPolicy: draft.defaultApprovalPolicy
-                )
+            let workspace = ProjectWorkspace(
+                hostID: hostID,
+                name: trimmedName,
+                remotePath: trimmedPath,
+                defaultModel: trimmedModel,
+                defaultApprovalPolicy: draft.defaultApprovalPolicy
             )
+            self.workspaces.append(workspace)
+            resolvedWorkspaceID = workspace.id
         }
 
         self.sortAndPersist()
+        return resolvedWorkspaceID
     }
 
     func delete(workspaceID: UUID) {
@@ -964,6 +968,23 @@ final class AppState: ObservableObject {
             self.selectedHostID = self.remoteHostStore.hosts.first?.id
         }
         self.cleanupSessionOrphans()
+    }
+
+    func removeWorkspace(hostID: UUID, workspaceID: UUID, replacementWorkspaceID: UUID? = nil) {
+        self.threadBookmarkStore
+            .threads(for: workspaceID)
+            .forEach { summary in
+                self.threadBookmarkStore.remove(threadID: summary.threadID, workspaceID: workspaceID)
+            }
+        self.projectStore.delete(workspaceID: workspaceID)
+
+        guard let session = self.hostSessionStore.session(for: hostID),
+              session.selectedProjectID == workspaceID else {
+            return
+        }
+
+        self.hostSessionStore.selectProject(hostID: hostID, projectID: replacementWorkspaceID)
+        self.hostSessionStore.selectThread(hostID: hostID, threadID: nil)
     }
 
     func cleanupSessionOrphans() {
@@ -2830,4 +2851,3 @@ private struct ThreadReadUserInputPayload: Decodable {
     let path: String?
     let name: String?
 }
-

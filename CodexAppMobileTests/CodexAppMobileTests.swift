@@ -386,6 +386,109 @@ final class CodexAppMobileTests: XCTestCase {
         XCTAssertNil(store.session(for: orphanHostID))
     }
 
+    @MainActor
+    func testAppStateRemoveWorkspaceRemovesRelatedThreadsAndUpdatesSessionSelection() {
+        let suiteName = "AppStateRemoveWorkspace.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Failed to create temporary UserDefaults suite.")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let credentialStore = InMemoryHostCredentialStore()
+        let remoteHostStore = RemoteHostStore(defaults: defaults, credentialStore: credentialStore)
+        let projectStore = ProjectStore(defaults: defaults)
+        let threadBookmarkStore = ThreadBookmarkStore(defaults: defaults)
+        let hostSessionStore = HostSessionStore(defaults: defaults)
+        let appState = AppState(
+            remoteHostStore: remoteHostStore,
+            projectStore: projectStore,
+            threadBookmarkStore: threadBookmarkStore,
+            hostSessionStore: hostSessionStore,
+            appServerClient: AppServerClient()
+        )
+
+        remoteHostStore.upsert(
+            hostID: nil,
+            draft: RemoteHostDraft(
+                name: "Host A",
+                host: "a.example.com",
+                sshPort: 22,
+                username: "alice",
+                appServerHost: "",
+                appServerPort: 8080,
+                preferredTransport: .appServerWS,
+                password: ""
+            )
+        )
+        guard let hostID = remoteHostStore.hosts.first?.id else {
+            XCTFail("Expected host to exist.")
+            return
+        }
+
+        projectStore.upsert(
+            workspaceID: nil,
+            hostID: hostID,
+            draft: ProjectWorkspaceDraft(
+                name: "Project A",
+                remotePath: "/tmp/a",
+                defaultModel: "",
+                defaultApprovalPolicy: .onRequest
+            )
+        )
+        projectStore.upsert(
+            workspaceID: nil,
+            hostID: hostID,
+            draft: ProjectWorkspaceDraft(
+                name: "Project B",
+                remotePath: "/tmp/b",
+                defaultModel: "",
+                defaultApprovalPolicy: .onRequest
+            )
+        )
+
+        let workspaces = projectStore.workspaces(for: hostID)
+        guard let workspaceA = workspaces.first(where: { $0.name == "Project A" }),
+              let workspaceB = workspaces.first(where: { $0.name == "Project B" }) else {
+            XCTFail("Expected both workspaces to exist.")
+            return
+        }
+
+        threadBookmarkStore.upsert(
+            summary: CodexThreadSummary(
+                threadID: "thread-1",
+                hostID: hostID,
+                workspaceID: workspaceA.id,
+                preview: "preview",
+                updatedAt: Date(),
+                archived: false,
+                cwd: "/tmp/a",
+                model: nil,
+                reasoningEffort: nil
+            )
+        )
+        hostSessionStore.upsertSession(hostID: hostID)
+        hostSessionStore.selectProject(hostID: hostID, projectID: workspaceA.id)
+        hostSessionStore.selectThread(hostID: hostID, threadID: "thread-1")
+
+        appState.removeWorkspace(
+            hostID: hostID,
+            workspaceID: workspaceA.id,
+            replacementWorkspaceID: workspaceB.id
+        )
+
+        let remainingWorkspaceIDs = Set(projectStore.workspaces(for: hostID).map(\.id))
+        XCTAssertFalse(remainingWorkspaceIDs.contains(workspaceA.id))
+        XCTAssertTrue(remainingWorkspaceIDs.contains(workspaceB.id))
+        XCTAssertTrue(threadBookmarkStore.threads(for: workspaceA.id).isEmpty)
+
+        let session = hostSessionStore.session(for: hostID)
+        XCTAssertEqual(session?.selectedProjectID, workspaceB.id)
+        XCTAssertNil(session?.selectedThreadID)
+    }
+
     func testTerminalLaunchContextCreatesUniqueIdentifiers() {
         let hostID = UUID()
         let first = TerminalLaunchContext(
@@ -601,18 +704,18 @@ final class CodexAppMobileTests: XCTestCase {
     func testAppServerClientLocalEchoSeparatesUserAndAssistantTranscript() {
         let client = AppServerClient()
 
-        client.appendLocalEcho("こんにちは🌞", to: "thread-1")
+        client.appendLocalEcho("Hello 🌞", to: "thread-1")
         client.applyNotificationForTesting(
             method: "item/agentMessage/delta",
             params: .object([
                 "threadId": .string("thread-1"),
-                "delta": .string("こんにちは。何を手伝いましょうか？")
+                "delta": .string("Hello. How can I help?")
             ])
         )
 
         XCTAssertEqual(
             client.transcriptByThread["thread-1"],
-            "User: こんにちは🌞\nAssistant: こんにちは。何を手伝いましょうか？"
+            "User: Hello 🌞\nAssistant: Hello. How can I help?"
         )
     }
 }
