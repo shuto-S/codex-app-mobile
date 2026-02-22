@@ -1379,8 +1379,8 @@ final class AppServerClient: ObservableObject {
 
     func appendLocalEcho(_ text: String, to threadID: String) {
         let existing = self.transcriptByThread[threadID] ?? ""
-        let prefix = existing.isEmpty ? "" : "\n"
-        self.transcriptByThread[threadID] = existing + "\(prefix)> \(text)\n"
+        let separator = existing.isEmpty ? "" : "\n"
+        self.transcriptByThread[threadID] = existing + "\(separator)User: \(text)\nAssistant: "
     }
 
     func clearThreadTranscript(_ threadID: String) {
@@ -5208,13 +5208,6 @@ struct SessionWorkbenchView: View {
                 continue
             }
 
-            if line.hasPrefix("> ") {
-                flushCurrent()
-                currentRole = .user
-                buffer = [String(line.dropFirst(2))]
-                continue
-            }
-
             if line.hasPrefix("Assistant: ") {
                 flushCurrent()
                 currentRole = .assistant
@@ -5523,9 +5516,9 @@ struct SessionWorkbenchView: View {
     private func appendSSHTranscript(prompt: String, response: String, threadID: String) {
         var existing = self.sshTranscriptByThread[threadID] ?? ""
         if !existing.isEmpty {
-            existing += "\n\n"
+            existing += "\n"
         }
-        existing += "> \(prompt)\n\(response)"
+        existing += "User: \(prompt)\nAssistant: \(response)"
         self.sshTranscriptByThread[threadID] = existing
     }
 

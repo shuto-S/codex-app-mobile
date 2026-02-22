@@ -596,4 +596,23 @@ final class CodexAppMobileTests: XCTestCase {
         XCTAssertNil(client.activeTurnID(for: "thread-1"))
         XCTAssertNil(client.turnStreamingPhase(for: "thread-1"))
     }
+
+    @MainActor
+    func testAppServerClientLocalEchoSeparatesUserAndAssistantTranscript() {
+        let client = AppServerClient()
+
+        client.appendLocalEcho("こんにちは🌞", to: "thread-1")
+        client.applyNotificationForTesting(
+            method: "item/agentMessage/delta",
+            params: .object([
+                "threadId": .string("thread-1"),
+                "delta": .string("こんにちは。何を手伝いましょうか？")
+            ])
+        )
+
+        XCTAssertEqual(
+            client.transcriptByThread["thread-1"],
+            "User: こんにちは🌞\nAssistant: こんにちは。何を手伝いましょうか？"
+        )
+    }
 }
