@@ -50,7 +50,10 @@ struct HostsView: View {
                                 self.openHost(host)
                             } label: {
                                 self.hostRow(host: host)
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    .contentShape(Rectangle())
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .buttonStyle(.plain)
                             .contentShape(Rectangle())
                             .contextMenu {
@@ -173,7 +176,6 @@ struct HostsView: View {
                 Text(host.appServerURL)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
             }
 
             Spacer(minLength: 8)
@@ -183,6 +185,7 @@ struct HostsView: View {
                     .foregroundStyle(.green)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func presentHostEditor(for host: RemoteHost) {

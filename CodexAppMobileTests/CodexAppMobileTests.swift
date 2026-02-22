@@ -553,16 +553,18 @@ final class CodexAppMobileTests: XCTestCase {
     func testAppServerMessageRouterResolvesResponse() async throws {
         let router = AppServerMessageRouter()
         let requestID = await router.makeRequestID()
+        let continuationStored = XCTestExpectation(description: "continuation stored")
 
         let valueTask = Task<JSONValue, Error> {
             try await withCheckedThrowingContinuation { continuation in
                 Task {
                     await router.storeContinuation(continuation, for: String(requestID))
+                    continuationStored.fulfill()
                 }
             }
         }
 
-        await Task.yield()
+        await fulfillment(of: [continuationStored], timeout: 1.0)
         await router.resolveResponse(
             id: .number(Double(requestID)),
             result: .object(["ok": .bool(true)]),
