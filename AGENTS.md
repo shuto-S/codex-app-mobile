@@ -26,7 +26,6 @@
 - グローバル状態を避け、必要最小の状態管理で実装する。
 - 命名は役割が即わかる単純な名前にする。
 - コメントは「なぜ必要か」が伝わる最小限のみ書く。
-- 新規機能は「まず最短で動く版」を作り、その後に整理する。
 
 ## 4. コマンド駆動方針（起動しやすさ）
 
@@ -60,3 +59,4 @@
 - Liquid Glass は利用可能OSで優先採用し、古いOSでは標準スタイルへフォールバックする: https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass
 - テキスト入力は iOS 標準キーボードを前提とし、必要な場合のみ自動補正・自動大文字化を無効化する: https://developer.apple.com/documentation/uikit/uitextinputtraits
 - キーボード表示中でも主要操作を阻害しない（閉じる導線、スクロールでの dismiss 等）: https://developer.apple.com/documentation/swiftui/view/scrolldismisseskeyboard(_:)
+- Codexとの通信はapp-serverを介して行いうことを前提とする。ドキュメントを参照: https://developers.openai.com/codex/app-server.md

@@ -4,7 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 project_root="$(cd "${script_dir}/.." && pwd)"
 
-app_listen_host="${APP_SERVER_LISTEN_HOST:-0.0.0.0}"
+app_listen_host="${APP_SERVER_LISTEN_HOST:-127.0.0.1}"
 app_port="${APP_SERVER_PORT:-8080}"
 proxy_listen_host="${APP_SERVER_PROXY_LISTEN_HOST:-0.0.0.0}"
 proxy_port="${APP_SERVER_PROXY_PORT:-18081}"

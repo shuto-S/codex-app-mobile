@@ -38,7 +38,9 @@ make run-app-server
 ```
 
 - セキュリティ前提は Tailscale 閉域です。公開ネットワークへは直接公開しません。
-- iOS 側接続URLは `ws://<tailnet-ip>:8080` を使います。
+- `make run-app-server` の既定では app-server は `127.0.0.1:8080` にのみ bind し、
+   iOS はプロキシ `ws://<tailnet-ip>:18081` に接続します。
+- 直接 app-server へ接続したい場合のみ `APP_SERVER_LISTEN_HOST=0.0.0.0` を明示してください。
 
 ### 3.1 iOS ハンドシェイク失敗時（Sec-WebSocket-Extensions）
 

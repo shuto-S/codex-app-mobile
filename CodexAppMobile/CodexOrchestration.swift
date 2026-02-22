@@ -363,6 +363,8 @@ struct CodexThreadSummary: Identifiable, Codable, Equatable {
     var updatedAt: Date
     var archived: Bool
     var cwd: String
+    var model: String?
+    var reasoningEffort: String?
 
     private enum CodingKeys: String, CodingKey {
         case threadID
@@ -373,6 +375,9 @@ struct CodexThreadSummary: Identifiable, Codable, Equatable {
         case updatedAt
         case archived
         case cwd
+        case model
+        case reasoningEffort
+        case reasoningEffortSnake = "reasoning_effort"
     }
 
     init(
@@ -382,7 +387,9 @@ struct CodexThreadSummary: Identifiable, Codable, Equatable {
         preview: String,
         updatedAt: Date,
         archived: Bool,
-        cwd: String
+        cwd: String,
+        model: String? = nil,
+        reasoningEffort: String? = nil
     ) {
         self.threadID = threadID
         self.hostID = hostID
@@ -391,6 +398,8 @@ struct CodexThreadSummary: Identifiable, Codable, Equatable {
         self.updatedAt = updatedAt
         self.archived = archived
         self.cwd = cwd
+        self.model = Self.normalizedValue(model)
+        self.reasoningEffort = Self.normalizedReasoningEffort(reasoningEffort)
     }
 
     init(from decoder: Decoder) throws {
@@ -406,6 +415,11 @@ struct CodexThreadSummary: Identifiable, Codable, Equatable {
         self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         self.archived = try container.decode(Bool.self, forKey: .archived)
         self.cwd = try container.decode(String.self, forKey: .cwd)
+        self.model = Self.normalizedValue(try container.decodeIfPresent(String.self, forKey: .model))
+        self.reasoningEffort = Self.normalizedReasoningEffort(
+            try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
+                ?? container.decodeIfPresent(String.self, forKey: .reasoningEffortSnake)
+        )
     }
 
     func encode(to encoder: Encoder) throws {
@@ -417,6 +431,19 @@ struct CodexThreadSummary: Identifiable, Codable, Equatable {
         try container.encode(self.updatedAt, forKey: .updatedAt)
         try container.encode(self.archived, forKey: .archived)
         try container.encode(self.cwd, forKey: .cwd)
+        try container.encodeIfPresent(Self.normalizedValue(self.model), forKey: .model)
+        try container.encodeIfPresent(Self.normalizedReasoningEffort(self.reasoningEffort), forKey: .reasoningEffort)
+    }
+
+    private static func normalizedValue(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func normalizedReasoningEffort(_ raw: String?) -> String? {
+        guard let normalized = Self.normalizedValue(raw) else { return nil }
+        return normalized.lowercased()
     }
 }
 
@@ -447,11 +474,15 @@ struct CodexTurn: Identifiable, Equatable {
     let id: String
     let status: String
     let items: [CodexTurnItem]
+    let model: String?
+    let reasoningEffort: String?
 }
 
 struct CodexThreadDetail: Equatable {
     let threadID: String
     let turns: [CodexTurn]
+    let model: String?
+    let reasoningEffort: String?
 }
 
 protocol HostCredentialStore {
@@ -1232,6 +1263,8 @@ struct RemoteThreadRecord: Equatable, Identifiable {
     let updatedAt: Date
     let archived: Bool
     let cwd: String
+    let model: String?
+    let reasoningEffort: String?
 }
 
 struct AppServerModelDescriptor: Equatable, Identifiable {
@@ -1322,6 +1355,7 @@ final class AppServerClient: ObservableObject {
     private var hasReceivedMessageOnCurrentConnection = false
 
     private let requestTimeoutSeconds: TimeInterval = 30
+    private let overloadRetryMaxAttempts = 4
 
     init(session: URLSession = .shared) {
         self.session = session
@@ -1408,7 +1442,9 @@ final class AppServerClient: ObservableObject {
                 preview: thread.preview,
                 updatedAt: Date(timeIntervalSince1970: Double(thread.updatedAt)),
                 archived: archived ?? false,
-                cwd: thread.cwd
+                cwd: thread.cwd,
+                model: Self.nonEmpty(thread.model),
+                reasoningEffort: Self.normalizedReasoningEffort(thread.reasoningEffort)
             )
         }
     }
@@ -1421,38 +1457,64 @@ final class AppServerClient: ObservableObject {
 
         let result = try await self.request(method: "thread/read", params: params)
         let payload: ThreadReadResponsePayload = try self.decode(result, as: ThreadReadResponsePayload.self)
-        let detail = self.convertThread(payload.thread)
+        let detail = self.convertThread(
+            payload.thread,
+            modelOverride: payload.model,
+            reasoningEffortOverride: payload.reasoningEffort
+        )
         self.transcriptByThread[threadID] = Self.renderThread(detail)
         return detail
     }
 
     func threadStart(cwd: String, approvalPolicy: CodexApprovalPolicy, model: String?) async throws -> String {
-        var params: [String: JSONValue] = [
-            "cwd": .string(cwd),
-            "approvalPolicy": .string(approvalPolicy.rawValue),
-        ]
+        let trimmedModel = model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedModel = (trimmedModel?.isEmpty == false) ? trimmedModel : nil
 
-        if let model,
-           !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            params["model"] = .string(model)
+        func requestThreadStart(model: String?) async throws -> String {
+            var params: [String: JSONValue] = [
+                "cwd": .string(cwd),
+                "approvalPolicy": .string(approvalPolicy.rawValue),
+            ]
+            if let model {
+                params["model"] = .string(model)
+            }
+
+            let result = try await self.request(method: "thread/start", params: .object(params))
+            let payload: ThreadLifecycleResponsePayload = try self.decode(result, as: ThreadLifecycleResponsePayload.self)
+            return payload.thread.id
         }
 
-        let result = try await self.request(method: "thread/start", params: .object(params))
-        let payload: ThreadLifecycleResponsePayload = try self.decode(result, as: ThreadLifecycleResponsePayload.self)
-        return payload.thread.id
+        do {
+            return try await requestThreadStart(model: normalizedModel)
+        } catch {
+            guard normalizedModel != nil,
+                  Self.shouldRetryWithoutModel(error) else {
+                throw error
+            }
+            self.appendEvent("thread/start rejected model; retrying without model.")
+            return try await requestThreadStart(model: nil)
+        }
     }
 
-    func threadResume(threadID: String) async throws {
+    func threadResume(threadID: String) async throws -> CodexThreadDetail {
         let params: JSONValue = .object(["threadId": .string(threadID)])
-        _ = try await self.request(method: "thread/resume", params: params)
+        let result = try await self.request(method: "thread/resume", params: params)
+        let payload: ThreadResumeResponsePayload = try self.decode(result, as: ThreadResumeResponsePayload.self)
+        let detail = self.convertThread(
+            payload.thread,
+            modelOverride: payload.model,
+            reasoningEffortOverride: payload.reasoningEffort
+        )
+        self.transcriptByThread[threadID] = Self.renderThread(detail)
+        return detail
     }
 
     func threadArchive(threadID: String, archived: Bool) async throws {
         let params: JSONValue = .object([
             "threadId": .string(threadID),
-            "archived": .bool(archived),
         ])
-        _ = try await self.request(method: "thread/archive", params: params)
+        let method = archived ? "thread/archive" : "thread/unarchive"
+        _ = try await self.request(method: method, params: params)
     }
 
     @discardableResult
@@ -1462,30 +1524,62 @@ final class AppServerClient: ObservableObject {
         model: String?,
         effort: String?
     ) async throws -> String {
-        var params: [String: JSONValue] = [
-            "threadId": .string(threadID),
-            "input": .array([
-                .object([
-                    "type": .string("text"),
-                    "text": .string(inputText),
-                ])
-            ]),
-        ]
+        let trimmedModel = model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedModel = (trimmedModel?.isEmpty == false) ? trimmedModel : nil
+        let trimmedEffort = effort?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedEffort = (trimmedEffort?.isEmpty == false) ? trimmedEffort : nil
 
-        if let model,
-           !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            params["model"] = .string(model)
-        }
-        if let effort = effort?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !effort.isEmpty {
-            params["effort"] = .string(effort)
+        func requestTurnStart(model: String?, effort: String?) async throws -> String {
+            var params: [String: JSONValue] = [
+                "threadId": .string(threadID),
+                "input": .array([
+                    .object([
+                        "type": .string("text"),
+                        "text": .string(inputText),
+                    ])
+                ]),
+            ]
+
+            if let model {
+                params["model"] = .string(model)
+            }
+            if let effort {
+                params["effort"] = .string(effort)
+            }
+
+            let result = try await self.request(method: "turn/start", params: .object(params))
+            let payload: TurnStartResponsePayload = try self.decode(result, as: TurnStartResponsePayload.self)
+            self.activeTurnIDByThread[threadID] = payload.turn.id
+            self.turnStreamingPhaseByThread[threadID] = .thinking
+            return payload.turn.id
         }
 
-        let result = try await self.request(method: "turn/start", params: .object(params))
-        let payload: TurnStartResponsePayload = try self.decode(result, as: TurnStartResponsePayload.self)
-        self.activeTurnIDByThread[threadID] = payload.turn.id
-        self.turnStreamingPhaseByThread[threadID] = .thinking
-        return payload.turn.id
+        do {
+            return try await requestTurnStart(model: normalizedModel, effort: normalizedEffort)
+        } catch {
+            if normalizedEffort != nil,
+               Self.shouldRetryWithoutEffort(error) {
+                self.appendEvent("turn/start rejected effort; retrying without effort.")
+                do {
+                    return try await requestTurnStart(model: normalizedModel, effort: nil)
+                } catch {
+                    if normalizedModel != nil,
+                       Self.shouldRetryWithoutModel(error) {
+                        self.appendEvent("turn/start rejected model after effort fallback; retrying without model/effort.")
+                        return try await requestTurnStart(model: nil, effort: nil)
+                    }
+                    throw error
+                }
+            }
+
+            if normalizedModel != nil,
+               Self.shouldRetryWithoutModel(error) {
+                self.appendEvent("turn/start rejected model; retrying without model.")
+                return try await requestTurnStart(model: nil, effort: normalizedEffort)
+            }
+
+            throw error
+        }
     }
 
     func turnSteer(threadID: String, expectedTurnID: String, inputText: String) async throws {
@@ -1616,6 +1710,30 @@ final class AppServerClient: ObservableObject {
     }
 
     private func request(method: String, params: JSONValue?) async throws -> JSONValue {
+        var attempt = 0
+        while true {
+            do {
+                return try await self.requestOnce(method: method, params: params)
+            } catch let AppServerClientError.remote(code, message) where code == -32001 {
+                guard attempt < self.overloadRetryMaxAttempts - 1 else {
+                    throw AppServerClientError.remote(code: code, message: message)
+                }
+
+                let baseDelaySeconds = pow(2.0, Double(attempt)) * 0.25
+                let jitterSeconds = Double.random(in: 0...(baseDelaySeconds * 0.25))
+                let delaySeconds = baseDelaySeconds + jitterSeconds
+                self.appendEvent("Server overloaded; retrying \(method) in \(String(format: "%.2f", delaySeconds))s")
+
+                try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+                attempt += 1
+                continue
+            } catch {
+                throw error
+            }
+        }
+    }
+
+    private func requestOnce(method: String, params: JSONValue?) async throws -> JSONValue {
         guard self.webSocketTask != nil else {
             throw AppServerClientError.notConnected
         }
@@ -1840,7 +1958,7 @@ final class AppServerClient: ObservableObject {
             let reason = paramsObject["reason"]?.stringValue
             kind = .fileChange(reason: reason)
 
-        case "item/tool/requestUserInput":
+        case "tool/requestUserInput", "item/tool/requestUserInput":
             let questions = (paramsObject["questions"]?.arrayValue ?? []).compactMap { rawQuestion -> AppServerUserInputQuestion? in
                 guard let questionObject = rawQuestion.objectValue,
                       let questionID = questionObject["id"]?.stringValue
@@ -2100,6 +2218,29 @@ final class AppServerClient: ObservableObject {
         return raw.lowercased()
     }
 
+    private static func shouldRetryWithoutEffort(_ error: Error) -> Bool {
+        guard case let AppServerClientError.remote(code, message) = error else {
+            return false
+        }
+        let normalized = message.lowercased()
+        return code == -32602
+            || normalized.contains("invalid params")
+            || normalized.contains("reasoning")
+            || normalized.contains("effort")
+            || normalized.contains("unknown field")
+    }
+
+    private static func shouldRetryWithoutModel(_ error: Error) -> Bool {
+        guard case let AppServerClientError.remote(code, message) = error else {
+            return false
+        }
+        let normalized = message.lowercased()
+        return code == -32602
+            || normalized.contains("invalid params")
+            || normalized.contains("model")
+            || normalized.contains("unknown field")
+    }
+
     private func nonEmptyOrNil(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
@@ -2277,7 +2418,11 @@ final class AppServerClient: ObservableObject {
         return try JSONDecoder().decode(type, from: data)
     }
 
-    private func convertThread(_ thread: ThreadReadThreadPayload) -> CodexThreadDetail {
+    private func convertThread(
+        _ thread: ThreadReadThreadPayload,
+        modelOverride: String? = nil,
+        reasoningEffortOverride: String? = nil
+    ) -> CodexThreadDetail {
         let turns = thread.turns.map { turn in
             let items = turn.items.map { item -> CodexTurnItem in
                 switch item.type {
@@ -2332,10 +2477,25 @@ final class AppServerClient: ObservableObject {
                 }
             }
 
-            return CodexTurn(id: turn.id, status: turn.status, items: items)
+            return CodexTurn(
+                id: turn.id,
+                status: turn.status,
+                items: items,
+                model: Self.nonEmpty(turn.model),
+                reasoningEffort: Self.normalizedReasoningEffort(turn.reasoningEffort)
+            )
         }
 
-        return CodexThreadDetail(threadID: thread.id, turns: turns)
+        let resolvedThreadModel = Self.nonEmpty(modelOverride) ?? Self.nonEmpty(thread.model)
+        let resolvedThreadReasoningEffort = Self.normalizedReasoningEffort(reasoningEffortOverride)
+            ?? Self.normalizedReasoningEffort(thread.reasoningEffort)
+
+        return CodexThreadDetail(
+            threadID: thread.id,
+            turns: turns,
+            model: resolvedThreadModel,
+            reasoningEffort: resolvedThreadReasoningEffort
+        )
     }
 
     private static func renderThread(_ detail: CodexThreadDetail) -> String {
@@ -2504,6 +2664,31 @@ private struct ThreadListEntryPayload: Decodable {
     let preview: String
     let updatedAt: Int
     let cwd: String
+    let model: String?
+    let reasoningEffort: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case preview
+        case updatedAt
+        case cwd
+        case model
+        case reasoningEffort
+        case reasoningEffortSnake = "reasoning_effort"
+        case effort
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.preview = try container.decode(String.self, forKey: .preview)
+        self.updatedAt = try container.decode(Int.self, forKey: .updatedAt)
+        self.cwd = try container.decode(String.self, forKey: .cwd)
+        self.model = try container.decodeIfPresent(String.self, forKey: .model)
+        self.reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
+            ?? container.decodeIfPresent(String.self, forKey: .reasoningEffortSnake)
+            ?? container.decodeIfPresent(String.self, forKey: .effort)
+    }
 }
 
 private struct ThreadLifecycleResponsePayload: Decodable {
@@ -2524,17 +2709,103 @@ private struct TurnIDPayload: Decodable {
 
 private struct ThreadReadResponsePayload: Decodable {
     let thread: ThreadReadThreadPayload
+    let model: String?
+    let reasoningEffort: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case thread
+        case model
+        case reasoningEffort
+        case reasoningEffortSnake = "reasoning_effort"
+        case effort
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.thread = try container.decode(ThreadReadThreadPayload.self, forKey: .thread)
+        self.model = try container.decodeIfPresent(String.self, forKey: .model)
+        self.reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
+            ?? container.decodeIfPresent(String.self, forKey: .reasoningEffortSnake)
+            ?? container.decodeIfPresent(String.self, forKey: .effort)
+    }
+}
+
+private struct ThreadResumeResponsePayload: Decodable {
+    let thread: ThreadReadThreadPayload
+    let model: String?
+    let reasoningEffort: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case thread
+        case model
+        case reasoningEffort
+        case reasoningEffortSnake = "reasoning_effort"
+        case effort
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.thread = try container.decode(ThreadReadThreadPayload.self, forKey: .thread)
+        self.model = try container.decodeIfPresent(String.self, forKey: .model)
+        self.reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
+            ?? container.decodeIfPresent(String.self, forKey: .reasoningEffortSnake)
+            ?? container.decodeIfPresent(String.self, forKey: .effort)
+    }
 }
 
 private struct ThreadReadThreadPayload: Decodable {
     let id: String
     let turns: [ThreadReadTurnPayload]
+    let model: String?
+    let reasoningEffort: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case turns
+        case model
+        case reasoningEffort
+        case reasoningEffortSnake = "reasoning_effort"
+        case effort
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.turns = try container.decodeIfPresent([ThreadReadTurnPayload].self, forKey: .turns) ?? []
+        self.model = try container.decodeIfPresent(String.self, forKey: .model)
+        self.reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
+            ?? container.decodeIfPresent(String.self, forKey: .reasoningEffortSnake)
+            ?? container.decodeIfPresent(String.self, forKey: .effort)
+    }
 }
 
 private struct ThreadReadTurnPayload: Decodable {
     let id: String
     let status: String
     let items: [ThreadReadItemPayload]
+    let model: String?
+    let reasoningEffort: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case status
+        case items
+        case model
+        case reasoningEffort
+        case reasoningEffortSnake = "reasoning_effort"
+        case effort
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.status = try container.decode(String.self, forKey: .status)
+        self.items = try container.decodeIfPresent([ThreadReadItemPayload].self, forKey: .items) ?? []
+        self.model = try container.decodeIfPresent(String.self, forKey: .model)
+        self.reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
+            ?? container.decodeIfPresent(String.self, forKey: .reasoningEffortSnake)
+            ?? container.decodeIfPresent(String.self, forKey: .effort)
+    }
 }
 
 private struct ThreadReadItemPayload: Decodable {
@@ -4040,6 +4311,9 @@ struct SessionWorkbenchView: View {
         }
         .onChange(of: self.selectedWorkspaceID) {
             self.syncComposerControlsWithWorkspace()
+            if self.selectedWorkspace != nil {
+                self.refreshThreads()
+            }
         }
         .onChange(of: self.selectedComposerModel) {
             self.syncComposerReasoningWithModel()
@@ -4785,6 +5059,7 @@ struct SessionWorkbenchView: View {
         self.selectedThreadID = summary.threadID
         self.appState.hostSessionStore.selectProject(hostID: self.host.id, projectID: workspaceID)
         self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: summary.threadID)
+        self.applyComposerSelection(model: summary.model, reasoningEffort: summary.reasoningEffort)
         self.loadThread(summary.threadID)
         self.isMenuOpen = false
     }
@@ -4845,6 +5120,56 @@ struct SessionWorkbenchView: View {
         }
 
         self.selectedComposerReasoning = options[0].value
+    }
+
+    private func applyComposerSelection(model: String?, reasoningEffort: String?) {
+        let normalizedModel = model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedReasoning = reasoningEffort?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        guard (normalizedModel?.isEmpty == false) || (normalizedReasoning?.isEmpty == false) else {
+            return
+        }
+
+        if let normalizedModel,
+           !normalizedModel.isEmpty {
+            self.selectedComposerModel = normalizedModel
+        }
+
+        if let normalizedReasoning,
+           !normalizedReasoning.isEmpty {
+            self.selectedComposerReasoning = normalizedReasoning
+        }
+
+        self.syncComposerReasoningWithModel()
+    }
+
+    private func updateThreadBookmarkSettings(threadID: String, model: String?, reasoningEffort: String?) {
+        guard let selectedWorkspaceID else { return }
+        guard var summary = self.appState.threadBookmarkStore
+            .threads(for: selectedWorkspaceID)
+            .first(where: { $0.threadID == threadID }) else {
+            return
+        }
+
+        var didChange = false
+
+        if let normalizedModel = model?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !normalizedModel.isEmpty,
+           summary.model != normalizedModel {
+            summary.model = normalizedModel
+            didChange = true
+        }
+
+        if let normalizedReasoning = reasoningEffort?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+           !normalizedReasoning.isEmpty,
+           summary.reasoningEffort != normalizedReasoning {
+            summary.reasoningEffort = normalizedReasoning
+            didChange = true
+        }
+
+        if didChange {
+            self.appState.threadBookmarkStore.upsert(summary: summary)
+        }
     }
 
     private static func parseChatMessages(from transcript: String) -> [SessionChatMessage] {
@@ -5022,7 +5347,13 @@ struct SessionWorkbenchView: View {
 
                 let fetched = try await self.appState.appServerClient.threadList(archived: false, limit: 300)
                 let scoped = fetched.filter { $0.cwd == selectedWorkspace.remotePath }
+                let existingByThreadID = Dictionary(
+                    uniqueKeysWithValues: self.appState.threadBookmarkStore
+                        .threads(for: selectedWorkspace.id)
+                        .map { ($0.threadID, $0) }
+                )
                 let summaries = scoped.map { thread in
+                    let existing = existingByThreadID[thread.id]
                     CodexThreadSummary(
                         threadID: thread.id,
                         hostID: self.host.id,
@@ -5030,14 +5361,16 @@ struct SessionWorkbenchView: View {
                         preview: thread.preview,
                         updatedAt: thread.updatedAt,
                         archived: thread.archived,
-                        cwd: thread.cwd
+                        cwd: thread.cwd,
+                        model: thread.model ?? existing?.model,
+                        reasoningEffort: thread.reasoningEffort ?? existing?.reasoningEffort
                     )
                 }
 
                 self.appState.threadBookmarkStore.replaceThreads(
                     for: selectedWorkspace.id,
                     hostID: self.host.id,
-                    with: summaries
+                    with: summaries as! [CodexThreadSummary]
                 )
 
                 let selectedWorkspaceThreads = self.threads(for: selectedWorkspace.id)
@@ -5098,6 +5431,8 @@ struct SessionWorkbenchView: View {
                 self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: threadID)
 
                 self.appState.appServerClient.appendLocalEcho(trimmedPrompt, to: threadID)
+                var selectedModelForThread = self.selectedThreadSummary?.model
+                var selectedReasoningForThread = self.selectedThreadSummary?.reasoningEffort
                 if let activeTurnID = self.appState.appServerClient.activeTurnID(for: threadID) {
                     try await self.appState.appServerClient.turnSteer(
                         threadID: threadID,
@@ -5111,6 +5446,8 @@ struct SessionWorkbenchView: View {
                         model: self.composerModelForRequest,
                         effort: self.selectedComposerReasoning
                     )
+                    selectedModelForThread = self.composerModelForRequest
+                    selectedReasoningForThread = self.selectedComposerReasoning
                 }
 
                 self.appState.threadBookmarkStore.upsert(
@@ -5121,7 +5458,9 @@ struct SessionWorkbenchView: View {
                         preview: trimmedPrompt,
                         updatedAt: Date(),
                         archived: false,
-                        cwd: selectedWorkspace.remotePath
+                        cwd: selectedWorkspace.remotePath,
+                        model: selectedModelForThread,
+                        reasoningEffort: selectedReasoningForThread
                     )
                 )
 
@@ -5206,7 +5545,25 @@ struct SessionWorkbenchView: View {
         }
         Task {
             do {
-                _ = try await self.appState.appServerClient.threadRead(threadID: threadID)
+                let detail: CodexThreadDetail
+                do {
+                    detail = try await self.appState.appServerClient.threadResume(threadID: threadID)
+                } catch {
+                    detail = try await self.appState.appServerClient.threadRead(threadID: threadID)
+                }
+
+                let latestTurnModel = detail.turns.compactMap(\.model).last
+                let latestTurnReasoning = detail.turns.compactMap(\.reasoningEffort).last
+                let selectedSummary = self.selectedThreadSummary
+                let resolvedModel = detail.model ?? latestTurnModel ?? selectedSummary?.model
+                let resolvedReasoning = detail.reasoningEffort ?? latestTurnReasoning ?? selectedSummary?.reasoningEffort
+
+                self.applyComposerSelection(model: resolvedModel, reasoningEffort: resolvedReasoning)
+                self.updateThreadBookmarkSettings(
+                    threadID: threadID,
+                    model: resolvedModel,
+                    reasoningEffort: resolvedReasoning
+                )
             } catch {
                 self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
             }

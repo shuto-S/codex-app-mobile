@@ -286,6 +286,59 @@ final class CodexAppMobileTests: XCTestCase {
         XCTAssertEqual(summary.hostID.uuidString.lowercased(), "11111111-2222-3333-4444-555555555555")
     }
 
+    func testThreadSummaryDecodesModelAndReasoningEffort() throws {
+        let payload = """
+        {
+          "threadID":"thread-2",
+          "hostID":"11111111-2222-3333-4444-555555555555",
+          "workspaceID":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+          "preview":"hello",
+          "updatedAt":"2026-02-18T00:00:00Z",
+          "archived":false,
+          "cwd":"/tmp/project",
+          "model":" gpt-5.3-codex ",
+          "reasoning_effort":"HIGH"
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let summary = try decoder.decode(CodexThreadSummary.self, from: Data(payload.utf8))
+        XCTAssertEqual(summary.model, "gpt-5.3-codex")
+        XCTAssertEqual(summary.reasoningEffort, "high")
+    }
+
+    @MainActor
+    func testThreadBookmarkStorePersistsModelAndReasoningEffort() {
+        let suiteName = "ThreadBookmarkStoreSettings.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Failed to create temporary UserDefaults suite.")
+            return
+        }
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let store = ThreadBookmarkStore(defaults: defaults)
+        let workspaceID = UUID()
+        let summary = CodexThreadSummary(
+            threadID: "thread-3",
+            hostID: UUID(),
+            workspaceID: workspaceID,
+            preview: "preview",
+            updatedAt: Date(),
+            archived: false,
+            cwd: "/tmp/project",
+            model: "gpt-5.3-codex",
+            reasoningEffort: "medium"
+        )
+        store.upsert(summary: summary)
+
+        let reloaded = ThreadBookmarkStore(defaults: defaults)
+        let persisted = reloaded.threads(for: workspaceID).first(where: { $0.threadID == "thread-3" })
+        XCTAssertEqual(persisted?.model, "gpt-5.3-codex")
+        XCTAssertEqual(persisted?.reasoningEffort, "medium")
+    }
+
     @MainActor
     func testHostSessionStorePersistsSelections() {
         let suiteName = "HostSessionStore.\(UUID().uuidString)"
