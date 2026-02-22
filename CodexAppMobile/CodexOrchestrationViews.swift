@@ -1251,7 +1251,27 @@ struct SessionWorkbenchView: View {
             && self.selectedWorkspace != nil
     }
 
+    private var hasVisibleAssistantReplyForLatestPrompt: Bool {
+        let lastUserIndex = self.parsedChatMessages.lastIndex(where: { $0.role == .user })
+        let lastAssistantIndex = self.parsedChatMessages.lastIndex { message in
+            guard message.role == .assistant else { return false }
+            return !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        guard let lastAssistantIndex else {
+            return false
+        }
+        guard let lastUserIndex else {
+            return true
+        }
+        return lastAssistantIndex > lastUserIndex
+    }
+
     private var assistantStreamingPhase: AssistantStreamingPhase? {
+        if self.hasVisibleAssistantReplyForLatestPrompt {
+            return nil
+        }
+
         if self.isSSHTransport {
             return self.isRunningSSHAction ? .responding : nil
         }
