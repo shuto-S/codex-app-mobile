@@ -4721,14 +4721,19 @@ struct SessionWorkbenchView: View {
     }
 
     private func markdownAttributedText(_ text: String) -> AttributedString {
+        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+        let hasListSyntax = normalized.range(
+            of: #"(?m)^\s{0,3}([-+*]|\d+[.)])\s+"#,
+            options: .regularExpression
+        ) != nil
         let options = AttributedString.MarkdownParsingOptions(
-            interpretedSyntax: .full,
+            interpretedSyntax: hasListSyntax ? .inlineOnlyPreservingWhitespace : .full,
             failurePolicy: .returnPartiallyParsedIfPossible
         )
-        if let attributed = try? AttributedString(markdown: text, options: options) {
+        if let attributed = try? AttributedString(markdown: normalized, options: options) {
             return attributed
         }
-        return AttributedString(text)
+        return AttributedString(normalized)
     }
 
     private var sideMenu: some View {
