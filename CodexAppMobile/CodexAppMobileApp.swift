@@ -51,6 +51,10 @@ struct CodexAppMobileApp: App {
         self.appState.appServerClient.onTurnCompleted = { [weak appState] threadID, _, responseSnippet in
             guard let appState else { return }
 
+            // Skip notification if this thread is currently selected (user is viewing it).
+            let isCurrentlyOpen = appState.hostSessionStore.sessions.contains { $0.selectedThreadID == threadID }
+            guard !isCurrentlyOpen else { return }
+
             // Resolve a human-readable title from the thread bookmark.
             let threadTitle: String = {
                 if let summary = appState.threadBookmarkStore.bookmarks
