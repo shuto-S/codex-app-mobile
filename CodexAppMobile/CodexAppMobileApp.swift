@@ -183,19 +183,16 @@ private struct LaunchSplashView: View {
                         .frame(width: 90, height: 90)
                         .scaleEffect(self.ringScale)
 
-                    Image(systemName: "terminal.fill")
-                        .font(.system(size: 28, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .padding(20)
-                        .background(
-                            Circle()
-                                .fill(Color.white.opacity(0.16))
-                        )
+                    Image("SplashIcon")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 68, height: 68)
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .scaleEffect(self.iconScale)
                         .opacity(self.iconOpacity)
                 }
 
-                Text("Codex Mobile")
+                Text("shot star")
                     .font(.headline)
                     .foregroundStyle(Color.white.opacity(self.iconOpacity))
                     .offset(y: self.titleOffset)

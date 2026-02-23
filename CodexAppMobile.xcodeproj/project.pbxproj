@@ -14,6 +14,7 @@
 		A1B2C3D4E5F6010000000205 /* NIOTransportServices in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F6010000000802 /* NIOTransportServices */; };
 		A1B2C3D4E5F6010000000206 /* CodexOrchestration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000106 /* CodexOrchestration.swift */; };
 		A1B2C3D4E5F6010000000207 /* CodexOrchestrationViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000107 /* CodexOrchestrationViews.swift */; };
+		A1B2C3D4E5F6010000000208 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000108 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -34,6 +35,7 @@
 		A1B2C3D4E5F6010000000105 /* CodexAppMobileTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = CodexAppMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1B2C3D4E5F6010000000106 /* CodexOrchestration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOrchestration.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6010000000107 /* CodexOrchestrationViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOrchestrationViews.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6010000000108 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -81,6 +83,7 @@
 				A1B2C3D4E5F6010000000102 /* ContentView.swift */,
 				A1B2C3D4E5F6010000000106 /* CodexOrchestration.swift */,
 				A1B2C3D4E5F6010000000107 /* CodexOrchestrationViews.swift */,
+				A1B2C3D4E5F6010000000108 /* Assets.xcassets */,
 			);
 			path = CodexAppMobile;
 			sourceTree = "<group>";
@@ -184,6 +187,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1B2C3D4E5F6010000000208 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -310,6 +314,7 @@
 		A1B2C3D4E5F6010000000503 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -333,6 +338,7 @@
 		A1B2C3D4E5F6010000000504 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
