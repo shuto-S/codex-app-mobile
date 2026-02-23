@@ -1677,11 +1677,9 @@ struct SessionWorkbenchView: View {
 
                     if self.selectedWorkspace == nil {
                         self.chatPlaceholder("Create or select a project.")
-                    } else if self.selectedThreadID == nil {
-                        self.chatPlaceholder("Ready for a new thread. Send a prompt to start.")
-                    } else if self.parsedChatMessages.isEmpty {
+                    } else if self.selectedThreadID != nil && self.parsedChatMessages.isEmpty {
                         self.chatPlaceholder("No messages yet.")
-                    } else {
+                    } else if self.selectedThreadID != nil {
                         ForEach(self.parsedChatMessages) { message in
                             self.chatMessageRow(message)
                         }
@@ -2118,16 +2116,9 @@ struct SessionWorkbenchView: View {
                                             self.selectThread(summary, workspaceID: selectedWorkspaceID)
                                         }
                                     } label: {
-                                        HStack(spacing: 9) {
-                                            Circle()
-                                                .fill(
-                                                    self.selectedThreadID == summary.threadID
-                                                    ? Color.accentColor
-                                                    : Color.white.opacity(0.35)
-                                                )
-                                                .frame(width: 6, height: 6)
+                                        HStack(spacing: 8) {
                                             Text(summary.preview.isEmpty ? "New Thread" : summary.preview)
-                                                .font(.subheadline)
+                                                .font(.subheadline.weight(self.selectedThreadID == summary.threadID ? .semibold : .regular))
                                                 .lineLimit(1)
                                             Spacer(minLength: 8)
                                         }
@@ -2136,29 +2127,13 @@ struct SessionWorkbenchView: View {
                                             ? Color.accentColor
                                             : Color.primary
                                         )
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 10)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 8)
                                         .background {
-                                            self.glassCardBackground(
-                                                cornerRadius: 12,
-                                                tint: self.selectedThreadID == summary.threadID
-                                                ? self.accentGlassTint(light: 0.20, dark: 0.16)
-                                                : self.glassWhiteTint(light: 0.08, dark: 0.05)
-                                            )
-                                        }
-                                        .overlay(alignment: .leading) {
-                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                                .fill(Color.clear)
-                                                .overlay(alignment: .leading) {
-                                                    Rectangle()
-                                                        .fill(
-                                                            self.selectedThreadID == summary.threadID
-                                                            ? Color.accentColor
-                                                            : Color.white.opacity(0.16)
-                                                        )
-                                                        .frame(width: 2)
-                                                        .padding(.vertical, 8)
-                                                }
+                                            if self.selectedThreadID == summary.threadID {
+                                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                    .fill(Color.accentColor.opacity(self.isDarkMode ? 0.18 : 0.12))
+                                            }
                                         }
                                     }
                                     .buttonStyle(.plain)
