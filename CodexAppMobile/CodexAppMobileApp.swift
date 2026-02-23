@@ -1,14 +1,114 @@
 import SwiftUI
+import UserNotifications
+
+/// Allows notification banners to appear even while the app is in the foreground.
+private class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
+    }
+}
 
 @main
 struct CodexAppMobileApp: App {
     @StateObject private var appState = AppState()
+    @Environment(\.scenePhase) private var scenePhase
+
+    private let notificationDelegate = NotificationDelegate()
+
+    init() {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        center.delegate = notificationDelegate
+    }
 
     var body: some Scene {
         WindowGroup {
             AppRootView()
                 .environmentObject(self.appState)
+                .onAppear {
+                    self.installTurnCompletionNotifier()
+                }
         }
+        .onChange(of: self.scenePhase) {
+            switch self.scenePhase {
+            case .background:
+                self.appState.appServerClient.beginBackgroundProcessingIfNeeded()
+            case .active:
+                self.appState.appServerClient.endBackgroundProcessing()
+            default:
+                break
+            }
+        }
+    }
+
+    private func installTurnCompletionNotifier() {
+        guard self.appState.appServerClient.onTurnCompleted == nil else { return }
+
+        self.appState.appServerClient.onTurnCompleted = { [weak appState] threadID, _, responseSnippet in
+            guard let appState else { return }
+
+            // Resolve a human-readable title from the thread bookmark.
+            let threadTitle: String = {
+                if let summary = appState.threadBookmarkStore.bookmarks
+                    .first(where: { $0.threadID == threadID }) {
+                    let preview = summary.preview.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return preview.isEmpty ? "Thread \(threadID.prefix(8))" : preview
+                }
+                return "Thread \(threadID.prefix(8))"
+            }()
+
+            let body = responseSnippet.isEmpty
+                ? "Turn completed."
+                : Self.stripMarkdown(responseSnippet)
+
+            let content = UNMutableNotificationContent()
+            content.title = threadTitle
+            content.body = body
+            content.sound = .default
+
+            let request = UNNotificationRequest(
+                identifier: "turnCompleted-\(threadID)-\(UUID().uuidString)",
+                content: content,
+                trigger: nil  // deliver immediately
+            )
+            UNUserNotificationCenter.current().add(request)
+        }
+    }
+
+    // MARK: - Markdown stripping
+
+    /// Remove common Markdown formatting so the notification reads as plain text.
+    private static func stripMarkdown(_ text: String) -> String {
+        var s = text
+        // Fenced code blocks (``` ... ```)
+        s = s.replacingOccurrences(
+            of: "```[\\s\\S]*?```",
+            with: "",
+            options: .regularExpression
+        )
+        // Inline code
+        s = s.replacingOccurrences(of: "`([^`]+)`", with: "$1", options: .regularExpression)
+        // Bold / italic (*** / ** / * / ___ / __ / _)
+        s = s.replacingOccurrences(of: "\\*{1,3}(.+?)\\*{1,3}", with: "$1", options: .regularExpression)
+        s = s.replacingOccurrences(of: "_{1,3}(.+?)_{1,3}", with: "$1", options: .regularExpression)
+        // Strikethrough
+        s = s.replacingOccurrences(of: "~~(.+?)~~", with: "$1", options: .regularExpression)
+        // Headers (# ... ######)
+        s = s.replacingOccurrences(of: "(?m)^#{1,6}\\s+", with: "", options: .regularExpression)
+        // Links [text](url)
+        s = s.replacingOccurrences(of: "\\[([^\\]]+)\\]\\([^)]+\\)", with: "$1", options: .regularExpression)
+        // Images ![alt](url)
+        s = s.replacingOccurrences(of: "!\\[([^\\]]*)\\]\\([^)]+\\)", with: "$1", options: .regularExpression)
+        // Bullet / numbered list markers
+        s = s.replacingOccurrences(of: "(?m)^\\s*[-*+]\\s+", with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: "(?m)^\\s*\\d+\\.\\s+", with: "", options: .regularExpression)
+        // Collapse multiple blank lines
+        s = s.replacingOccurrences(of: "\\n{3,}", with: "\n\n", options: .regularExpression)
+        return s.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

@@ -1348,6 +1348,10 @@ final class AppServerClient: ObservableObject {
         case responding
     }
 
+    /// Called on the main actor when a turn completes.
+    /// Parameters: threadID, status, response snippet (first ~200 chars of the transcript delta).
+    var onTurnCompleted: ((_ threadID: String, _ status: String, _ responseSnippet: String) -> Void)?
+
     @Published private(set) var state: State = .disconnected
     @Published private(set) var lastErrorMessage = ""
     @Published private(set) var connectedEndpoint = ""
@@ -1374,12 +1378,50 @@ final class AppServerClient: ObservableObject {
     private var autoReconnectEnabled = false
     private var lastHost: RemoteHost?
     private var hasReceivedMessageOnCurrentConnection = false
+    /// Tracks the transcript snapshot before a turn starts so we can extract the response delta.
+    private var transcriptSnapshotBeforeTurn: [String: String] = [:]
 
     private let requestTimeoutSeconds: TimeInterval = 30
     private let overloadRetryMaxAttempts = 4
 
+    #if canImport(UIKit)
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+    #endif
+
     init(session: URLSession = .shared) {
         self.session = session
+    }
+
+    /// Request extended background execution while active turns are in progress.
+    /// Call when the app transitions to background and there are pending turns.
+    func beginBackgroundProcessingIfNeeded() {
+        #if canImport(UIKit)
+        guard self.backgroundTaskID == .invalid,
+              !self.activeTurnIDByThread.isEmpty else { return }
+        self.backgroundTaskID = UIApplication.shared.beginBackgroundTask(
+            withName: "CodexTurnCompletion"
+        ) { [weak self] in
+            self?.endBackgroundProcessing()
+        }
+        #endif
+    }
+
+    /// End the extended background execution request.
+    func endBackgroundProcessing() {
+        #if canImport(UIKit)
+        guard self.backgroundTaskID != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(self.backgroundTaskID)
+        self.backgroundTaskID = .invalid
+        #endif
+    }
+
+    /// End background task if no active turns remain.
+    private func endBackgroundProcessingIfIdle() {
+        #if canImport(UIKit)
+        if self.activeTurnIDByThread.isEmpty {
+            self.endBackgroundProcessing()
+        }
+        #endif
     }
 
     func connect(to host: RemoteHost) async throws {
@@ -1396,6 +1438,7 @@ final class AppServerClient: ObservableObject {
         self.availableModels = []
         self.state = .disconnected
         self.connectedEndpoint = ""
+        self.endBackgroundProcessing()
     }
 
     func appendLocalEcho(_ text: String, to threadID: String) {
@@ -1628,6 +1671,7 @@ final class AppServerClient: ObservableObject {
             self.activeTurnIDByThread.removeValue(forKey: threadID)
         }
         self.turnStreamingPhaseByThread.removeValue(forKey: threadID)
+        self.endBackgroundProcessingIfIdle()
     }
 
     func respondCommandApproval(
@@ -1929,6 +1973,7 @@ final class AppServerClient: ObservableObject {
                 if self.turnStreamingPhaseByThread[threadID] != .responding {
                     self.turnStreamingPhaseByThread[threadID] = .thinking
                 }
+                self.transcriptSnapshotBeforeTurn[threadID] = self.transcriptByThread[threadID] ?? ""
                 self.appendEvent("Turn started for \(threadID)")
             }
 
@@ -1937,8 +1982,19 @@ final class AppServerClient: ObservableObject {
                let turn = paramsObject["turn"]?.objectValue,
                let status = turn["status"]?.stringValue {
                 self.appendEvent("Turn completed [\(status)] for \(threadID)")
+
+                let fullTranscript = self.transcriptByThread[threadID] ?? ""
+                let before = self.transcriptSnapshotBeforeTurn.removeValue(forKey: threadID) ?? ""
+                let responseDelta = String(fullTranscript.dropFirst(before.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let snippet = responseDelta.count > 200
+                    ? String(responseDelta.prefix(200)) + "…"
+                    : responseDelta
+                self.onTurnCompleted?(threadID, status, snippet)
+
                 self.activeTurnIDByThread.removeValue(forKey: threadID)
                 self.turnStreamingPhaseByThread.removeValue(forKey: threadID)
+                self.endBackgroundProcessingIfIdle()
             }
 
         case "thread/started":
@@ -2028,6 +2084,7 @@ final class AppServerClient: ObservableObject {
         self.activeTurnIDByThread.removeAll()
         self.turnStreamingPhaseByThread.removeAll()
         self.teardownConnection(closeCode: .abnormalClosure)
+        self.endBackgroundProcessing()
 
         guard shouldAttemptReconnect,
               self.autoReconnectEnabled,
