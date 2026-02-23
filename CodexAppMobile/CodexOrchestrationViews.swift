@@ -1175,6 +1175,7 @@ struct SessionWorkbenchView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
 
     let host: RemoteHost
 
@@ -1522,6 +1523,14 @@ struct SessionWorkbenchView: View {
         }
         .onChange(of: self.selectedComposerModel) {
             self.syncComposerReasoningWithModel()
+        }
+        .onChange(of: self.scenePhase) {
+            if self.scenePhase == .active, self.selectedWorkspace != nil {
+                self.refreshThreads()
+                if let threadID = self.selectedThreadID {
+                    self.loadThread(threadID)
+                }
+            }
         }
         .onChange(of: self.appState.appServerClient.availableModels) {
             self.syncComposerControlsWithWorkspace()
