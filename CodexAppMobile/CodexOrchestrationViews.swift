@@ -1164,6 +1164,7 @@ private struct SessionChatMessage: Identifiable, Equatable {
     let id: String
     let role: SessionChatRole
     let text: String
+    let isProgressDetail: Bool
 }
 
 enum CommandPaletteRow: Identifiable, Equatable {
@@ -1251,6 +1252,18 @@ struct SessionWorkbenchView: View {
         let updatedAt: Date
     }
 
+    private struct ComposerTokenBadge: Identifiable, Equatable {
+        enum Kind: Equatable {
+            case mcp
+            case skill
+        }
+
+        let id: String
+        let kind: Kind
+        let token: String
+        let title: String
+    }
+
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
@@ -1289,6 +1302,7 @@ struct SessionWorkbenchView: View {
     @State private var statusSnapshot: StatusPanelSnapshot?
     @State private var composerInfoMessage: ComposerInfoMessage?
     @State private var composerInfoDismissTask: Task<Void, Never>?
+    @State private var pendingPromptDispatchCount = 0
     @FocusState private var isPromptFieldFocused: Bool
     @FocusState private var isReviewBaseBranchFieldFocused: Bool
 
@@ -1354,6 +1368,10 @@ struct SessionWorkbenchView: View {
         self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var composerTokenBadges: [ComposerTokenBadge] {
+        Self.parseComposerTokenBadges(from: self.prompt)
+    }
+
     private var canSendPrompt: Bool {
         !self.isPromptEmpty
             && !self.isRunningSSHAction
@@ -1377,6 +1395,10 @@ struct SessionWorkbenchView: View {
     }
 
     private var assistantStreamingPhase: AssistantStreamingPhase? {
+        if self.isAwaitingPromptDispatch {
+            return .thinking
+        }
+
         if self.hasVisibleAssistantReplyForLatestPrompt {
             return nil
         }
@@ -1553,6 +1575,18 @@ struct SessionWorkbenchView: View {
             return false
         }
         let normalizedModeID = modeID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedPlanID = self.planCollaborationModeID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalizedModeID == "plan" || normalizedModeID == normalizedPlanID
+    }
+
+    private var isAwaitingPromptDispatch: Bool {
+        self.pendingPromptDispatchCount > 0
+    }
+
+    private func isPlanCollaborationMode(_ modeID: String?) -> Bool {
+        guard let modeID else { return false }
+        let normalizedModeID = modeID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedModeID.isEmpty else { return false }
         let normalizedPlanID = self.planCollaborationModeID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return normalizedModeID == "plan" || normalizedModeID == normalizedPlanID
     }
@@ -2715,6 +2749,18 @@ struct SessionWorkbenchView: View {
                     .accessibilityLabel("Disable Plan Mode")
                 }
 
+                if !self.composerTokenBadges.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(self.composerTokenBadges) { badge in
+                                self.composerTokenBadgeChip(badge)
+                            }
+                        }
+                        .padding(.horizontal, 2)
+                    }
+                    .frame(height: 28)
+                }
+
                 HStack(alignment: .bottom, spacing: 10) {
                     ZStack(alignment: .leading) {
                         if self.prompt.isEmpty {
@@ -2731,6 +2777,7 @@ struct SessionWorkbenchView: View {
                             .focused(self.$isPromptFieldFocused)
                             .foregroundStyle(Color.white)
                             .tint(Color.white)
+                            .font(.body)
                             .frame(minHeight: 36)
                             .disabled(isInactive)
                             .opacity(isInactive ? 0.72 : 1)
@@ -2842,9 +2889,13 @@ struct SessionWorkbenchView: View {
     @ViewBuilder
     private func chatMessageRow(_ message: SessionChatMessage) -> some View {
         if message.role == .assistant {
+            let assistantForeground = message.isProgressDetail
+                ? Color.white.opacity(0.62)
+                : Color.white
+            let assistantFont: Font = message.isProgressDetail ? .footnote : .body
             Text(self.markdownAttributedText(message.text))
-                .font(.body)
-                .foregroundStyle(Color.white)
+                .font(assistantFont)
+                .foregroundStyle(assistantForeground)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
                 .tint(Color.blue.opacity(0.94))
@@ -3342,6 +3393,7 @@ struct SessionWorkbenchView: View {
 
         var messages: [SessionChatMessage] = []
         var currentRole: SessionChatRole?
+        var currentIsProgressDetail = false
         var buffer: [String] = []
 
         func flushCurrent() {
@@ -3352,7 +3404,8 @@ struct SessionWorkbenchView: View {
                 SessionChatMessage(
                     id: "msg-\(messages.count)",
                     role: currentRole,
-                    text: text
+                    text: text,
+                    isProgressDetail: currentIsProgressDetail
                 )
             )
         }
@@ -3361,6 +3414,7 @@ struct SessionWorkbenchView: View {
             if line.hasPrefix("=== Turn ") {
                 flushCurrent()
                 currentRole = nil
+                currentIsProgressDetail = false
                 buffer = []
                 continue
             }
@@ -3368,6 +3422,7 @@ struct SessionWorkbenchView: View {
             if line.hasPrefix("User: ") {
                 flushCurrent()
                 currentRole = .user
+                currentIsProgressDetail = false
                 buffer = [String(line.dropFirst("User: ".count))]
                 continue
             }
@@ -3375,6 +3430,7 @@ struct SessionWorkbenchView: View {
             if line.hasPrefix("Assistant: ") {
                 flushCurrent()
                 currentRole = .assistant
+                currentIsProgressDetail = false
                 buffer = [String(line.dropFirst("Assistant: ".count))]
                 continue
             }
@@ -3385,8 +3441,9 @@ struct SessionWorkbenchView: View {
                 || line.hasPrefix("File change ")
                 || line.hasPrefix("Item: ") {
                 flushCurrent()
-                currentRole = nil
-                buffer = []
+                currentRole = .assistant
+                currentIsProgressDetail = true
+                buffer = [line]
                 continue
             }
 
@@ -3542,6 +3599,7 @@ struct SessionWorkbenchView: View {
     }
 
     private func sendPrompt(forceNewThread: Bool) {
+        let originalPrompt = self.prompt
         let trimmedPrompt = self.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else { return }
         guard let selectedWorkspace else {
@@ -3561,7 +3619,19 @@ struct SessionWorkbenchView: View {
             return
         }
 
+        let collaborationModeIDForRequest = self.composerCollaborationModeIDForRequest
+        let shouldConsumePlanModeAfterSend = self.isPlanCollaborationMode(collaborationModeIDForRequest)
+        if shouldConsumePlanModeAfterSend {
+            self.consumePlanModeAfterSend()
+        }
+
+        self.prompt = ""
+        self.pendingPromptDispatchCount += 1
+
         Task {
+            defer {
+                self.pendingPromptDispatchCount = max(0, self.pendingPromptDispatchCount - 1)
+            }
             do {
                 if self.appState.appServerClient.state != .connected {
                     try await self.appState.appServerClient.connect(to: self.host)
@@ -3584,7 +3654,6 @@ struct SessionWorkbenchView: View {
                 self.selectedThreadID = threadID
                 self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: threadID)
 
-                self.appState.appServerClient.appendLocalEcho(trimmedPrompt, to: threadID)
                 var selectedModelForThread = self.selectedThreadSummary?.model
                 var selectedReasoningForThread = self.selectedThreadSummary?.reasoningEffort
                 if let activeTurnID = self.appState.appServerClient.activeTurnID(for: threadID) {
@@ -3599,11 +3668,13 @@ struct SessionWorkbenchView: View {
                         inputText: trimmedPrompt,
                         model: self.composerModelForRequest,
                         effort: self.selectedComposerReasoning,
-                        collaborationModeID: self.composerCollaborationModeIDForRequest
+                        collaborationModeID: collaborationModeIDForRequest
                     )
                     selectedModelForThread = self.composerModelForRequest
                     selectedReasoningForThread = self.selectedComposerReasoning
                 }
+
+                self.appState.appServerClient.appendLocalEcho(trimmedPrompt, to: threadID)
 
                 self.appState.threadBookmarkStore.upsert(
                     summary: CodexThreadSummary(
@@ -3618,10 +3689,14 @@ struct SessionWorkbenchView: View {
                         reasoningEffort: selectedReasoningForThread
                     )
                 )
-
-                self.prompt = ""
             } catch {
-                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+                let message = self.appState.appServerClient.userFacingMessage(for: error)
+                self.localErrorMessage = message
+                self.showComposerInfo(message, tone: .error, autoDismissAfter: 4.0)
+                if self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    self.prompt = originalPrompt
+                    self.isPromptFieldFocused = true
+                }
             }
         }
     }
@@ -3882,6 +3957,73 @@ struct SessionWorkbenchView: View {
         self.isPromptFieldFocused = true
     }
 
+    @ViewBuilder
+    private func composerTokenBadgeChip(_ badge: ComposerTokenBadge) -> some View {
+        let icon = badge.kind == .mcp ? "shippingbox" : "sparkles"
+        let background = badge.kind == .mcp ? Color.cyan.opacity(0.20) : Color.green.opacity(0.20)
+        let border = badge.kind == .mcp ? Color.cyan.opacity(0.45) : Color.green.opacity(0.45)
+
+        Label(badge.title, systemImage: icon)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(Color.white.opacity(0.94))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(background, in: Capsule(style: .continuous))
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(border, lineWidth: 0.9)
+            )
+            .accessibilityLabel("Composer token \(badge.token)")
+    }
+
+    private static func parseComposerTokenBadges(from prompt: String) -> [ComposerTokenBadge] {
+        guard !prompt.isEmpty else { return [] }
+
+        let fullRange = NSRange(prompt.startIndex..<prompt.endIndex, in: prompt)
+        var rows: [(location: Int, badge: ComposerTokenBadge)] = []
+
+        if let mcpRegex = try? NSRegularExpression(pattern: #"/mcp(?:\s+[^\s\n]+)?"#, options: [.caseInsensitive]) {
+            for match in mcpRegex.matches(in: prompt, options: [], range: fullRange) {
+                guard let matchRange = Range(match.range, in: prompt) else { continue }
+                let token = String(prompt[matchRange])
+                let normalized = token.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !normalized.isEmpty else { continue }
+                let title = normalized.replacingOccurrences(of: "/mcp", with: "MCP", options: [.caseInsensitive])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let badge = ComposerTokenBadge(
+                    id: "mcp-\(match.range.location)-\(normalized)",
+                    kind: .mcp,
+                    token: normalized,
+                    title: title.isEmpty ? "MCP" : title
+                )
+                rows.append((match.range.location, badge))
+            }
+        }
+
+        if let skillRegex = try? NSRegularExpression(pattern: #"\$[^\s\n]+"#, options: []) {
+            for match in skillRegex.matches(in: prompt, options: [], range: fullRange) {
+                guard let matchRange = Range(match.range, in: prompt) else { continue }
+                let token = String(prompt[matchRange])
+                let normalized = token.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !normalized.isEmpty else { continue }
+                let skillName = String(normalized.dropFirst())
+                let badge = ComposerTokenBadge(
+                    id: "skill-\(match.range.location)-\(normalized)",
+                    kind: .skill,
+                    token: normalized,
+                    title: skillName.isEmpty ? "Skill" : "Skill \(skillName)"
+                )
+                rows.append((match.range.location, badge))
+            }
+        }
+
+        return rows
+            .sorted { lhs, rhs in lhs.location < rhs.location }
+            .map(\.badge)
+    }
+
     private func executeSlashCommand(_ command: AppServerSlashCommandDescriptor) {
         guard !self.isSSHTransport else {
             self.localErrorMessage = "Slash commands are only available in App Server mode."
@@ -4046,6 +4188,12 @@ struct SessionWorkbenchView: View {
         self.composerCollaborationModeID = ""
         self.shouldPresentNextUserInputPanelAfterPlan = false
         self.showComposerInfo("Plan mode disabled.", tone: .status)
+    }
+
+    private func consumePlanModeAfterSend() {
+        guard self.isPlanModeEnabled else { return }
+        // Keep pending user-input auto-presentation armed for the already-started plan turn.
+        self.composerCollaborationModeID = ""
     }
 
     private func sendPromptViaSSH(

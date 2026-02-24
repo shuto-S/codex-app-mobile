@@ -1477,6 +1477,7 @@ final class AppServerClient: ObservableObject {
     private var autoReconnectEnabled = false
     private var lastHost: RemoteHost?
     private var hasReceivedMessageOnCurrentConnection = false
+    private var streamedItemPrefixKeys: Set<String> = []
     /// Tracks the transcript snapshot before a turn starts so we can extract the response delta.
     private var transcriptSnapshotBeforeTurn: [String: String] = [:]
 
@@ -1534,6 +1535,7 @@ final class AppServerClient: ObservableObject {
         self.teardownConnection(closeCode: .goingAway)
         self.activeTurnIDByThread.removeAll()
         self.turnStreamingPhaseByThread.removeAll()
+        self.streamedItemPrefixKeys.removeAll()
         self.availableModels = []
         self.availableCollaborationModes = []
         self.mcpServers = []
@@ -2022,6 +2024,7 @@ final class AppServerClient: ObservableObject {
         self.availableApps = []
         self.availableSlashCommands = []
         self.turnStreamingPhaseByThread.removeAll()
+        self.streamedItemPrefixKeys.removeAll()
         self.diagnostics = AppServerDiagnostics(
             minimumRequiredVersion: Self.minimumSupportedCLIVersion
         )
@@ -2263,6 +2266,91 @@ final class AppServerClient: ObservableObject {
             self.transcriptByThread[threadID] = existing + delta
             self.turnStreamingPhaseByThread[threadID] = .responding
 
+        case "item/plan/delta":
+            guard let threadID = paramsObject["threadId"]?.stringValue else {
+                return
+            }
+            let itemID = Self.findString(
+                in: paramsObject,
+                paths: [
+                    ["itemId"],
+                    ["item", "id"],
+                ]
+            )
+            let delta = Self.findRawString(
+                in: paramsObject,
+                paths: [
+                    ["delta"],
+                    ["textDelta"],
+                ]
+            ) ?? ""
+            self.appendStreamedItemDelta(
+                threadID: threadID,
+                itemID: itemID,
+                kind: "plan",
+                prefix: "Plan: ",
+                delta: delta
+            )
+            if self.turnStreamingPhaseByThread[threadID] == nil {
+                self.turnStreamingPhaseByThread[threadID] = .thinking
+            }
+
+        case "item/reasoning/summaryTextDelta":
+            guard let threadID = paramsObject["threadId"]?.stringValue else {
+                return
+            }
+            let itemID = Self.findString(
+                in: paramsObject,
+                paths: [
+                    ["itemId"],
+                    ["item", "id"],
+                ]
+            )
+            let summaryIndex = Self.findInt(
+                in: paramsObject,
+                paths: [
+                    ["summaryIndex"],
+                    ["summary", "index"],
+                ]
+            ) ?? 0
+            let delta = Self.findRawString(
+                in: paramsObject,
+                paths: [
+                    ["delta"],
+                    ["textDelta"],
+                    ["summaryTextDelta"],
+                ]
+            ) ?? ""
+            self.appendStreamedItemDelta(
+                threadID: threadID,
+                itemID: itemID,
+                kind: "reasoning-\(summaryIndex)",
+                prefix: "Reasoning: ",
+                delta: delta
+            )
+            if self.turnStreamingPhaseByThread[threadID] == nil {
+                self.turnStreamingPhaseByThread[threadID] = .thinking
+            }
+
+        case "item/started":
+            guard let threadID = paramsObject["threadId"]?.stringValue else {
+                return
+            }
+            let itemObject = paramsObject["item"]?.objectValue ?? paramsObject
+            let itemType = Self.findString(
+                in: itemObject,
+                paths: [
+                    ["type"],
+                    ["itemType"],
+                    ["item_type"],
+                ]
+            )?.lowercased() ?? ""
+            if itemType.contains("agentmessage") || itemType.contains("agent_message") {
+                self.turnStreamingPhaseByThread[threadID] = .responding
+            } else if self.turnStreamingPhaseByThread[threadID] == nil {
+                self.turnStreamingPhaseByThread[threadID] = .thinking
+            }
+
         case "turn/started":
             if let threadID = paramsObject["threadId"]?.stringValue,
                let turn = paramsObject["turn"]?.objectValue,
@@ -2275,24 +2363,41 @@ final class AppServerClient: ObservableObject {
                 self.appendEvent("Turn started for \(threadID)")
             }
 
-        case "turn/completed":
-            if let threadID = paramsObject["threadId"]?.stringValue,
-               let turn = paramsObject["turn"]?.objectValue,
-               let status = turn["status"]?.stringValue {
-                self.appendEvent("Turn completed [\(status)] for \(threadID)")
+        case "turn/completed", "turn/failed", "turn/cancelled":
+            guard let threadID = paramsObject["threadId"]?.stringValue else {
+                return
+            }
+            let turn = paramsObject["turn"]?.objectValue ?? [:]
+            let status = turn["status"]?.stringValue
+                ?? method.split(separator: "/").last.map(String.init)
+                ?? "completed"
+            self.appendEvent("Turn \(status) for \(threadID)")
 
-                let fullTranscript = self.transcriptByThread[threadID] ?? ""
-                let before = self.transcriptSnapshotBeforeTurn.removeValue(forKey: threadID) ?? ""
-                let responseDelta = String(fullTranscript.dropFirst(before.count))
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                let snippet = responseDelta.count > 200
-                    ? String(responseDelta.prefix(200)) + "…"
-                    : responseDelta
-                self.onTurnCompleted?(threadID, status, snippet)
+            let fullTranscript = self.transcriptByThread[threadID] ?? ""
+            let before = self.transcriptSnapshotBeforeTurn.removeValue(forKey: threadID) ?? ""
+            let responseDelta = String(fullTranscript.dropFirst(before.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let snippet = responseDelta.count > 200
+                ? String(responseDelta.prefix(200)) + "…"
+                : responseDelta
+            self.onTurnCompleted?(threadID, status, snippet)
 
-                self.activeTurnIDByThread.removeValue(forKey: threadID)
-                self.turnStreamingPhaseByThread.removeValue(forKey: threadID)
-                self.endBackgroundProcessingIfIdle()
+            self.activeTurnIDByThread.removeValue(forKey: threadID)
+            self.turnStreamingPhaseByThread.removeValue(forKey: threadID)
+            self.clearStreamedItemPrefixKeys(for: threadID)
+            self.endBackgroundProcessingIfIdle()
+
+            let normalizedStatus = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let shouldRefreshThreadSnapshot = method == "turn/completed" || normalizedStatus == "completed"
+            if shouldRefreshThreadSnapshot, self.state == .connected {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    do {
+                        _ = try await self.threadRead(threadID: threadID)
+                    } catch {
+                        self.appendEvent("thread/read after \(method) failed: \(error.localizedDescription)")
+                    }
+                }
             }
 
         case "thread/tokenUsage/updated":
@@ -2370,6 +2475,37 @@ final class AppServerClient: ObservableObject {
         }
     }
 
+    private func appendStreamedItemDelta(
+        threadID: String,
+        itemID: String?,
+        kind: String,
+        prefix: String,
+        delta: String
+    ) {
+        guard !delta.isEmpty else { return }
+
+        let normalizedItemID = Self.nonEmpty(itemID) ?? "unknown"
+        let streamKey = "\(threadID)|\(kind)|\(normalizedItemID)"
+        var existing = self.transcriptByThread[threadID] ?? ""
+
+        if self.streamedItemPrefixKeys.contains(streamKey) == false {
+            if !existing.isEmpty, existing.hasSuffix("\n") == false {
+                existing.append("\n")
+            }
+            existing.append(prefix)
+            self.streamedItemPrefixKeys.insert(streamKey)
+        }
+
+        existing.append(delta)
+        self.transcriptByThread[threadID] = existing
+    }
+
+    private func clearStreamedItemPrefixKeys(for threadID: String) {
+        self.streamedItemPrefixKeys = self.streamedItemPrefixKeys.filter { key in
+            key.hasPrefix("\(threadID)|") == false
+        }
+    }
+
     func applyNotificationForTesting(method: String, params: JSONValue?) {
         self.handleNotification(method: method, params: params)
     }
@@ -2440,6 +2576,7 @@ final class AppServerClient: ObservableObject {
         self.connectedEndpoint = ""
         self.activeTurnIDByThread.removeAll()
         self.turnStreamingPhaseByThread.removeAll()
+        self.streamedItemPrefixKeys.removeAll()
         self.teardownConnection(closeCode: .abnormalClosure)
         self.endBackgroundProcessing()
 
@@ -2486,6 +2623,7 @@ final class AppServerClient: ObservableObject {
         self.webSocketTask = nil
         self.hasReceivedMessageOnCurrentConnection = false
         self.pendingRequests.removeAll()
+        self.streamedItemPrefixKeys.removeAll()
 
         Task {
             await self.router.failAll(with: AppServerClientError.notConnected)
@@ -3450,6 +3588,19 @@ final class AppServerClient: ObservableObject {
                   let stringValue = value.stringValue?
                     .trimmingCharacters(in: .whitespacesAndNewlines),
                   !stringValue.isEmpty
+            else {
+                continue
+            }
+            return stringValue
+        }
+        return nil
+    }
+
+    private static func findRawString(in object: [String: JSONValue], paths: [[String]]) -> String? {
+        for path in paths {
+            guard let value = Self.value(at: path, in: object),
+                  let stringValue = value.stringValue,
+                  stringValue.isEmpty == false
             else {
                 continue
             }

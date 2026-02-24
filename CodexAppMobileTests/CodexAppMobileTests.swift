@@ -703,6 +703,122 @@ final class CodexAppMobileTests: XCTestCase {
     }
 
     @MainActor
+    func testAppServerClientItemStartedMarksRespondingForAgentMessage() {
+        let client = AppServerClient()
+
+        client.applyNotificationForTesting(
+            method: "turn/started",
+            params: .object([
+                "threadId": .string("thread-2"),
+                "turn": .object([
+                    "id": .string("turn-2")
+                ])
+            ])
+        )
+        XCTAssertEqual(client.turnStreamingPhase(for: "thread-2"), .thinking)
+
+        client.applyNotificationForTesting(
+            method: "item/started",
+            params: .object([
+                "threadId": .string("thread-2"),
+                "item": .object([
+                    "type": .string("agent_message")
+                ])
+            ])
+        )
+
+        XCTAssertEqual(client.turnStreamingPhase(for: "thread-2"), .responding)
+    }
+
+    @MainActor
+    func testAppServerClientTurnFailedClearsTurnState() {
+        let client = AppServerClient()
+
+        client.applyNotificationForTesting(
+            method: "turn/started",
+            params: .object([
+                "threadId": .string("thread-3"),
+                "turn": .object([
+                    "id": .string("turn-3")
+                ])
+            ])
+        )
+        XCTAssertEqual(client.activeTurnID(for: "thread-3"), "turn-3")
+        XCTAssertEqual(client.turnStreamingPhase(for: "thread-3"), .thinking)
+
+        client.applyNotificationForTesting(
+            method: "turn/failed",
+            params: .object([
+                "threadId": .string("thread-3"),
+                "turn": .object([
+                    "status": .string("failed")
+                ])
+            ])
+        )
+
+        XCTAssertNil(client.activeTurnID(for: "thread-3"))
+        XCTAssertNil(client.turnStreamingPhase(for: "thread-3"))
+    }
+
+    @MainActor
+    func testAppServerClientPlanDeltaRendersProgressText() {
+        let client = AppServerClient()
+
+        client.applyNotificationForTesting(
+            method: "item/plan/delta",
+            params: .object([
+                "threadId": .string("thread-plan"),
+                "itemId": .string("item-plan-1"),
+                "delta": .string("Collect requirements")
+            ])
+        )
+        client.applyNotificationForTesting(
+            method: "item/plan/delta",
+            params: .object([
+                "threadId": .string("thread-plan"),
+                "itemId": .string("item-plan-1"),
+                "delta": .string(" and propose steps.")
+            ])
+        )
+
+        XCTAssertEqual(
+            client.transcriptByThread["thread-plan"],
+            "Plan: Collect requirements and propose steps."
+        )
+        XCTAssertEqual(client.turnStreamingPhase(for: "thread-plan"), .thinking)
+    }
+
+    @MainActor
+    func testAppServerClientReasoningDeltaRendersProgressText() {
+        let client = AppServerClient()
+
+        client.applyNotificationForTesting(
+            method: "item/reasoning/summaryTextDelta",
+            params: .object([
+                "threadId": .string("thread-reasoning"),
+                "itemId": .string("item-reasoning-1"),
+                "summaryIndex": .number(0),
+                "delta": .string("Checking event compatibility")
+            ])
+        )
+        client.applyNotificationForTesting(
+            method: "item/reasoning/summaryTextDelta",
+            params: .object([
+                "threadId": .string("thread-reasoning"),
+                "itemId": .string("item-reasoning-1"),
+                "summaryIndex": .number(1),
+                "delta": .string("Applying minimal patch")
+            ])
+        )
+
+        XCTAssertEqual(
+            client.transcriptByThread["thread-reasoning"],
+            "Reasoning: Checking event compatibility\nReasoning: Applying minimal patch"
+        )
+        XCTAssertEqual(client.turnStreamingPhase(for: "thread-reasoning"), .thinking)
+    }
+
+    @MainActor
     func testAppServerClientLocalEchoSeparatesUserAndAssistantTranscript() {
         let client = AppServerClient()
 
