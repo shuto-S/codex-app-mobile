@@ -1,18 +1,43 @@
 # CodexAppMobile
 
-iOS からリモート PC 上の Codex を操作するための SwiftUI アプリです。  
-主経路は `codex app-server`（WebSocket）、フォールバックとして SSH Terminal を備えています。
+`CodexAppMobile` is a SwiftUI iOS app for operating Codex on a remote machine.  
+It primarily communicates through `codex app-server` over WebSocket, with an SSH Terminal fallback when needed.
 
-## 前提
+## Features
 
-- macOS + Xcode（`xcodebuild` / `simctl` が使えること）
+- Manage remote hosts (SSH and app-server endpoints)
+- Manage threads per project workspace
+- Chat with Codex, including create/resume/fork/archive thread flows
+- Choose model, reasoning level, and collaboration mode
+- Insert Slash Commands, MCP servers, and Skills from the `/` palette
+- Handle app-server approval requests and user-input prompts
+- Use SSH terminal fallback (including Known Hosts management)
+- Receive local notifications when turns finish in the background
+
+## Requirements
+
+- iOS 18.0+ (Deployment Target: `18.0`)
+- macOS + Xcode (`xcodebuild` / `simctl` available)
 - `make`
-- （app-server 利用時）`codex` CLI と `node`
-- （推奨）iPhone 側と同一 tailnet の Tailscale 環境
+- For app-server usage:
+  - `codex` CLI
+  - `node`
+- Recommended network:
+  - iPhone and remote machine connected to the same Tailnet (Tailscale)
 
-## クイックスタート
+## Tech Stack
 
-作業ディレクトリ: `/Users/shuto/src/private/codex-app-mobile`
+- App: `Swift`, `SwiftUI`, `Swift Concurrency`
+- SSH: [`swift-nio-ssh`](https://github.com/apple/swift-nio-ssh) + [`swift-nio-transport-services`](https://github.com/apple/swift-nio-transport-services)
+- Markdown rendering: [`Textual`](https://github.com/gonzalezreal/textual)
+- Dev/run tooling: `make`, `xcodebuild`, `simctl`
+- Dependency licenses: [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md) (`Apache-2.0` / `MIT`)
+- Connectivity:
+  - Primary: `codex app-server` (WebSocket)
+  - Helper: `ws_strip_extensions_proxy.js` (to avoid `Sec-WebSocket-Extensions` handshake issues)
+  - Fallback: SSH (password authentication)
+
+## Quick Start (Local)
 
 ```bash
 make setup-ios-runtime
@@ -20,43 +45,97 @@ make run-ios
 make test-ios
 ```
 
-主要ターゲット:
+## Usage
 
-- `make setup-ios-runtime`: iOS Simulator runtime を導入
-- `make run-ios`: Simulator でビルド・起動（単一 Booted 管理）
-- `make test-ios`: テスト実行
-- `make run-app-server`: app-server + WS プロキシ起動
-- `make clean`: `.build` を削除
-
-## app-server 連携（最小）
-
-リモート PC で起動:
+### 1. Start app-server on your remote machine
 
 ```bash
 make run-app-server
 ```
 
-起動後、iOS 側は以下で接続します。
+Default setup:
+- app-server: `ws://127.0.0.1:18081`
+- proxy: `ws://0.0.0.0:8080` (the iOS app should connect to this port)
+- logs: `.build/logs/app-server.log`, `.build/logs/ws-proxy.log`
 
-- 推奨: `ws://<tailnet-ip>:18081`（プロキシ経由）
-- 直接: `ws://<tailnet-ip>:8080`（必要時のみ）
+In the iOS app, do not use `localhost`. Use a reachable address instead, for example:  
+`ws://<tailnet-ip>:8080`
 
-補足:
+### 2. Launch the app and register a host
 
-- 既定では app-server は `127.0.0.1:8080` に bind し、iOS は `18081` のプロキシへ接続します。
-- `Sec-WebSocket-Extensions` によるハンドシェイク不整合を回避するため、プロキシを標準利用します。
+On the `Hosts` screen, tap `+` and configure:
+- Display name
+- Host / SSH port / username / password
+- App Server host / port (usually same host, port `8080`)
+- Preferred transport (usually `App Server (WebSocket)`)
 
-## アプリ内の基本導線
+### 3. Create a project workspace
 
-1. `Hosts` タブで Host を追加
-2. Host を選択して `Sessions` タブへ移動
-3. `SessionWorkbench` で Project / Thread を選んで操作
-4. 障害時は `Terminal` タブで SSH 操作へフォールバック
+Open the host and add a project workspace (remote working directory).  
+Optionally set default model and approval policy.
 
-## ドキュメント
+### 4. Chat in a thread
 
-- `AGENTS.md`: 開発方針
-- `docs/ios-simulator-runbook.md`: Simulator 運用手順
-- `docs/remote-pc-setup.md`: Tailscale を使った接続手順
-- `docs/ssh-terminal-mvp.md`: SSH Terminal MVP の実装メモ
-- `docs/codex-mobile-orchestration-mvp-plan.md`: 全体実装計画
+- Send prompts from the composer
+- Use `/` palette items (Command / MCP / Skill)
+- Run code review shortcuts when needed
+- Respond to approval requests and input prompts in the UI
+
+### 5. Fallback to SSH Terminal when needed
+
+Use the host row context menu and open `Terminal` to operate directly over SSH.
+
+## Development Commands
+
+| Command | Description |
+| --- | --- |
+| `make setup-ios-runtime` | Install iOS Simulator runtime |
+| `make run-ios` | Build and launch on Simulator |
+| `make test-ios` | Run iOS tests |
+| `make run-app-server` | Start `codex app-server` + WS proxy |
+| `make clean` | Remove `.build` |
+
+## Environment Variables
+
+### `make run-ios`
+
+- `IOS_DEVICE_NAME` (default: `CodexAppMobile iPhone 17`)
+- `IOS_DEVICE_TYPE_IDENTIFIER` (default: `com.apple.CoreSimulator.SimDeviceType.iPhone-17`)
+
+### `make run-app-server`
+
+- `APP_SERVER_LISTEN_HOST` (default: `127.0.0.1`)
+- `APP_SERVER_PORT` (default: `18081`)
+- `APP_SERVER_PROXY_LISTEN_HOST` (default: `0.0.0.0`)
+- `APP_SERVER_PROXY_PORT` (default: `8080`)
+- `APP_SERVER_PROXY_UPSTREAM_HOST` (default: `127.0.0.1`)
+- `APP_SERVER_PROXY_UPSTREAM_PORT` (default: same as `APP_SERVER_PORT`)
+
+## Data Storage and Security
+
+- Host credentials (passwords) are stored in iOS Keychain
+- Host/project/thread metadata is stored in `UserDefaults`
+- SSH host keys are stored with TOFU (trust on first use) and can be removed from Known Hosts
+- `NSAllowsArbitraryLoads=true` is currently enabled for development convenience; review this before production/public distribution
+
+## Troubleshooting
+
+- `No iOS Simulator runtime found`:
+  - Run `make setup-ios-runtime`
+- `port is already in use`:
+  - Free the port, or change `APP_SERVER_PORT` / `APP_SERVER_PROXY_PORT`
+- iOS app cannot connect to app-server:
+  - Use a reachable IP/hostname instead of `ws://localhost:...`
+- app-server disconnects right after startup:
+  - Check `.build/logs/app-server.log` and `.build/logs/ws-proxy.log`
+
+## References
+
+- Codex app-server docs: [https://developers.openai.com/codex/app-server.md](https://developers.openai.com/codex/app-server.md)
+- Apple Human Interface Guidelines: [https://developer.apple.com/design/human-interface-guidelines/](https://developer.apple.com/design/human-interface-guidelines/)
+
+## License
+
+- Project license: [LICENSE](./LICENSE) (MIT)
+- Third-party dependency licenses: [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md)
+- For distribution, include dependency `LICENSE` / `NOTICE` attributions as required
