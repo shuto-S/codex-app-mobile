@@ -1278,6 +1278,12 @@ struct SessionWorkbenchView: View {
     @State private var isReviewModePickerPresented = false
     @State private var reviewModeSelection: ReviewModeSelection = .uncommittedChanges
     @State private var reviewBaseBranch = ""
+    @State private var composerCollaborationModeID = ""
+    @State private var pendingUserInputRequest: AppServerPendingRequest?
+    @State private var pendingUserInputAnswers: [String: String] = [:]
+    @State private var pendingUserInputSubmitError = ""
+    @State private var isSubmittingPendingUserInput = false
+    @State private var shouldPresentNextUserInputPanelAfterPlan = false
     @State private var isStatusPanelPresented = false
     @State private var isStatusRefreshing = false
     @State private var statusSnapshot: StatusPanelSnapshot?
@@ -1528,6 +1534,41 @@ struct SessionWorkbenchView: View {
         )
     }
 
+    private var composerCollaborationModeIDForRequest: String? {
+        let trimmed = self.composerCollaborationModeID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private var planCollaborationModeID: String {
+        if let mode = self.appState.appServerClient.availableCollaborationModes.first(where: {
+            $0.normalizedID == "plan" || $0.title.lowercased().contains("plan")
+        }) {
+            return mode.id
+        }
+        return "plan"
+    }
+
+    private var isPlanModeEnabled: Bool {
+        guard let modeID = self.composerCollaborationModeIDForRequest else {
+            return false
+        }
+        let normalizedModeID = modeID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let normalizedPlanID = self.planCollaborationModeID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalizedModeID == "plan" || normalizedModeID == normalizedPlanID
+    }
+
+    private var isCommandPaletteSubpanelPresented: Bool {
+        self.isReviewModePickerPresented || self.pendingUserInputRequest != nil
+    }
+
+    private var pendingUserInputQuestions: [AppServerUserInputQuestion] {
+        guard let request = self.pendingUserInputRequest,
+              case .userInput(let questions) = request.kind else {
+            return []
+        }
+        return questions
+    }
+
     private var isCommandPaletteAvailable: Bool {
         !self.isSSHTransport && self.isComposerInteractive
     }
@@ -1730,6 +1771,9 @@ struct SessionWorkbenchView: View {
         .onChange(of: self.appState.appServerClient.availableModels) {
             self.syncComposerControlsWithWorkspace()
         }
+        .onChange(of: self.appState.appServerClient.pendingRequests) {
+            self.handlePendingRequestsUpdated()
+        }
         .alert(
             "Delete this project?",
             isPresented: Binding(
@@ -1874,7 +1918,7 @@ struct SessionWorkbenchView: View {
                     if !self.isSSHTransport,
                        !self.appState.appServerClient.pendingRequests.isEmpty {
                         Button {
-                            self.activePendingRequest = self.appState.appServerClient.pendingRequests.first
+                            self.presentFirstPendingRequest()
                         } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: "clock.badge.exclamationmark")
@@ -1934,17 +1978,13 @@ struct SessionWorkbenchView: View {
 
     @ViewBuilder
     private func composerPickerChip(_ title: String, minWidth: CGFloat? = nil) -> some View {
-        HStack(spacing: 6) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .lineLimit(1)
-            Image(systemName: "chevron.down")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(0.72))
-        }
-        .foregroundStyle(Color.white.opacity(0.92))
-        .padding(.horizontal, 12)
-        .frame(minWidth: minWidth, minHeight: 44, maxHeight: 44, alignment: .leading)
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .foregroundStyle(Color.white.opacity(0.92))
+            .padding(.horizontal, 12)
+            .frame(minWidth: minWidth, minHeight: 44, maxHeight: 44)
         .background {
             self.glassCardBackground(cornerRadius: 22, tint: self.glassWhiteTint(light: 0.20, dark: 0.14))
         }
@@ -1988,7 +2028,7 @@ struct SessionWorkbenchView: View {
                     }
                 }
             } label: {
-                self.composerPickerChip(self.composerModelDisplayName, minWidth: 150)
+                self.composerPickerChip(self.composerModelDisplayName, minWidth: 140)
             }
             .buttonStyle(.plain)
             .disabled(!self.isComposerInteractive)
@@ -2007,7 +2047,7 @@ struct SessionWorkbenchView: View {
                     }
                 }
             } label: {
-                self.composerPickerChip(self.composerReasoningDisplayName, minWidth: 84)
+                self.composerPickerChip(self.composerReasoningDisplayName, minWidth: 76)
             }
             .buttonStyle(.plain)
             .disabled(!self.isComposerInteractive)
@@ -2016,7 +2056,7 @@ struct SessionWorkbenchView: View {
             Button {
                 self.presentCommandPalette()
             } label: {
-                self.composerPickerChip("/", minWidth: 56)
+                self.composerPickerChip("/", minWidth: 48)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Slash Commands")
@@ -2034,9 +2074,9 @@ struct SessionWorkbenchView: View {
     private var commandPalettePanel: some View {
         VStack(spacing: 10) {
             HStack(spacing: 12) {
-                if self.isReviewModePickerPresented {
+                if self.isCommandPaletteSubpanelPresented {
                     Button {
-                        self.dismissReviewModePicker()
+                        self.handleCommandPaletteBackAction()
                     } label: {
                         Label("Back", systemImage: "chevron.left")
                             .font(.subheadline.weight(.semibold))
@@ -2045,13 +2085,13 @@ struct SessionWorkbenchView: View {
                     .buttonStyle(.plain)
                 }
 
-                Text(self.isReviewModePickerPresented ? "Code Review" : "Commands")
+                Text(self.commandPaletteTitle)
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(Color.white)
 
                 Spacer(minLength: 8)
 
-                if self.isCommandPaletteRefreshing, !self.isReviewModePickerPresented {
+                if self.isCommandPaletteRefreshing, !self.isCommandPaletteSubpanelPresented {
                     ProgressView()
                         .controlSize(.small)
                         .tint(Color.white.opacity(0.9))
@@ -2068,6 +2108,8 @@ struct SessionWorkbenchView: View {
 
             if self.isReviewModePickerPresented {
                 self.reviewModePickerPanelBody
+            } else if self.pendingUserInputRequest != nil {
+                self.pendingUserInputPanelBody
             } else if self.commandPaletteRows.isEmpty, !self.isCommandPaletteRefreshing {
                 Text("No commands, MCP servers, or skills available")
                     .font(.subheadline)
@@ -2186,6 +2228,121 @@ struct SessionWorkbenchView: View {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .stroke(Color.white.opacity(0.10), lineWidth: 0.8)
                     )
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
+        }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: self.commandPalettePanelMinHeight,
+            maxHeight: self.commandPalettePanelMaxHeight,
+            alignment: .top
+        )
+    }
+
+    private var commandPaletteTitle: String {
+        if self.isReviewModePickerPresented {
+            return "Code Review"
+        }
+        if self.pendingUserInputRequest != nil {
+            return "Input Required"
+        }
+        return "Commands"
+    }
+
+    private var pendingUserInputPanelBody: some View {
+        ScrollView {
+            VStack(spacing: 10) {
+                if self.pendingUserInputQuestions.isEmpty {
+                    Text("No input questions available.")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.white.opacity(0.72))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(Color.white.opacity(0.06))
+                        )
+                } else {
+                    ForEach(self.pendingUserInputQuestions) { question in
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(question.prompt)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.white.opacity(0.82))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            ForEach(question.options.indices, id: \.self) { index in
+                                let option = question.options[index]
+                                self.reviewModeOptionButton(
+                                    title: option.label,
+                                    subtitle: option.description.isEmpty ? "Select this answer." : option.description,
+                                    systemImage: "questionmark.circle",
+                                    isSelected: self.pendingUserInputAnswers[question.id] == option.label
+                                ) {
+                                    self.pendingUserInputAnswers[question.id] = option.label
+                                }
+                            }
+
+                            TextField("Answer", text: Binding(
+                                get: { self.pendingUserInputAnswers[question.id] ?? "" },
+                                set: { self.pendingUserInputAnswers[question.id] = $0 }
+                            ))
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled(true)
+                            .foregroundStyle(Color.white)
+                            .tint(Color.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color.white.opacity(0.07))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(Color.white.opacity(0.14), lineWidth: 0.8)
+                            )
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(Color.white.opacity(0.06))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(Color.white.opacity(0.10), lineWidth: 0.8)
+                        )
+                    }
+
+                    if !self.pendingUserInputSubmitError.isEmpty {
+                        Text(self.pendingUserInputSubmitError)
+                            .font(.caption)
+                            .foregroundStyle(Color.red.opacity(0.9))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color.red.opacity(0.14))
+                            )
+                    }
+
+                    Button(self.isSubmittingPendingUserInput ? "Submitting..." : "Submit") {
+                        self.submitPendingUserInputAnswers()
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.black)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.white, in: Capsule())
+                    .buttonStyle(.plain)
+                    .disabled(self.pendingUserInputRequest == nil || self.isSubmittingPendingUserInput)
+                    .opacity(self.pendingUserInputRequest == nil || self.isSubmittingPendingUserInput ? 0.45 : 1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 2)
                 }
             }
             .padding(.horizontal, 12)
@@ -2531,45 +2688,73 @@ struct SessionWorkbenchView: View {
 
             self.composerControlBar
 
-            HStack(alignment: .bottom, spacing: 10) {
-                ZStack(alignment: .leading) {
-                    if self.prompt.isEmpty {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 17, weight: .medium))
-                            .foregroundStyle(Color.white.opacity(0.38))
-                            .allowsHitTesting(false)
+            VStack(alignment: .leading, spacing: 8) {
+                if self.isPlanModeEnabled {
+                    Button {
+                        self.disablePlanMode()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("Plan")
+                                .font(.caption2.weight(.semibold))
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color.white.opacity(0.14))
+                        )
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .stroke(Color.white.opacity(0.20), lineWidth: 0.8)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Disable Plan Mode")
+                }
+
+                HStack(alignment: .bottom, spacing: 10) {
+                    ZStack(alignment: .leading) {
+                        if self.prompt.isEmpty {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 17, weight: .medium))
+                                .foregroundStyle(Color.white.opacity(0.38))
+                                .allowsHitTesting(false)
+                        }
+
+                        TextField("", text: self.$prompt, axis: .vertical)
+                            .lineLimit(1...4)
+                            .textInputAutocapitalization(.sentences)
+                            .submitLabel(.send)
+                            .focused(self.$isPromptFieldFocused)
+                            .foregroundStyle(Color.white)
+                            .tint(Color.white)
+                            .frame(minHeight: 36)
+                            .disabled(isInactive)
+                            .opacity(isInactive ? 0.72 : 1)
+                            .onSubmit {
+                                if self.canSendPrompt {
+                                    self.sendPrompt(forceNewThread: false)
+                                }
+                            }
                     }
 
-                    TextField("", text: self.$prompt, axis: .vertical)
-                        .lineLimit(1...4)
-                        .textInputAutocapitalization(.sentences)
-                        .submitLabel(.send)
-                        .focused(self.$isPromptFieldFocused)
-                        .foregroundStyle(Color.white)
-                        .tint(Color.white)
-                        .frame(minHeight: 36)
-                        .disabled(isInactive)
-                        .opacity(isInactive ? 0.72 : 1)
-                        .onSubmit {
-                            if self.canSendPrompt {
-                                self.sendPrompt(forceNewThread: false)
-                            }
-                        }
+                    Button {
+                        self.isPromptFieldFocused = false
+                        self.sendPrompt(forceNewThread: false)
+                    } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(isInactive ? Color.white.opacity(0.72) : Color.black)
+                            .frame(width: 36, height: 36)
+                            .background((isInactive ? Color.white.opacity(0.24) : Color.white), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!self.canSendPrompt)
+                    .opacity(self.canSendPrompt ? 1 : 0.45)
                 }
-
-                Button {
-                    self.isPromptFieldFocused = false
-                    self.sendPrompt(forceNewThread: false)
-                } label: {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(isInactive ? Color.white.opacity(0.72) : Color.black)
-                        .frame(width: 36, height: 36)
-                        .background((isInactive ? Color.white.opacity(0.24) : Color.white), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!self.canSendPrompt)
-                .opacity(self.canSendPrompt ? 1 : 0.45)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
@@ -2866,6 +3051,13 @@ struct SessionWorkbenchView: View {
                                         }
                                     }
                                     .buttonStyle(.plain)
+                                    .contextMenu {
+                                        Button(role: .destructive) {
+                                            self.archiveThread(summary: summary, archived: true)
+                                        } label: {
+                                            Label("Archive", systemImage: "archivebox")
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -3406,7 +3598,8 @@ struct SessionWorkbenchView: View {
                         threadID: threadID,
                         inputText: trimmedPrompt,
                         model: self.composerModelForRequest,
-                        effort: self.selectedComposerReasoning
+                        effort: self.selectedComposerReasoning,
+                        collaborationModeID: self.composerCollaborationModeIDForRequest
                     )
                     selectedModelForThread = self.composerModelForRequest
                     selectedReasoningForThread = self.selectedComposerReasoning
@@ -3441,6 +3634,7 @@ struct SessionWorkbenchView: View {
         }
         self.dismissStatusPanel()
         self.dismissReviewModePicker()
+        self.dismissPendingUserInputPanel()
         self.isCommandPalettePresented = true
         self.refreshCommandPalette()
     }
@@ -3448,6 +3642,7 @@ struct SessionWorkbenchView: View {
     private func dismissCommandPalette() {
         self.isCommandPalettePresented = false
         self.dismissReviewModePicker()
+        self.dismissPendingUserInputPanel()
     }
 
     private func presentReviewModePicker() {
@@ -3455,6 +3650,7 @@ struct SessionWorkbenchView: View {
             self.localErrorMessage = "Open commands and select /review again."
             return
         }
+        self.dismissPendingUserInputPanel()
         self.reviewModeSelection = .uncommittedChanges
         self.reviewBaseBranch = ""
         self.isReviewModePickerPresented = true
@@ -3465,6 +3661,112 @@ struct SessionWorkbenchView: View {
         self.reviewModeSelection = .uncommittedChanges
         self.reviewBaseBranch = ""
         self.isReviewBaseBranchFieldFocused = false
+    }
+
+    private func presentPendingUserInputPanel(_ request: AppServerPendingRequest) {
+        guard case .userInput(let questions) = request.kind else {
+            return
+        }
+        self.dismissStatusPanel()
+        self.dismissReviewModePicker()
+        self.pendingUserInputRequest = request
+        self.pendingUserInputSubmitError = ""
+        self.isSubmittingPendingUserInput = false
+        self.pendingUserInputAnswers = Dictionary(uniqueKeysWithValues: questions.map { question in
+            let defaultAnswer = question.options.first?.label ?? ""
+            return (question.id, defaultAnswer)
+        })
+        self.isCommandPalettePresented = true
+    }
+
+    private func dismissPendingUserInputPanel() {
+        self.pendingUserInputRequest = nil
+        self.pendingUserInputAnswers = [:]
+        self.pendingUserInputSubmitError = ""
+        self.isSubmittingPendingUserInput = false
+    }
+
+    private func handlePendingRequestsUpdated() {
+        let pendingRequests = self.appState.appServerClient.pendingRequests
+
+        if let activeRequest = self.pendingUserInputRequest,
+           pendingRequests.contains(where: { $0.id == activeRequest.id }) == false {
+            self.dismissPendingUserInputPanel()
+        }
+
+        if self.shouldPresentNextUserInputPanelAfterPlan,
+           let userInputRequest = pendingRequests.first(where: { request in
+               if case .userInput = request.kind {
+                   return true
+               }
+               return false
+           }) {
+            self.shouldPresentNextUserInputPanelAfterPlan = false
+            self.presentPendingUserInputPanel(userInputRequest)
+        }
+    }
+
+    private func presentFirstPendingRequest() {
+        if let userInputRequest = self.appState.appServerClient.pendingRequests.first(where: { request in
+            if case .userInput = request.kind {
+                return true
+            }
+            return false
+        }) {
+            self.presentPendingUserInputPanel(userInputRequest)
+            return
+        }
+
+        self.activePendingRequest = self.appState.appServerClient.pendingRequests.first
+    }
+
+    private func submitPendingUserInputAnswers() {
+        guard let request = self.pendingUserInputRequest,
+              case .userInput(let questions) = request.kind else {
+            return
+        }
+
+        self.pendingUserInputSubmitError = ""
+        self.isSubmittingPendingUserInput = true
+
+        var answers: [String: [String]] = [:]
+        for question in questions {
+            let raw = self.pendingUserInputAnswers[question.id, default: ""]
+            let values = raw
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+
+            if values.isEmpty,
+               let firstOption = question.options.first?.label {
+                answers[question.id] = [firstOption]
+            } else {
+                answers[question.id] = values
+            }
+        }
+
+        Task {
+            defer {
+                self.isSubmittingPendingUserInput = false
+            }
+            do {
+                try await self.appState.appServerClient.respondUserInput(request: request, answers: answers)
+                self.dismissCommandPalette()
+                self.showComposerInfo("Submitted input.", tone: .status)
+            } catch {
+                self.pendingUserInputSubmitError = self.appState.appServerClient.userFacingMessage(for: error)
+            }
+        }
+    }
+
+    private func handleCommandPaletteBackAction() {
+        if self.isReviewModePickerPresented {
+            self.dismissReviewModePicker()
+            return
+        }
+        if self.pendingUserInputRequest != nil {
+            self.dismissPendingUserInputPanel()
+        }
     }
 
     private func refreshCommandPalette() {
@@ -3600,6 +3902,8 @@ struct SessionWorkbenchView: View {
             self.forkCurrentThread()
         case .startReview:
             self.presentReviewModePicker()
+        case .startPlanMode:
+            self.startPlanModeSlashCommand()
         case .showStatus:
             self.showStatusSlashCommand()
         }
@@ -3728,6 +4032,20 @@ struct SessionWorkbenchView: View {
 
     private func showStatusSlashCommand() {
         self.presentStatusPanel()
+    }
+
+    private func startPlanModeSlashCommand() {
+        self.composerCollaborationModeID = self.planCollaborationModeID
+        self.shouldPresentNextUserInputPanelAfterPlan = true
+        self.showComposerInfo("Plan mode enabled. Send a prompt to continue.", tone: .status)
+        self.isPromptFieldFocused = true
+    }
+
+    private func disablePlanMode() {
+        guard self.composerCollaborationModeIDForRequest != nil else { return }
+        self.composerCollaborationModeID = ""
+        self.shouldPresentNextUserInputPanelAfterPlan = false
+        self.showComposerInfo("Plan mode disabled.", tone: .status)
     }
 
     private func sendPromptViaSSH(

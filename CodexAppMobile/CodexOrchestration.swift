@@ -1298,10 +1298,22 @@ struct AppServerModelDescriptor: Equatable, Identifiable {
     var id: String { self.model }
 }
 
+struct AppServerCollaborationModeDescriptor: Equatable, Identifiable {
+    let id: String
+    let title: String
+    let description: String?
+    let isDefault: Bool
+
+    var normalizedID: String {
+        self.id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+}
+
 enum AppServerSlashCommandKind: String {
     case newThread
     case forkThread
     case startReview
+    case startPlanMode
     case showStatus
 }
 
@@ -1440,6 +1452,7 @@ final class AppServerClient: ObservableObject {
     @Published private(set) var activeTurnIDByThread: [String: String] = [:]
     @Published private(set) var turnStreamingPhaseByThread: [String: TurnStreamingPhase] = [:]
     @Published private(set) var availableModels: [AppServerModelDescriptor] = []
+    @Published private(set) var availableCollaborationModes: [AppServerCollaborationModeDescriptor] = []
     @Published private(set) var mcpServers: [AppServerMCPServerSummary] = []
     @Published private(set) var availableSkills: [AppServerSkillSummary] = []
     @Published private(set) var availableApps: [AppServerAppSummary] = []
@@ -1522,6 +1535,7 @@ final class AppServerClient: ObservableObject {
         self.activeTurnIDByThread.removeAll()
         self.turnStreamingPhaseByThread.removeAll()
         self.availableModels = []
+        self.availableCollaborationModes = []
         self.mcpServers = []
         self.availableSkills = []
         self.availableApps = []
@@ -1830,14 +1844,20 @@ final class AppServerClient: ObservableObject {
         threadID: String,
         inputText: String,
         model: String?,
-        effort: String?
+        effort: String?,
+        collaborationModeID: String? = nil
     ) async throws -> String {
         let trimmedModel = model?.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedModel = (trimmedModel?.isEmpty == false) ? trimmedModel : nil
         let trimmedEffort = effort?.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedEffort = (trimmedEffort?.isEmpty == false) ? trimmedEffort : nil
+        let normalizedCollaborationModeID = Self.nonEmpty(collaborationModeID)
 
-        func requestTurnStart(model: String?, effort: String?) async throws -> String {
+        func requestTurnStart(
+            model: String?,
+            effort: String?,
+            collaborationModeID: String?
+        ) async throws -> String {
             var params: [String: JSONValue] = [
                 "threadId": .string(threadID),
                 "input": .array([
@@ -1854,6 +1874,10 @@ final class AppServerClient: ObservableObject {
             if let effort {
                 params["effort"] = .string(effort)
             }
+            if let collaborationModeID,
+               let collaborationMode = Self.collaborationModePayload(for: collaborationModeID) {
+                params["collaborationMode"] = collaborationMode
+            }
 
             let result = try await self.request(method: "turn/start", params: .object(params))
             let payload: TurnStartResponsePayload = try self.decode(result, as: TurnStartResponsePayload.self)
@@ -1862,32 +1886,57 @@ final class AppServerClient: ObservableObject {
             return payload.turn.id
         }
 
-        do {
-            return try await requestTurnStart(model: normalizedModel, effort: normalizedEffort)
-        } catch {
-            if normalizedEffort != nil,
-               Self.shouldRetryWithoutEffort(error) {
-                self.appendEvent("turn/start rejected effort; retrying without effort.")
-                do {
-                    return try await requestTurnStart(model: normalizedModel, effort: nil)
-                } catch {
-                    if normalizedModel != nil,
-                       Self.shouldRetryWithoutModel(error) {
-                        self.appendEvent("turn/start rejected model after effort fallback; retrying without model/effort.")
-                        return try await requestTurnStart(model: nil, effort: nil)
-                    }
-                    throw error
+        func requestTurnStartWithFallbacks(
+            model: String?,
+            effort: String?,
+            collaborationModeID: String?
+        ) async throws -> String {
+            do {
+                return try await requestTurnStart(
+                    model: model,
+                    effort: effort,
+                    collaborationModeID: collaborationModeID
+                )
+            } catch {
+                if effort != nil,
+                   Self.shouldRetryWithoutEffort(error) {
+                    self.appendEvent("turn/start rejected effort; retrying without effort.")
+                    return try await requestTurnStartWithFallbacks(
+                        model: model,
+                        effort: nil,
+                        collaborationModeID: collaborationModeID
+                    )
                 }
-            }
 
-            if normalizedModel != nil,
-               Self.shouldRetryWithoutModel(error) {
-                self.appendEvent("turn/start rejected model; retrying without model.")
-                return try await requestTurnStart(model: nil, effort: normalizedEffort)
-            }
+                if model != nil,
+                   Self.shouldRetryWithoutModel(error) {
+                    self.appendEvent("turn/start rejected model; retrying without model.")
+                    return try await requestTurnStartWithFallbacks(
+                        model: nil,
+                        effort: effort,
+                        collaborationModeID: collaborationModeID
+                    )
+                }
 
-            throw error
+                if collaborationModeID != nil,
+                   Self.shouldRetryWithoutCollaborationMode(error) {
+                    self.appendEvent("turn/start rejected collaboration mode; retrying without collaboration mode.")
+                    return try await requestTurnStartWithFallbacks(
+                        model: model,
+                        effort: effort,
+                        collaborationModeID: nil
+                    )
+                }
+
+                throw error
+            }
         }
+
+        return try await requestTurnStartWithFallbacks(
+            model: normalizedModel,
+            effort: normalizedEffort,
+            collaborationModeID: normalizedCollaborationModeID
+        )
     }
 
     func turnSteer(threadID: String, expectedTurnID: String, inputText: String) async throws {
@@ -1967,6 +2016,7 @@ final class AppServerClient: ObservableObject {
         self.lastHost = host
         self.connectedEndpoint = url.absoluteString
         self.availableModels = []
+        self.availableCollaborationModes = []
         self.mcpServers = []
         self.availableSkills = []
         self.availableApps = []
@@ -2501,10 +2551,11 @@ final class AppServerClient: ObservableObject {
         }
 
         async let modelTask: Void = self.refreshModelCatalog()
+        async let collaborationModeTask: Void = self.refreshCollaborationModeCatalog()
         async let mcpTask: Void = self.refreshMCPServerCatalog()
         async let skillTask: Void = self.refreshSkillCatalog(primaryCWD: primaryCWD)
         async let appTask: Void = self.refreshAppCatalog()
-        _ = await (modelTask, mcpTask, skillTask, appTask)
+        _ = await (modelTask, collaborationModeTask, mcpTask, skillTask, appTask)
 
         self.rebuildSlashCommandCatalog()
     }
@@ -2550,6 +2601,21 @@ final class AppServerClient: ObservableObject {
            let preferredModel = catalog.first(where: { $0.isDefault })?.model ?? catalog.first?.model {
             self.diagnostics.currentModel = preferredModel
         }
+        self.rebuildSlashCommandCatalog()
+    }
+
+    private func refreshCollaborationModeCatalog() async {
+        do {
+            let result = try await self.request(method: "collaborationMode/list", params: nil)
+            self.availableCollaborationModes = Self.parseCollaborationModeCatalog(result)
+        } catch let AppServerClientError.remote(code, message) where code == -32601 {
+            self.availableCollaborationModes = []
+            self.appendEvent("collaborationMode/list unavailable: \(message)")
+        } catch {
+            self.availableCollaborationModes = []
+            self.appendEvent("collaborationMode/list unavailable: \(error.localizedDescription)")
+        }
+
         self.rebuildSlashCommandCatalog()
     }
 
@@ -2700,6 +2766,14 @@ final class AppServerClient: ObservableObject {
                 requiresThread: true
             ),
             AppServerSlashCommandDescriptor(
+                kind: .startPlanMode,
+                command: "/plan",
+                title: "Plan mode",
+                description: "Switch next turns to planning mode.",
+                systemImage: "checklist",
+                requiresThread: false
+            ),
+            AppServerSlashCommandDescriptor(
                 kind: .showStatus,
                 command: "/status",
                 title: "Status",
@@ -2763,6 +2837,101 @@ final class AppServerClient: ObservableObject {
         }
 
         return models
+    }
+
+    private static func parseCollaborationModeCatalog(_ result: JSONValue) -> [AppServerCollaborationModeDescriptor] {
+        var rows = Self.dataArray(from: result, fallbackKeys: ["collaborationModes", "modes", "items"])
+
+        if rows.isEmpty,
+           let object = result.objectValue,
+           let modesObject = object["collaborationModes"]?.objectValue ?? object["modes"]?.objectValue {
+            rows = modesObject.map { modeID, value in
+                if var modeObject = value.objectValue {
+                    if Self.findString(
+                        in: modeObject,
+                        paths: [
+                            ["id"],
+                            ["slug"],
+                            ["mode"],
+                            ["name"],
+                        ]
+                    ) == nil {
+                        modeObject["id"] = .string(modeID)
+                    }
+                    return .object(modeObject)
+                }
+                return .object(["id": .string(modeID)])
+            }
+        }
+
+        var catalog: [AppServerCollaborationModeDescriptor] = []
+        var seenIDs: Set<String> = []
+
+        for row in rows {
+            guard let object = row.objectValue else { continue }
+
+            guard let modeID = Self.findString(
+                in: object,
+                paths: [
+                    ["id"],
+                    ["slug"],
+                    ["mode"],
+                    ["name"],
+                ]
+            ) else {
+                continue
+            }
+
+            let normalizedID = modeID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalizedID.isEmpty,
+                  seenIDs.insert(normalizedID).inserted else { continue }
+
+            let title = Self.findString(
+                in: object,
+                paths: [
+                    ["title"],
+                    ["displayName"],
+                    ["name"],
+                    ["slug"],
+                    ["id"],
+                ]
+            ) ?? modeID
+
+            let description = Self.findString(
+                in: object,
+                paths: [
+                    ["description"],
+                    ["summary"],
+                    ["prompt"],
+                    ["helpText"],
+                ]
+            )
+
+            let isDefault = Self.findBool(
+                in: object,
+                paths: [
+                    ["isDefault"],
+                    ["default"],
+                    ["is_default"],
+                ]
+            ) ?? false
+
+            catalog.append(
+                AppServerCollaborationModeDescriptor(
+                    id: modeID,
+                    title: title,
+                    description: Self.nonEmpty(description),
+                    isDefault: isDefault
+                )
+            )
+        }
+
+        return catalog.sorted { lhs, rhs in
+            if lhs.isDefault != rhs.isDefault {
+                return lhs.isDefault && !rhs.isDefault
+            }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
     }
 
     private static func parseMCPServerCatalog(_ rows: [JSONValue]) -> [AppServerMCPServerSummary] {
@@ -3165,6 +3334,15 @@ final class AppServerClient: ObservableObject {
         return raw.lowercased()
     }
 
+    private static func collaborationModePayload(for rawModeID: String) -> JSONValue? {
+        guard let modeID = Self.nonEmpty(rawModeID) else {
+            return nil
+        }
+        return .object([
+            "id": .string(modeID)
+        ])
+    }
+
     private static func shouldRetryWithoutEffort(_ error: Error) -> Bool {
         guard case let AppServerClientError.remote(code, message) = error else {
             return false
@@ -3186,6 +3364,18 @@ final class AppServerClient: ObservableObject {
             || normalized.contains("invalid params")
             || normalized.contains("model")
             || normalized.contains("unknown field")
+    }
+
+    private static func shouldRetryWithoutCollaborationMode(_ error: Error) -> Bool {
+        guard case let AppServerClientError.remote(code, message) = error else {
+            return false
+        }
+        let normalized = message.lowercased()
+        return code == -32602
+            || normalized.contains("invalid params")
+            || normalized.contains("unknown field")
+            || normalized.contains("collaborationmode")
+            || normalized.contains("collaboration mode")
     }
 
     private static func shouldRetryReviewStartTarget(_ error: Error) -> Bool {
@@ -3287,6 +3477,29 @@ final class AppServerClient: ObservableObject {
                 if let parsed = Double(string.trimmingCharacters(in: .whitespacesAndNewlines)) {
                     return parsed
                 }
+            default:
+                break
+            }
+        }
+        return nil
+    }
+
+    private static func findBool(in object: [String: JSONValue], paths: [[String]]) -> Bool? {
+        for path in paths {
+            guard let value = Self.value(at: path, in: object) else { continue }
+            switch value {
+            case .bool(let boolValue):
+                return boolValue
+            case .string(let string):
+                let normalized = string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if normalized == "true" || normalized == "1" || normalized == "yes" {
+                    return true
+                }
+                if normalized == "false" || normalized == "0" || normalized == "no" {
+                    return false
+                }
+            case .number(let number):
+                return number != 0
             default:
                 break
             }
