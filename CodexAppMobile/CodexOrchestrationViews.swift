@@ -1303,7 +1303,10 @@ struct SessionWorkbenchView: View {
     @State private var statusSnapshot: StatusPanelSnapshot?
     @State private var composerInfoMessage: ComposerInfoMessage?
     @State private var composerInfoDismissTask: Task<Void, Never>?
+    @State private var selectedComposerTokenBadges: [ComposerTokenBadge] = []
     @State private var pendingPromptDispatchCount = 0
+    @State private var chatDistanceFromBottom: CGFloat = 0
+    @State private var scrollToBottomRequestCount = 0
     @FocusState private var isPromptFieldFocused: Bool
     @FocusState private var isReviewBaseBranchFieldFocused: Bool
 
@@ -1370,7 +1373,7 @@ struct SessionWorkbenchView: View {
     }
 
     private var composerTokenBadges: [ComposerTokenBadge] {
-        Self.parseComposerTokenBadges(from: self.prompt)
+        self.selectedComposerTokenBadges
     }
 
     private var canSendPrompt: Bool {
@@ -1437,6 +1440,14 @@ struct SessionWorkbenchView: View {
         let step = Int(date.timeIntervalSinceReferenceDate * 2).quotientAndRemainder(dividingBy: 4).remainder
         let dots = String(repeating: ".", count: max(1, step))
         return baseText + dots
+    }
+
+    private var shouldShowScrollToBottomButton: Bool {
+        self.selectedThreadID != nil && self.chatDistanceFromBottom > 220
+    }
+
+    private var shouldAutoFollowChatUpdates: Bool {
+        self.selectedThreadID != nil && self.chatDistanceFromBottom <= 64
     }
 
     private var isComposerInteractive: Bool {
@@ -1993,22 +2004,61 @@ struct SessionWorkbenchView: View {
             }
             .background(Color.black)
             .scrollDismissesKeyboard(.interactively)
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                self.distanceToChatBottom(from: geometry)
+            } action: { _, newValue in
+                self.chatDistanceFromBottom = newValue
+            }
+            .overlay(alignment: .bottom) {
+                if self.shouldShowScrollToBottomButton {
+                    self.scrollToBottomButton(proxy: proxy)
+                        .padding(.bottom, 12)
+                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
+            }
+            .animation(.easeOut(duration: 0.18), value: self.shouldShowScrollToBottomButton)
             .onAppear {
                 self.scrollToBottom(proxy: proxy)
             }
-            .onChange(of: self.selectedThreadTranscript) {
+            .onChange(of: self.scrollToBottomRequestCount) {
                 self.scrollToBottom(proxy: proxy)
             }
             .onChange(of: self.selectedThreadID) {
                 self.scrollToBottom(proxy: proxy)
             }
-            .onChange(of: self.appState.appServerClient.activeTurnIDByThread) {
+            .onChange(of: self.selectedThreadTranscript) {
+                guard self.shouldAutoFollowChatUpdates else { return }
                 self.scrollToBottom(proxy: proxy)
             }
-            .onChange(of: self.appState.appServerClient.turnStreamingPhaseByThread) {
+            .onChange(of: self.assistantStreamingPhase) {
+                guard self.shouldAutoFollowChatUpdates else { return }
                 self.scrollToBottom(proxy: proxy)
             }
         }
+    }
+
+    @ViewBuilder
+    private func scrollToBottomButton(proxy: ScrollViewProxy) -> some View {
+        Button {
+            self.scrollToBottom(proxy: proxy)
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.78))
+                .frame(width: 68, height: 40)
+                .background {
+                    self.glassCardBackground(
+                        cornerRadius: 20,
+                        tint: self.glassWhiteTint(light: 0.12, dark: 0.08)
+                    )
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(self.glassStrokeColor.opacity(0.38), lineWidth: 0.8)
+                }
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
@@ -3240,6 +3290,12 @@ struct SessionWorkbenchView: View {
         }
     }
 
+    private func distanceToChatBottom(from geometry: ScrollGeometry) -> CGFloat {
+        let visibleBottomY = geometry.contentOffset.y + geometry.containerSize.height
+        let distance = geometry.contentSize.height - visibleBottomY
+        return max(0, distance)
+    }
+
     private func selectWorkspace(_ workspace: ProjectWorkspace) {
         let previousWorkspaceID = self.selectedWorkspaceID
         self.selectedWorkspaceID = workspace.id
@@ -3441,9 +3497,17 @@ struct SessionWorkbenchView: View {
 
             if line.hasPrefix("Plan: ")
                 || line.hasPrefix("Reasoning: ")
-                || line.hasPrefix("$ ")
-                || line.hasPrefix("File change ")
                 || line.hasPrefix("Item: ") {
+                flushCurrent()
+                currentRole = .assistant
+                currentIsProgressDetail = true
+                let detailContent = Self.progressDetailContent(from: line)
+                buffer = detailContent.isEmpty ? [] : [detailContent]
+                continue
+            }
+
+            if line.hasPrefix("$ ")
+                || line.hasPrefix("File change ") {
                 flushCurrent()
                 currentRole = .assistant
                 currentIsProgressDetail = true
@@ -3465,6 +3529,17 @@ struct SessionWorkbenchView: View {
 
         flushCurrent()
         return messages
+    }
+
+    private static func progressDetailContent(from line: String) -> String {
+        guard let colonIndex = line.firstIndex(of: ":") else {
+            return line
+        }
+        var content = line[line.index(after: colonIndex)...]
+        if content.first == " " {
+            content = content.dropFirst()
+        }
+        return String(content)
     }
 
     private func restoreSelectionFromSession() {
@@ -3604,8 +3679,10 @@ struct SessionWorkbenchView: View {
 
     private func sendPrompt(forceNewThread: Bool) {
         let originalPrompt = self.prompt
+        let originalTokenBadges = self.selectedComposerTokenBadges
         let trimmedPrompt = self.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPrompt.isEmpty else { return }
+        let promptForRequest = self.composePromptForRequest(from: trimmedPrompt)
         guard let selectedWorkspace else {
             self.localErrorMessage = "Select a project first."
             return
@@ -3613,10 +3690,12 @@ struct SessionWorkbenchView: View {
 
         self.localErrorMessage = ""
         self.localStatusMessage = ""
+        self.scrollToBottomRequestCount += 1
 
         if self.isSSHTransport {
             self.sendPromptViaSSH(
-                prompt: trimmedPrompt,
+                promptForRequest: promptForRequest,
+                displayPrompt: trimmedPrompt,
                 selectedWorkspace: selectedWorkspace,
                 forceNewThread: forceNewThread
             )
@@ -3630,6 +3709,7 @@ struct SessionWorkbenchView: View {
         }
 
         self.prompt = ""
+        self.selectedComposerTokenBadges = []
         self.pendingPromptDispatchCount += 1
 
         Task {
@@ -3664,12 +3744,12 @@ struct SessionWorkbenchView: View {
                     try await self.appState.appServerClient.turnSteer(
                         threadID: threadID,
                         expectedTurnID: activeTurnID,
-                        inputText: trimmedPrompt
+                        inputText: promptForRequest
                     )
                 } else {
                     _ = try await self.appState.appServerClient.turnStart(
                         threadID: threadID,
-                        inputText: trimmedPrompt,
+                        inputText: promptForRequest,
                         model: self.composerModelForRequest,
                         effort: self.selectedComposerReasoning,
                         collaborationModeID: collaborationModeIDForRequest
@@ -3678,7 +3758,7 @@ struct SessionWorkbenchView: View {
                     selectedReasoningForThread = self.selectedComposerReasoning
                 }
 
-                self.appState.appServerClient.appendLocalEcho(trimmedPrompt, to: threadID)
+                self.appState.appServerClient.appendLocalEcho(promptForRequest, to: threadID)
 
                 self.appState.threadBookmarkStore.upsert(
                     summary: CodexThreadSummary(
@@ -3697,8 +3777,10 @@ struct SessionWorkbenchView: View {
                 let message = self.appState.appServerClient.userFacingMessage(for: error)
                 self.localErrorMessage = message
                 self.showComposerInfo(message, tone: .error, autoDismissAfter: 4.0)
-                if self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   self.selectedComposerTokenBadges.isEmpty {
                     self.prompt = originalPrompt
+                    self.selectedComposerTokenBadges = originalTokenBadges
                     self.isPromptFieldFocused = true
                 }
             }
@@ -3949,15 +4031,11 @@ struct SessionWorkbenchView: View {
     private func insertComposerToken(_ token: String) {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-
-        if self.prompt.isEmpty {
-            self.prompt = trimmed + " "
-        } else if self.prompt.hasSuffix(" ") || self.prompt.hasSuffix("\n") {
-            self.prompt += trimmed + " "
-        } else {
-            self.prompt += "\n" + trimmed + " "
+        guard let badge = Self.makeComposerTokenBadge(token: trimmed) else { return }
+        let normalized = badge.token.lowercased()
+        if !self.selectedComposerTokenBadges.contains(where: { $0.token.lowercased() == normalized }) {
+            self.selectedComposerTokenBadges.append(badge)
         }
-
         self.isPromptFieldFocused = true
     }
 
@@ -3966,12 +4044,20 @@ struct SessionWorkbenchView: View {
         let icon = badge.kind == .mcp ? "shippingbox" : "sparkles"
         let background = badge.kind == .mcp ? Color.cyan.opacity(0.20) : Color.green.opacity(0.20)
         let border = badge.kind == .mcp ? Color.cyan.opacity(0.45) : Color.green.opacity(0.45)
+        Button {
+            self.removeComposerTokenBadge(badge)
+        } label: {
+            HStack(spacing: 6) {
+                Label(badge.title, systemImage: icon)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.94))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
 
-        Label(badge.title, systemImage: icon)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(Color.white.opacity(0.94))
-            .lineLimit(1)
-            .truncationMode(.tail)
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color.white.opacity(0.88))
+            }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(background, in: Capsule(style: .continuous))
@@ -3979,53 +4065,50 @@ struct SessionWorkbenchView: View {
                 Capsule(style: .continuous)
                     .stroke(border, lineWidth: 0.9)
             )
-            .accessibilityLabel("Composer token \(badge.token)")
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Remove composer token \(badge.token)")
     }
 
-    private static func parseComposerTokenBadges(from prompt: String) -> [ComposerTokenBadge] {
-        guard !prompt.isEmpty else { return [] }
+    private func removeComposerTokenBadge(_ badge: ComposerTokenBadge) {
+        self.selectedComposerTokenBadges.removeAll { $0.id == badge.id }
+    }
 
-        let fullRange = NSRange(prompt.startIndex..<prompt.endIndex, in: prompt)
-        var rows: [(location: Int, badge: ComposerTokenBadge)] = []
+    private func composePromptForRequest(from trimmedPrompt: String) -> String {
+        guard !self.selectedComposerTokenBadges.isEmpty else {
+            return trimmedPrompt
+        }
+        let prefixes = self.selectedComposerTokenBadges.map(\.token)
+        return (prefixes + [trimmedPrompt]).joined(separator: "\n")
+    }
 
-        if let mcpRegex = try? NSRegularExpression(pattern: #"/mcp(?:\s+[^\s\n]+)?"#, options: [.caseInsensitive]) {
-            for match in mcpRegex.matches(in: prompt, options: [], range: fullRange) {
-                guard let matchRange = Range(match.range, in: prompt) else { continue }
-                let token = String(prompt[matchRange])
-                let normalized = token.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !normalized.isEmpty else { continue }
-                let title = normalized.replacingOccurrences(of: "/mcp", with: "MCP", options: [.caseInsensitive])
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                let badge = ComposerTokenBadge(
-                    id: "mcp-\(match.range.location)-\(normalized)",
-                    kind: .mcp,
-                    token: normalized,
-                    title: title.isEmpty ? "MCP" : title
-                )
-                rows.append((match.range.location, badge))
-            }
+    private static func makeComposerTokenBadge(token: String) -> ComposerTokenBadge? {
+        let normalized = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+
+        if normalized.lowercased().hasPrefix("/mcp") {
+            let title = normalized
+                .replacingOccurrences(of: "/mcp", with: "MCP", options: [.caseInsensitive])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return ComposerTokenBadge(
+                id: "mcp-\(normalized.lowercased())",
+                kind: .mcp,
+                token: normalized,
+                title: title.isEmpty ? "MCP" : title
+            )
         }
 
-        if let skillRegex = try? NSRegularExpression(pattern: #"\$[^\s\n]+"#, options: []) {
-            for match in skillRegex.matches(in: prompt, options: [], range: fullRange) {
-                guard let matchRange = Range(match.range, in: prompt) else { continue }
-                let token = String(prompt[matchRange])
-                let normalized = token.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !normalized.isEmpty else { continue }
-                let skillName = String(normalized.dropFirst())
-                let badge = ComposerTokenBadge(
-                    id: "skill-\(match.range.location)-\(normalized)",
-                    kind: .skill,
-                    token: normalized,
-                    title: skillName.isEmpty ? "Skill" : "Skill \(skillName)"
-                )
-                rows.append((match.range.location, badge))
-            }
+        if normalized.hasPrefix("$") {
+            let skillName = String(normalized.dropFirst())
+            return ComposerTokenBadge(
+                id: "skill-\(normalized.lowercased())",
+                kind: .skill,
+                token: normalized,
+                title: skillName.isEmpty ? "Skill" : "Skill \(skillName)"
+            )
         }
 
-        return rows
-            .sorted { lhs, rhs in lhs.location < rhs.location }
-            .map(\.badge)
+        return nil
     }
 
     private func executeSlashCommand(_ command: AppServerSlashCommandDescriptor) {
@@ -4201,7 +4284,8 @@ struct SessionWorkbenchView: View {
     }
 
     private func sendPromptViaSSH(
-        prompt: String,
+        promptForRequest: String,
+        displayPrompt: String,
         selectedWorkspace: ProjectWorkspace,
         forceNewThread: Bool
     ) {
@@ -4219,7 +4303,7 @@ struct SessionWorkbenchView: View {
                     host: self.host,
                     password: password,
                     workspacePath: selectedWorkspace.remotePath,
-                    prompt: prompt,
+                    prompt: promptForRequest,
                     resumeThreadID: resumeThreadID,
                     forceNewThread: forceNewThread,
                     model: self.composerModelForRequest
@@ -4227,14 +4311,14 @@ struct SessionWorkbenchView: View {
 
                 self.selectedThreadID = result.threadID
                 self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: result.threadID)
-                self.appendSSHTranscript(prompt: prompt, response: result.assistantText, threadID: result.threadID)
+                self.appendSSHTranscript(prompt: promptForRequest, response: result.assistantText, threadID: result.threadID)
 
                 self.appState.threadBookmarkStore.upsert(
                     summary: CodexThreadSummary(
                         threadID: result.threadID,
                         hostID: self.host.id,
                         workspaceID: selectedWorkspace.id,
-                        preview: prompt,
+                        preview: displayPrompt,
                         updatedAt: Date(),
                         archived: false,
                         cwd: selectedWorkspace.remotePath
@@ -4242,6 +4326,7 @@ struct SessionWorkbenchView: View {
                 )
 
                 self.prompt = ""
+                self.selectedComposerTokenBadges = []
                 self.localStatusMessage = "Executed via codex exec over SSH."
             } catch {
                 self.localErrorMessage = self.userFacingSSHError(error)
