@@ -720,4 +720,120 @@ final class CodexAppMobileTests: XCTestCase {
             "User: Hello 🌞\nAssistant: Hello. How can I help?"
         )
     }
+
+    func testBuildCommandPaletteRowsWithCommandsOnly() {
+        let commands = [
+            AppServerSlashCommandDescriptor(
+                kind: .newThread,
+                command: "/new",
+                title: "New thread",
+                description: "Start a new conversation.",
+                systemImage: "plus.bubble",
+                requiresThread: false
+            )
+        ]
+
+        let rows = buildCommandPaletteRows(
+            commands: commands,
+            mcpServers: [],
+            skills: []
+        )
+
+        XCTAssertEqual(rows.count, 1)
+        guard case .command(let command) = rows[0] else {
+            return XCTFail("Expected command row.")
+        }
+        XCTAssertEqual(command.command, "/new")
+    }
+
+    func testBuildCommandPaletteRowsIncludesMCPAndSkillsInOrder() {
+        let command = AppServerSlashCommandDescriptor(
+            kind: .showStatus,
+            command: "/status",
+            title: "Status",
+            description: "Show status.",
+            systemImage: "info.circle",
+            requiresThread: false
+        )
+        let mcp = AppServerMCPServerSummary(
+            name: "github",
+            toolCount: 5,
+            resourceCount: 2,
+            authStatus: "connected"
+        )
+        let skill = AppServerSkillSummary(name: "skill-creator", path: nil)
+
+        let rows = buildCommandPaletteRows(
+            commands: [command],
+            mcpServers: [mcp],
+            skills: [skill]
+        )
+
+        XCTAssertEqual(rows.count, 3)
+        if case .command(let resolved) = rows[0] {
+            XCTAssertEqual(resolved.command, "/status")
+        } else {
+            XCTFail("First row should be command.")
+        }
+        if case .mcp(let resolved) = rows[1] {
+            XCTAssertEqual(resolved.name, "github")
+        } else {
+            XCTFail("Second row should be mcp.")
+        }
+        if case .skill(let resolved) = rows[2] {
+            XCTAssertEqual(resolved.name, "skill-creator")
+        } else {
+            XCTFail("Third row should be skill.")
+        }
+    }
+
+    func testBuildCommandPaletteRowsDeduplicatesEntries() {
+        let command = AppServerSlashCommandDescriptor(
+            kind: .newThread,
+            command: "/new",
+            title: "New thread",
+            description: "Start a new conversation.",
+            systemImage: "plus.bubble",
+            requiresThread: false
+        )
+        let duplicateCommand = AppServerSlashCommandDescriptor(
+            kind: .newThread,
+            command: "/new",
+            title: "New thread duplicate",
+            description: "Duplicate.",
+            systemImage: "plus.bubble",
+            requiresThread: false
+        )
+        let mcp = AppServerMCPServerSummary(
+            name: "filesystem",
+            toolCount: 3,
+            resourceCount: 1,
+            authStatus: "connected"
+        )
+        let duplicateMCP = AppServerMCPServerSummary(
+            name: "filesystem",
+            toolCount: 7,
+            resourceCount: 5,
+            authStatus: "connected"
+        )
+        let skill = AppServerSkillSummary(name: "checks", path: "/tmp/checks/SKILL.md")
+        let duplicateSkill = AppServerSkillSummary(name: "checks", path: "/tmp/checks/SKILL.md")
+
+        let rows = buildCommandPaletteRows(
+            commands: [command, duplicateCommand],
+            mcpServers: [mcp, duplicateMCP],
+            skills: [skill, duplicateSkill]
+        )
+
+        XCTAssertEqual(rows.count, 3)
+    }
+
+    func testBuildCommandPaletteRowsWithNoEntriesReturnsEmpty() {
+        let rows = buildCommandPaletteRows(
+            commands: [],
+            mcpServers: [],
+            skills: []
+        )
+        XCTAssertTrue(rows.isEmpty)
+    }
 }

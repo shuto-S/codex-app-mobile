@@ -1298,6 +1298,59 @@ struct AppServerModelDescriptor: Equatable, Identifiable {
     var id: String { self.model }
 }
 
+enum AppServerSlashCommandKind: String {
+    case newThread
+    case forkThread
+    case startReview
+    case showStatus
+}
+
+struct AppServerSlashCommandDescriptor: Equatable, Identifiable {
+    let kind: AppServerSlashCommandKind
+    let command: String
+    let title: String
+    let description: String
+    let systemImage: String
+    let requiresThread: Bool
+
+    var id: String { self.command }
+}
+
+struct AppServerMCPServerSummary: Equatable, Identifiable {
+    let name: String
+    let toolCount: Int
+    let resourceCount: Int
+    let authStatus: String?
+
+    var id: String { self.name }
+}
+
+struct AppServerSkillSummary: Equatable, Identifiable {
+    let name: String
+    let path: String?
+    let description: String?
+
+    init(name: String, path: String?, description: String? = nil) {
+        self.name = name
+        self.path = path
+        self.description = description
+    }
+
+    var id: String {
+        if let path, !path.isEmpty {
+            return path
+        }
+        return self.name
+    }
+}
+
+struct AppServerAppSummary: Equatable, Identifiable {
+    let slug: String
+    let title: String
+
+    var id: String { self.slug }
+}
+
 enum AppServerErrorCategory: String {
     case authentication
     case connection
@@ -1333,6 +1386,33 @@ struct AppServerDiagnostics: Equatable {
     var minimumRequiredVersion: String = "0.101.0"
 }
 
+struct AppServerRateLimitSummary: Equatable, Identifiable {
+    let name: String
+    let usedPercent: Double?
+    let remainingPercent: Double?
+    let windowMinutes: Int?
+    let resetsAt: Date?
+
+    var id: String { "\(self.name)-\(self.windowMinutes ?? -1)" }
+}
+
+struct AppServerContextUsageSummary: Equatable {
+    let usedTokens: Int?
+    let maxTokens: Int?
+    let remainingTokens: Int?
+    let updatedAt: Date
+
+    var remainingPercent: Double? {
+        if let remainingTokens, let maxTokens, maxTokens > 0 {
+            return max(0, min(100, (Double(remainingTokens) / Double(maxTokens)) * 100))
+        }
+        if let usedTokens, let maxTokens, maxTokens > 0 {
+            return max(0, min(100, (Double(maxTokens - usedTokens) / Double(maxTokens)) * 100))
+        }
+        return nil
+    }
+}
+
 @MainActor
 final class AppServerClient: ObservableObject {
     static let minimumSupportedCLIVersion = "0.101.0"
@@ -1360,6 +1440,12 @@ final class AppServerClient: ObservableObject {
     @Published private(set) var activeTurnIDByThread: [String: String] = [:]
     @Published private(set) var turnStreamingPhaseByThread: [String: TurnStreamingPhase] = [:]
     @Published private(set) var availableModels: [AppServerModelDescriptor] = []
+    @Published private(set) var mcpServers: [AppServerMCPServerSummary] = []
+    @Published private(set) var availableSkills: [AppServerSkillSummary] = []
+    @Published private(set) var availableApps: [AppServerAppSummary] = []
+    @Published private(set) var availableSlashCommands: [AppServerSlashCommandDescriptor] = []
+    @Published private(set) var rateLimits: [AppServerRateLimitSummary] = []
+    @Published private(set) var contextUsageByThread: [String: AppServerContextUsageSummary] = [:]
     @Published private(set) var eventLog: [String] = []
     @Published private(set) var diagnostics = AppServerDiagnostics(
         minimumRequiredVersion: AppServerClient.minimumSupportedCLIVersion
@@ -1436,6 +1522,12 @@ final class AppServerClient: ObservableObject {
         self.activeTurnIDByThread.removeAll()
         self.turnStreamingPhaseByThread.removeAll()
         self.availableModels = []
+        self.mcpServers = []
+        self.availableSkills = []
+        self.availableApps = []
+        self.availableSlashCommands = []
+        self.rateLimits = []
+        self.contextUsageByThread.removeAll()
         self.state = .disconnected
         self.connectedEndpoint = ""
         self.endBackgroundProcessing()
@@ -1470,6 +1562,31 @@ final class AppServerClient: ObservableObject {
         self.diagnostics.lastPingLatencyMS = latency
         self.diagnostics.lastCheckedAt = Date()
         return self.diagnostics
+    }
+
+    func refreshRateLimits() async throws -> [AppServerRateLimitSummary] {
+        guard self.state == .connected else {
+            throw AppServerClientError.notConnected
+        }
+
+        do {
+            let result = try await self.request(method: "account/rateLimits/read", params: nil)
+            var parsed = Self.parseRateLimitCatalog(result)
+            if parsed.isEmpty, let object = result.objectValue, let data = object["data"] {
+                parsed = Self.parseRateLimitCatalog(data)
+            }
+            self.rateLimits = parsed
+            return parsed
+        } catch let AppServerClientError.remote(code, message) where code == -32601 {
+            self.rateLimits = []
+            self.appendEvent("account/rateLimits/read unavailable: \(message)")
+            return []
+        }
+    }
+
+    func contextUsage(for threadID: String?) -> AppServerContextUsageSummary? {
+        guard let threadID else { return nil }
+        return self.contextUsageByThread[threadID]
     }
 
     func userFacingMessage(for error: Error) -> String {
@@ -1558,6 +1675,133 @@ final class AppServerClient: ObservableObject {
             self.appendEvent("thread/start rejected model; retrying without model.")
             return try await requestThreadStart(model: nil)
         }
+    }
+
+    func threadFork(threadID: String) async throws -> String {
+        let params: JSONValue = .object([
+            "threadId": .string(threadID),
+        ])
+        let result = try await self.request(method: "thread/fork", params: params)
+        guard let object = result.objectValue,
+              let forkedThreadID = Self.findString(
+                in: object,
+                paths: [
+                    ["thread", "id"],
+                    ["threadId"],
+                    ["id"],
+                ]
+              )
+        else {
+            throw AppServerClientError.malformedResponse
+        }
+        return forkedThreadID
+    }
+
+    enum ReviewDelivery: String {
+        case inline
+        case detached
+    }
+
+    enum ReviewTarget: Equatable {
+        case uncommittedChanges
+        case baseBranch(String)
+        case commit(sha: String, title: String?)
+        case custom(String)
+
+        fileprivate var jsonValue: JSONValue {
+            switch self {
+            case .uncommittedChanges:
+                return .object([
+                    "type": .string("uncommittedChanges")
+                ])
+            case .baseBranch(let baseBranch):
+                return .object([
+                    "type": .string("baseBranch"),
+                    "baseBranch": .string(baseBranch)
+                ])
+            case .commit(let sha, let title):
+                var payload: [String: JSONValue] = [
+                    "type": .string("commit"),
+                    "sha": .string(sha)
+                ]
+                if let title = title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+                    payload["title"] = .string(title)
+                }
+                return .object(payload)
+            case .custom(let instructions):
+                return .object([
+                    "type": .string("custom"),
+                    "instructions": .string(instructions)
+                ])
+            }
+        }
+    }
+
+    @discardableResult
+    func reviewStart(
+        threadID: String,
+        delivery: ReviewDelivery = .inline,
+        target: ReviewTarget = .uncommittedChanges
+    ) async throws -> String {
+        let targetCandidates: [JSONValue]
+        switch target {
+        case .baseBranch(let baseBranch):
+            targetCandidates = [
+                target.jsonValue,
+                .object([
+                    "type": .string("baseBranch"),
+                    "branch": .string(baseBranch)
+                ]),
+                .object([
+                    "type": .string("baseBranch"),
+                    "branchName": .string(baseBranch)
+                ])
+            ]
+        default:
+            targetCandidates = [target.jsonValue]
+        }
+
+        var result: JSONValue?
+        for (index, targetCandidate) in targetCandidates.enumerated() {
+            do {
+                let params: JSONValue = .object([
+                    "threadId": .string(threadID),
+                    "delivery": .string(delivery.rawValue),
+                    "target": targetCandidate
+                ])
+                result = try await self.request(method: "review/start", params: params)
+                break
+            } catch {
+                let shouldRetry = index < targetCandidates.count - 1
+                    && Self.shouldRetryReviewStartTarget(error)
+                if shouldRetry {
+                    continue
+                }
+                throw error
+            }
+        }
+
+        guard let result else {
+            throw AppServerClientError.malformedResponse
+        }
+        guard let object = result.objectValue else {
+            throw AppServerClientError.malformedResponse
+        }
+
+        let reviewThreadID = Self.findString(
+            in: object,
+            paths: [
+                ["reviewThreadId"],
+                ["threadId"],
+                ["thread", "id"],
+            ]
+        ) ?? threadID
+
+        if let turnID = Self.findString(in: object, paths: [["turn", "id"]]) {
+            self.activeTurnIDByThread[reviewThreadID] = turnID
+            self.turnStreamingPhaseByThread[reviewThreadID] = .thinking
+        }
+        return reviewThreadID
     }
 
     func threadResume(threadID: String) async throws -> CodexThreadDetail {
@@ -1723,6 +1967,10 @@ final class AppServerClient: ObservableObject {
         self.lastHost = host
         self.connectedEndpoint = url.absoluteString
         self.availableModels = []
+        self.mcpServers = []
+        self.availableSkills = []
+        self.availableApps = []
+        self.availableSlashCommands = []
         self.turnStreamingPhaseByThread.removeAll()
         self.diagnostics = AppServerDiagnostics(
             minimumRequiredVersion: Self.minimumSupportedCLIVersion
@@ -1761,7 +2009,7 @@ final class AppServerClient: ObservableObject {
             }
             self.state = .connected
             Task { @MainActor [weak self] in
-                await self?.refreshModelCatalog()
+                await self?.refreshCatalogs(primaryCWD: nil)
             }
             self.diagnostics.lastCheckedAt = Date()
             self.appendEvent("Connected: \(host.name) @ \(url.absoluteString)")
@@ -1997,11 +2245,70 @@ final class AppServerClient: ObservableObject {
                 self.endBackgroundProcessingIfIdle()
             }
 
+        case "thread/tokenUsage/updated":
+            guard let threadID = paramsObject["threadId"]?.stringValue else {
+                return
+            }
+            let usageObject = paramsObject["tokenUsage"]?.objectValue ?? paramsObject
+            let usedTokens = Self.findInt(
+                in: usageObject,
+                paths: [
+                    ["inputTokens"],
+                    ["usedTokens"],
+                    ["usedInputTokens"],
+                    ["usage", "used"],
+                ]
+            )
+            let maxTokens = Self.findInt(
+                in: usageObject,
+                paths: [
+                    ["maxInputTokens"],
+                    ["contextWindow", "maxTokens"],
+                    ["limit"],
+                    ["maxTokens"],
+                    ["usage", "limit"],
+                ]
+            )
+            let remainingTokens = Self.findInt(
+                in: usageObject,
+                paths: [
+                    ["remainingInputTokens"],
+                    ["contextWindow", "remainingTokens"],
+                    ["remainingTokens"],
+                    ["remaining"],
+                    ["usage", "remaining"],
+                ]
+            )
+
+            self.contextUsageByThread[threadID] = AppServerContextUsageSummary(
+                usedTokens: usedTokens,
+                maxTokens: maxTokens,
+                remainingTokens: remainingTokens,
+                updatedAt: Date()
+            )
+
+        case "account/rateLimits/updated":
+            var parsed = Self.parseRateLimitCatalog(.object(paramsObject))
+            if parsed.isEmpty, let data = paramsObject["data"] {
+                parsed = Self.parseRateLimitCatalog(data)
+            }
+            self.rateLimits = parsed
+
         case "thread/started":
             if let thread = paramsObject["thread"]?.objectValue,
                let threadID = thread["id"]?.stringValue {
                 self.appendEvent("Thread started: \(threadID)")
             }
+
+        case "app/list/updated":
+            let rows = paramsObject["data"]?.arrayValue
+                ?? paramsObject["apps"]?.arrayValue
+                ?? []
+            let parsed = Self.parseAppCatalog(rows)
+            self.availableApps = parsed.sorted {
+                $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            }
+            self.rebuildSlashCommandCatalog()
 
         case "error":
             if let message = paramsObject["message"]?.stringValue {
@@ -2187,6 +2494,21 @@ final class AppServerClient: ObservableObject {
         }
     }
 
+    func refreshCatalogs(primaryCWD: String?) async {
+        guard self.state == .connected else {
+            self.availableSlashCommands = []
+            return
+        }
+
+        async let modelTask: Void = self.refreshModelCatalog()
+        async let mcpTask: Void = self.refreshMCPServerCatalog()
+        async let skillTask: Void = self.refreshSkillCatalog(primaryCWD: primaryCWD)
+        async let appTask: Void = self.refreshAppCatalog()
+        _ = await (modelTask, mcpTask, skillTask, appTask)
+
+        self.rebuildSlashCommandCatalog()
+    }
+
     private func refreshModelCatalog() async {
         var entries: [ModelListEntryPayload] = []
         var cursor: String?
@@ -2228,6 +2550,164 @@ final class AppServerClient: ObservableObject {
            let preferredModel = catalog.first(where: { $0.isDefault })?.model ?? catalog.first?.model {
             self.diagnostics.currentModel = preferredModel
         }
+        self.rebuildSlashCommandCatalog()
+    }
+
+    private func refreshMCPServerCatalog() async {
+        var rows: [JSONValue] = []
+        var cursor: String?
+        var seenCursors: Set<String> = []
+
+        do {
+            while true {
+                var params: [String: JSONValue] = [
+                    "limit": .number(100)
+                ]
+                if let cursor {
+                    params["cursor"] = .string(cursor)
+                }
+
+                let result = try await self.request(method: "mcpServerStatus/list", params: .object(params))
+                let pageRows = Self.dataArray(from: result, fallbackKeys: ["servers", "mcpServers"])
+                rows.append(contentsOf: pageRows)
+
+                guard let nextCursor = Self.nextCursor(from: result),
+                      !nextCursor.isEmpty,
+                      !seenCursors.contains(nextCursor),
+                      rows.count < 300
+                else {
+                    break
+                }
+
+                seenCursors.insert(nextCursor)
+                cursor = nextCursor
+            }
+        } catch {
+            self.appendEvent("mcpServerStatus/list unavailable: \(error.localizedDescription)")
+            self.mcpServers = []
+            self.rebuildSlashCommandCatalog()
+            return
+        }
+
+        let parsed = Self.parseMCPServerCatalog(rows)
+        self.mcpServers = parsed.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+        self.rebuildSlashCommandCatalog()
+    }
+
+    private func refreshSkillCatalog(primaryCWD: String?) async {
+        var params: [String: JSONValue] = [
+            "forceReload": .bool(false)
+        ]
+        if let primaryCWD = Self.nonEmpty(primaryCWD) {
+            params["cwds"] = .array([.string(primaryCWD)])
+        }
+
+        do {
+            let result = try await self.request(method: "skills/list", params: .object(params))
+            var entries = Self.dataArray(from: result)
+            if entries.isEmpty,
+               let object = result.objectValue,
+               let directSkills = object["skills"]?.arrayValue {
+                entries = [.object(["skills": .array(directSkills)])]
+            }
+            let parsed = Self.parseSkillCatalog(entries)
+            self.availableSkills = parsed.sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+        } catch {
+            self.appendEvent("skills/list unavailable: \(error.localizedDescription)")
+            self.availableSkills = []
+        }
+
+        self.rebuildSlashCommandCatalog()
+    }
+
+    private func refreshAppCatalog() async {
+        var rows: [JSONValue] = []
+        var cursor: String?
+        var seenCursors: Set<String> = []
+
+        do {
+            while true {
+                var params: [String: JSONValue] = [
+                    "limit": .number(100),
+                    "forceRefetch": .bool(false),
+                ]
+                if let cursor {
+                    params["cursor"] = .string(cursor)
+                }
+
+                let result = try await self.request(method: "app/list", params: .object(params))
+                let pageRows = Self.dataArray(from: result, fallbackKeys: ["apps"])
+                rows.append(contentsOf: pageRows)
+
+                guard let nextCursor = Self.nextCursor(from: result),
+                      !nextCursor.isEmpty,
+                      !seenCursors.contains(nextCursor),
+                      rows.count < 300
+                else {
+                    break
+                }
+
+                seenCursors.insert(nextCursor)
+                cursor = nextCursor
+            }
+        } catch {
+            self.appendEvent("app/list unavailable: \(error.localizedDescription)")
+            self.availableApps = []
+            self.rebuildSlashCommandCatalog()
+            return
+        }
+
+        let parsed = Self.parseAppCatalog(rows)
+        self.availableApps = parsed.sorted {
+            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+        }
+        self.rebuildSlashCommandCatalog()
+    }
+
+    private func rebuildSlashCommandCatalog() {
+        guard self.state == .connected else {
+            self.availableSlashCommands = []
+            return
+        }
+
+        self.availableSlashCommands = [
+            AppServerSlashCommandDescriptor(
+                kind: .newThread,
+                command: "/new",
+                title: "New thread",
+                description: "Start a new conversation.",
+                systemImage: "plus.bubble",
+                requiresThread: false
+            ),
+            AppServerSlashCommandDescriptor(
+                kind: .forkThread,
+                command: "/fork",
+                title: "Fork",
+                description: "Fork the current thread.",
+                systemImage: "arrow.triangle.branch",
+                requiresThread: true
+            ),
+            AppServerSlashCommandDescriptor(
+                kind: .startReview,
+                command: "/review",
+                title: "Code review",
+                description: "Run reviewer on current changes.",
+                systemImage: "checkmark.shield",
+                requiresThread: true
+            ),
+            AppServerSlashCommandDescriptor(
+                kind: .showStatus,
+                command: "/status",
+                title: "Status",
+                description: "Show connection, model, and catalog status.",
+                systemImage: "info.circle",
+                requiresThread: false
+            ),
+        ]
     }
 
     private static func parseModelCatalog(_ entries: [ModelListEntryPayload]) -> [AppServerModelDescriptor] {
@@ -2285,6 +2765,395 @@ final class AppServerClient: ObservableObject {
         return models
     }
 
+    private static func parseMCPServerCatalog(_ rows: [JSONValue]) -> [AppServerMCPServerSummary] {
+        var catalog: [AppServerMCPServerSummary] = []
+        var seenNames: Set<String> = []
+
+        for row in rows {
+            guard let object = row.objectValue else { continue }
+
+            let name = Self.findString(
+                in: object,
+                paths: [
+                    ["name"],
+                    ["id"],
+                    ["server", "name"],
+                    ["serverName"],
+                    ["displayName"],
+                ]
+            ) ?? "Unnamed MCP Server"
+
+            guard !seenNames.contains(name) else { continue }
+            seenNames.insert(name)
+
+            let toolCount = object["toolCount"]?.intValue
+                ?? object["toolsCount"]?.intValue
+                ?? object["tools"]?.arrayValue?.count
+                ?? 0
+            let resourceCount = object["resourceCount"]?.intValue
+                ?? object["resourcesCount"]?.intValue
+                ?? object["resources"]?.arrayValue?.count
+                ?? 0
+            let authStatus = Self.findString(
+                in: object,
+                paths: [
+                    ["authStatus"],
+                    ["oauth", "status"],
+                    ["status"],
+                    ["auth", "status"],
+                ]
+            )
+
+            catalog.append(
+                AppServerMCPServerSummary(
+                    name: name,
+                    toolCount: toolCount,
+                    resourceCount: resourceCount,
+                    authStatus: authStatus
+                )
+            )
+        }
+
+        return catalog
+    }
+
+    private static func parseSkillCatalog(_ entries: [JSONValue]) -> [AppServerSkillSummary] {
+        var catalog: [AppServerSkillSummary] = []
+        var seenIDs: Set<String> = []
+
+        for entry in entries {
+            guard let object = entry.objectValue else { continue }
+            let skillRows: [JSONValue]
+            if let skills = object["skills"]?.arrayValue {
+                skillRows = skills
+            } else if object["name"] != nil || object["path"] != nil {
+                skillRows = [.object(object)]
+            } else {
+                skillRows = []
+            }
+
+            for skill in skillRows {
+                guard let skillObject = skill.objectValue else { continue }
+                let enabled = skillObject["enabled"]?.boolValue ?? true
+                guard enabled else { continue }
+
+                let name = Self.findString(
+                    in: skillObject,
+                    paths: [
+                        ["name"],
+                        ["interface", "displayName"],
+                    ]
+                ) ?? "Unnamed Skill"
+                let path = Self.findString(
+                    in: skillObject,
+                    paths: [
+                        ["path"],
+                        ["source", "path"],
+                    ]
+                )
+                let description = Self.findString(
+                    in: skillObject,
+                    paths: [
+                        ["interface", "shortDescription"],
+                        ["interface", "description"],
+                        ["description"],
+                        ["summary"],
+                    ]
+                )
+                let id = path ?? name
+                guard !seenIDs.contains(id) else { continue }
+                seenIDs.insert(id)
+                catalog.append(
+                    AppServerSkillSummary(
+                        name: name,
+                        path: path,
+                        description: Self.nonEmpty(description)
+                    )
+                )
+            }
+        }
+
+        return catalog
+    }
+
+    private static func parseAppCatalog(_ rows: [JSONValue]) -> [AppServerAppSummary] {
+        var catalog: [AppServerAppSummary] = []
+        var seenIDs: Set<String> = []
+
+        for row in rows {
+            guard let object = row.objectValue else { continue }
+            let isAccessible = object["isAccessible"]?.boolValue ?? true
+            guard isAccessible else { continue }
+
+            guard let slug = Self.findString(in: object, paths: [["id"], ["slug"]]) else {
+                continue
+            }
+            guard !seenIDs.contains(slug) else { continue }
+            seenIDs.insert(slug)
+
+            let title = Self.findString(in: object, paths: [["name"], ["title"]]) ?? slug
+            catalog.append(AppServerAppSummary(slug: slug, title: title))
+        }
+
+        return catalog
+    }
+
+    private static func parseRateLimitCatalog(_ result: JSONValue) -> [AppServerRateLimitSummary] {
+        var catalog: [AppServerRateLimitSummary] = []
+        var seenIDs: Set<String> = []
+
+        guard let object = result.objectValue else {
+            return []
+        }
+
+        if let byLimitID = object["rateLimitsByLimitId"]?.objectValue
+            ?? object["rate_limits_by_limit_id"]?.objectValue,
+           !byLimitID.isEmpty {
+            for limitID in byLimitID.keys.sorted() {
+                guard let limitObject = byLimitID[limitID]?.objectValue else { continue }
+                let limitName = Self.findString(
+                    in: limitObject,
+                    paths: [
+                        ["limitName"],
+                        ["limit_name"],
+                        ["name"],
+                        ["label"],
+                        ["limitId"],
+                        ["limit_id"],
+                        ["id"],
+                    ]
+                ) ?? limitID
+                for summary in Self.parseRateLimitSummaries(in: limitObject, limitName: limitName) {
+                    let id = "\(summary.name.lowercased())-\(summary.windowMinutes ?? -1)"
+                    guard seenIDs.insert(id).inserted else { continue }
+                    catalog.append(summary)
+                }
+            }
+        }
+
+        if let rateLimitsObject = object["rateLimits"]?.objectValue
+            ?? object["rate_limits"]?.objectValue {
+            let limitName = Self.findString(
+                in: rateLimitsObject,
+                paths: [
+                    ["limitName"],
+                    ["limit_name"],
+                    ["name"],
+                    ["label"],
+                    ["limitId"],
+                    ["limit_id"],
+                    ["id"],
+                ]
+            ) ?? "Limit"
+            for summary in Self.parseRateLimitSummaries(in: rateLimitsObject, limitName: limitName) {
+                let id = "\(summary.name.lowercased())-\(summary.windowMinutes ?? -1)"
+                guard seenIDs.insert(id).inserted else { continue }
+                catalog.append(summary)
+            }
+        }
+
+        if catalog.isEmpty {
+            let rows = Self.dataArray(from: result, fallbackKeys: ["rateLimits", "limits", "items"])
+            for row in rows {
+                guard let itemObject = row.objectValue else { continue }
+                let limitName = Self.findString(
+                    in: itemObject,
+                    paths: [
+                        ["limitName"],
+                        ["limit_name"],
+                        ["name"],
+                        ["label"],
+                        ["id"],
+                    ]
+                ) ?? "Limit"
+                for summary in Self.parseRateLimitSummaries(in: itemObject, limitName: limitName) {
+                    let id = "\(summary.name.lowercased())-\(summary.windowMinutes ?? -1)"
+                    guard seenIDs.insert(id).inserted else { continue }
+                    catalog.append(summary)
+                }
+            }
+        }
+
+        return catalog
+    }
+
+    private static func parseRateLimitSummaries(
+        in object: [String: JSONValue],
+        limitName: String
+    ) -> [AppServerRateLimitSummary] {
+        var summaries: [AppServerRateLimitSummary] = []
+
+        if let primaryObject = object["primary"]?.objectValue,
+           let summary = Self.parseSingleRateLimitSummary(in: primaryObject, limitName: limitName) {
+            summaries.append(summary)
+        }
+
+        if let secondaryObject = object["secondary"]?.objectValue,
+           let summary = Self.parseSingleRateLimitSummary(in: secondaryObject, limitName: limitName) {
+            summaries.append(summary)
+        }
+
+        if summaries.isEmpty,
+           let summary = Self.parseSingleRateLimitSummary(in: object, limitName: limitName) {
+            summaries.append(summary)
+        }
+
+        return summaries
+    }
+
+    private static func parseSingleRateLimitSummary(
+        in object: [String: JSONValue],
+        limitName: String
+    ) -> AppServerRateLimitSummary? {
+        let windowMinutes = Self.findInt(
+            in: object,
+            paths: [
+                ["windowDurationMins"],
+                ["window_duration_mins"],
+                ["windowMinutes"],
+                ["window_minutes"],
+                ["window", "minutes"],
+                ["window"],
+            ]
+        )
+
+        var usedPercent = Self.findDouble(
+            in: object,
+            paths: [
+                ["usedPercent"],
+                ["used_percent"],
+                ["usage", "usedPercent"],
+                ["used_percentage"],
+            ]
+        )
+        if usedPercent == nil,
+           let used = Self.findDouble(in: object, paths: [["used"], ["usage", "used"]]),
+           let total = Self.findDouble(in: object, paths: [["total"], ["limit"], ["max"], ["usage", "limit"], ["usage", "max"]]),
+           total > 0 {
+            usedPercent = (used / total) * 100
+        }
+
+        var remainingPercent = Self.findDouble(
+            in: object,
+            paths: [
+                ["remainingPercent"],
+                ["remaining_percent"],
+                ["leftPercent"],
+                ["usage", "remainingPercent"],
+            ]
+        )
+        if remainingPercent == nil,
+           let remaining = Self.findDouble(in: object, paths: [["remaining"], ["usage", "remaining"]]),
+           let total = Self.findDouble(in: object, paths: [["total"], ["limit"], ["max"], ["usage", "limit"], ["usage", "max"]]),
+           total > 0 {
+            remainingPercent = (remaining / total) * 100
+        }
+
+        if let currentUsedPercent = usedPercent, currentUsedPercent <= 1 {
+            usedPercent = currentUsedPercent * 100
+        }
+        if let currentUsedPercent = usedPercent {
+            usedPercent = max(0, min(100, currentUsedPercent))
+        }
+
+        if let currentRemainingPercent = remainingPercent, currentRemainingPercent <= 1 {
+            remainingPercent = currentRemainingPercent * 100
+        }
+        if remainingPercent == nil, let usedPercent {
+            remainingPercent = max(0, 100 - usedPercent)
+        }
+        if let currentRemainingPercent = remainingPercent {
+            remainingPercent = max(0, min(100, currentRemainingPercent))
+        }
+
+        let resetsAt = Self.findDate(
+            in: object,
+            paths: [
+                ["resetsAt"],
+                ["resetAt"],
+                ["resets_at"],
+                ["resetsAtUnixSeconds"],
+                ["resetAtUnixSeconds"],
+                ["resetsAtEpochSeconds"],
+                ["resetAtEpochSeconds"],
+                ["resets_at_unix_seconds"],
+                ["reset_at_unix_seconds"],
+            ]
+        )
+
+        if usedPercent == nil, remainingPercent == nil, windowMinutes == nil, resetsAt == nil {
+            return nil
+        }
+
+        return AppServerRateLimitSummary(
+            name: limitName,
+            usedPercent: usedPercent,
+            remainingPercent: remainingPercent,
+            windowMinutes: windowMinutes,
+            resetsAt: resetsAt
+        )
+    }
+
+    private static func findDate(in object: [String: JSONValue], paths: [[String]]) -> Date? {
+        for path in paths {
+            guard let value = Self.value(at: path, in: object),
+                  let parsed = Self.parseRateLimitDate(value) else {
+                continue
+            }
+            return parsed
+        }
+        return nil
+    }
+
+    private static func parseRateLimitDate(_ raw: JSONValue) -> Date? {
+        switch raw {
+        case .number(let seconds):
+            return Date(timeIntervalSince1970: seconds)
+        case .string(let value):
+            return Self.parseRateLimitDate(value)
+        default:
+            return nil
+        }
+    }
+
+    private static func parseRateLimitDate(_ raw: String) -> Date? {
+        if let seconds = TimeInterval(raw) {
+            return Date(timeIntervalSince1970: seconds)
+        }
+        if let date = Self.iso8601WithFractional.date(from: raw) {
+            return date
+        }
+        if let date = Self.iso8601Basic.date(from: raw) {
+            return date
+        }
+        return nil
+    }
+
+    private static func dataArray(from result: JSONValue, fallbackKeys: [String] = []) -> [JSONValue] {
+        guard let object = result.objectValue else { return [] }
+        if let data = object["data"]?.arrayValue {
+            return data
+        }
+        for key in fallbackKeys {
+            if let rows = object[key]?.arrayValue {
+                return rows
+            }
+        }
+        return []
+    }
+
+    private static func nextCursor(from result: JSONValue) -> String? {
+        guard let object = result.objectValue else { return nil }
+        return Self.findString(
+            in: object,
+            paths: [
+                ["nextCursor"],
+                ["next_cursor"],
+                ["cursor"],
+            ]
+        )
+    }
+
     private static func nonEmpty(_ value: String?) -> String? {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2316,6 +3185,16 @@ final class AppServerClient: ObservableObject {
         return code == -32602
             || normalized.contains("invalid params")
             || normalized.contains("model")
+            || normalized.contains("unknown field")
+    }
+
+    private static func shouldRetryReviewStartTarget(_ error: Error) -> Bool {
+        guard case let AppServerClientError.remote(code, message) = error else {
+            return false
+        }
+        let normalized = message.lowercased()
+        return code == -32602
+            || normalized.contains("invalid params")
             || normalized.contains("unknown field")
     }
 
@@ -2389,6 +3268,32 @@ final class AppServerClient: ObservableObject {
         return nil
     }
 
+    private static func findInt(in object: [String: JSONValue], paths: [[String]]) -> Int? {
+        for path in paths {
+            if let value = Self.value(at: path, in: object)?.intValue {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func findDouble(in object: [String: JSONValue], paths: [[String]]) -> Double? {
+        for path in paths {
+            guard let value = Self.value(at: path, in: object) else { continue }
+            switch value {
+            case .number(let number):
+                return number
+            case .string(let string):
+                if let parsed = Double(string.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                    return parsed
+                }
+            default:
+                break
+            }
+        }
+        return nil
+    }
+
     private static func value(at path: [String], in object: [String: JSONValue]) -> JSONValue? {
         guard let first = path.first else { return nil }
         var cursor = object[first]
@@ -2400,6 +3305,18 @@ final class AppServerClient: ObservableObject {
         }
         return cursor
     }
+
+    private static let iso8601WithFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let iso8601Basic: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
 
     private static func isUnroutableEndpointHost(_ host: String) -> Bool {
         switch host.lowercased() {

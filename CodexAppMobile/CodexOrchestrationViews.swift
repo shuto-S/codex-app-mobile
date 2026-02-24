@@ -1166,10 +1166,89 @@ private struct SessionChatMessage: Identifiable, Equatable {
     let text: String
 }
 
+enum CommandPaletteRow: Identifiable, Equatable {
+    case command(AppServerSlashCommandDescriptor)
+    case mcp(AppServerMCPServerSummary)
+    case skill(AppServerSkillSummary)
+
+    var id: String {
+        switch self {
+        case .command(let command):
+            return "command:\(command.id)"
+        case .mcp(let server):
+            return "mcp:\(server.id)"
+        case .skill(let skill):
+            return "skill:\(skill.id)"
+        }
+    }
+}
+
+func buildCommandPaletteRows(
+    commands: [AppServerSlashCommandDescriptor],
+    mcpServers: [AppServerMCPServerSummary],
+    skills: [AppServerSkillSummary]
+) -> [CommandPaletteRow] {
+    var rows: [CommandPaletteRow] = []
+
+    var seenCommandIDs: Set<String> = []
+    for command in commands {
+        guard seenCommandIDs.insert(command.id).inserted else { continue }
+        rows.append(.command(command))
+    }
+
+    var seenMCPNames: Set<String> = []
+    for server in mcpServers {
+        guard seenMCPNames.insert(server.name).inserted else { continue }
+        rows.append(.mcp(server))
+    }
+
+    var seenSkillIDs: Set<String> = []
+    for skill in skills {
+        guard seenSkillIDs.insert(skill.id).inserted else { continue }
+        rows.append(.skill(skill))
+    }
+
+    return rows
+}
+
 struct SessionWorkbenchView: View {
     private enum AssistantStreamingPhase {
         case thinking
         case responding
+    }
+
+    private enum ReviewModeSelection: String, Equatable {
+        case uncommittedChanges
+        case baseBranch
+    }
+
+    private enum InfoBannerTone {
+        case status
+        case success
+        case error
+    }
+
+    private struct ComposerInfoMessage: Identifiable, Equatable {
+        let id = UUID()
+        let text: String
+        let tone: InfoBannerTone
+    }
+
+    private struct StatusLimitBarSnapshot: Equatable, Identifiable {
+        let id: String
+        let label: String
+        let remainingPercent: Double?
+        let resetAt: Date?
+    }
+
+    private struct StatusPanelSnapshot: Equatable {
+        let sessionID: String
+        let contextUsedTokens: Int?
+        let contextMaxTokens: Int?
+        let contextRemainingPercent: Double?
+        let limits: [StatusLimitBarSnapshot]
+        let fallbackStatus: String
+        let updatedAt: Date
     }
 
     @EnvironmentObject private var appState: AppState
@@ -1194,7 +1273,18 @@ struct SessionWorkbenchView: View {
     @State private var isMenuOpen = false
     @State private var selectedComposerModel = ""
     @State private var selectedComposerReasoning = "low"
+    @State private var isCommandPalettePresented = false
+    @State private var isCommandPaletteRefreshing = false
+    @State private var isReviewModePickerPresented = false
+    @State private var reviewModeSelection: ReviewModeSelection = .uncommittedChanges
+    @State private var reviewBaseBranch = ""
+    @State private var isStatusPanelPresented = false
+    @State private var isStatusRefreshing = false
+    @State private var statusSnapshot: StatusPanelSnapshot?
+    @State private var composerInfoMessage: ComposerInfoMessage?
+    @State private var composerInfoDismissTask: Task<Void, Never>?
     @FocusState private var isPromptFieldFocused: Bool
+    @FocusState private var isReviewBaseBranchFieldFocused: Bool
 
     private let sshCodexExecService = SSHCodexExecService()
 
@@ -1425,6 +1515,106 @@ struct SessionWorkbenchView: View {
         return self.fallbackReasoningEffortOptions.first?.displayName ?? "Low"
     }
 
+    private var slashCommandDescriptors: [AppServerSlashCommandDescriptor] {
+        guard !self.isSSHTransport else { return [] }
+        return self.appState.appServerClient.availableSlashCommands
+    }
+
+    private var commandPaletteRows: [CommandPaletteRow] {
+        buildCommandPaletteRows(
+            commands: self.slashCommandDescriptors,
+            mcpServers: self.appState.appServerClient.mcpServers,
+            skills: self.appState.appServerClient.availableSkills
+        )
+    }
+
+    private var isCommandPaletteAvailable: Bool {
+        !self.isSSHTransport && self.isComposerInteractive
+    }
+
+    private var commandPalettePanelMaxHeight: CGFloat {
+        #if canImport(UIKit)
+        let screenHeight = UIScreen.main.bounds.height
+        return min(620, max(440, screenHeight * 0.72))
+        #else
+        return 500
+        #endif
+    }
+
+    private var commandPalettePanelMinHeight: CGFloat {
+        min(380, self.commandPalettePanelMaxHeight * 0.75)
+    }
+
+    private func makeStatusSnapshot() -> StatusPanelSnapshot {
+        let contextUsage = self.appState.appServerClient.contextUsage(for: self.selectedThreadID)
+        let limits = self.preferredStatusRateLimits(from: self.appState.appServerClient.rateLimits).map {
+            StatusLimitBarSnapshot(
+                id: $0.id,
+                label: self.statusLimitLabel(for: $0),
+                remainingPercent: $0.remainingPercent,
+                resetAt: $0.resetsAt
+            )
+        }
+
+        return StatusPanelSnapshot(
+            sessionID: self.selectedThreadID ?? "-",
+            contextUsedTokens: contextUsage?.usedTokens,
+            contextMaxTokens: contextUsage?.maxTokens,
+            contextRemainingPercent: contextUsage?.remainingPercent,
+            limits: limits,
+            fallbackStatus: self.appState.appServerClient.state.rawValue,
+            updatedAt: Date()
+        )
+    }
+
+    private func preferredStatusRateLimits(from limits: [AppServerRateLimitSummary]) -> [AppServerRateLimitSummary] {
+        guard !limits.isEmpty else { return [] }
+        let prioritized = limits.sorted { lhs, rhs in
+            let lhsRank = self.statusRateLimitRank(lhs)
+            let rhsRank = self.statusRateLimitRank(rhs)
+            if lhsRank != rhsRank {
+                return lhsRank < rhsRank
+            }
+            if let lhsWindow = lhs.windowMinutes, let rhsWindow = rhs.windowMinutes, lhsWindow != rhsWindow {
+                return lhsWindow < rhsWindow
+            }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+
+        var unique: [AppServerRateLimitSummary] = []
+        var seenKeys: Set<String> = []
+        for limit in prioritized {
+            let key = "\(limit.name.lowercased())-\(limit.windowMinutes ?? -1)"
+            guard seenKeys.insert(key).inserted else { continue }
+            unique.append(limit)
+            if unique.count >= 2 { break }
+        }
+        return unique
+    }
+
+    private func statusRateLimitRank(_ limit: AppServerRateLimitSummary) -> Int {
+        if let window = limit.windowMinutes {
+            if window == 300 { return 0 }
+            if window == 10080 { return 1 }
+        }
+        let name = limit.name.lowercased()
+        if name.contains("5h") { return 0 }
+        if name.contains("7d") { return 1 }
+        return 2
+    }
+
+    private func statusLimitLabel(for limit: AppServerRateLimitSummary) -> String {
+        if let window = limit.windowMinutes {
+            if window == 300 { return "5h limit" }
+            if window == 10080 { return "7d limit" }
+        }
+        return "\(limit.name) limit"
+    }
+
+    private func isSlashCommandDisabled(_ command: AppServerSlashCommandDescriptor) -> Bool {
+        command.requiresThread && self.selectedThreadID == nil
+    }
+
     private var menuWidth: CGFloat {
         304
     }
@@ -1483,7 +1673,7 @@ struct SessionWorkbenchView: View {
 
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            self.chatHeader
+            self.chatHeaderArea
         }
         .overlay(alignment: .leading) {
             self.sideMenu
@@ -1496,6 +1686,9 @@ struct SessionWorkbenchView: View {
             }
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.88), value: self.isMenuOpen)
+        .animation(.spring(response: 0.3, dampingFraction: 0.9), value: self.isCommandPalettePresented)
+        .animation(.spring(response: 0.3, dampingFraction: 0.9), value: self.isStatusPanelPresented)
+        .animation(.easeOut(duration: 0.18), value: self.composerInfoMessage?.id)
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .onAppear {
@@ -1513,12 +1706,14 @@ struct SessionWorkbenchView: View {
             self.syncComposerControlsWithWorkspace()
             if self.selectedWorkspace != nil {
                 self.refreshThreads()
+                self.refreshAppServerCatalogsForCurrentWorkspace()
             }
         }
         .onChange(of: self.selectedWorkspaceID) {
             self.syncComposerControlsWithWorkspace()
             if self.selectedWorkspace != nil {
                 self.refreshThreads()
+                self.refreshAppServerCatalogsForCurrentWorkspace()
             }
         }
         .onChange(of: self.selectedComposerModel) {
@@ -1580,6 +1775,9 @@ struct SessionWorkbenchView: View {
             PendingRequestSheet(request: request)
                 .environmentObject(self.appState)
         }
+        .onDisappear {
+            self.clearComposerInfo()
+        }
     }
 
     private var chatBackground: some View {
@@ -1590,6 +1788,8 @@ struct SessionWorkbenchView: View {
         HStack(spacing: 12) {
             Button {
                 self.isPromptFieldFocused = false
+                self.isCommandPalettePresented = false
+                self.isStatusPanelPresented = false
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
                     self.isMenuOpen.toggle()
                 }
@@ -1643,26 +1843,32 @@ struct SessionWorkbenchView: View {
         }
     }
 
+    private var chatHeaderArea: some View {
+        VStack(spacing: 0) {
+            self.chatHeader
+
+            if let composerInfoMessage {
+                self.chatInfoBanner(text: composerInfoMessage.text, tone: composerInfoMessage.tone)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 8)
+                    .padding(.bottom, 8)
+                    .background(Color.black)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .background(Color.black)
+    }
+
     private var chatTimeline: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 14) {
                     if !self.localErrorMessage.isEmpty {
-                        self.chatInfoBanner(
-                            text: self.localErrorMessage,
-                            icon: "exclamationmark.triangle.fill",
-                            foreground: .red,
-                            background: Color.red.opacity(0.12)
-                        )
+                        self.chatInfoBanner(text: self.localErrorMessage, tone: .error)
                     }
 
                     if !self.localStatusMessage.isEmpty {
-                        self.chatInfoBanner(
-                            text: self.localStatusMessage,
-                            icon: "checkmark.circle",
-                            foreground: Color.white.opacity(0.78),
-                            background: Color.white.opacity(0.08)
-                        )
+                        self.chatInfoBanner(text: self.localStatusMessage, tone: .status)
                     }
 
                     if !self.isSSHTransport,
@@ -1807,6 +2013,16 @@ struct SessionWorkbenchView: View {
             .disabled(!self.isComposerInteractive)
             .opacity(self.isComposerInteractive ? 1 : 0.68)
 
+            Button {
+                self.presentCommandPalette()
+            } label: {
+                self.composerPickerChip("/", minWidth: 56)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Slash Commands")
+            .disabled(!self.isCommandPaletteAvailable)
+            .opacity(self.isCommandPaletteAvailable ? 1 : 0.68)
+
             Spacer(minLength: 8)
 
             if self.isPromptFieldFocused {
@@ -1815,10 +2031,504 @@ struct SessionWorkbenchView: View {
         }
     }
 
+    private var commandPalettePanel: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                if self.isReviewModePickerPresented {
+                    Button {
+                        self.dismissReviewModePicker()
+                    } label: {
+                        Label("Back", systemImage: "chevron.left")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.white.opacity(0.92))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Text(self.isReviewModePickerPresented ? "Code Review" : "Commands")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(Color.white)
+
+                Spacer(minLength: 8)
+
+                if self.isCommandPaletteRefreshing, !self.isReviewModePickerPresented {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(Color.white.opacity(0.9))
+                }
+
+                Button("Close") {
+                    self.dismissCommandPalette()
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.white.opacity(0.92))
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+
+            if self.isReviewModePickerPresented {
+                self.reviewModePickerPanelBody
+            } else if self.commandPaletteRows.isEmpty, !self.isCommandPaletteRefreshing {
+                Text("No commands, MCP servers, or skills available")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.white.opacity(0.72))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.white.opacity(0.06))
+                    )
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: self.commandPalettePanelMinHeight,
+                        maxHeight: .infinity,
+                        alignment: .topLeading
+                    )
+            } else {
+                ScrollView {
+                    VStack(spacing: 10) {
+                        ForEach(self.commandPaletteRows) { row in
+                            self.commandPaletteRowButton(row)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
+                }
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: self.commandPalettePanelMinHeight,
+                    maxHeight: self.commandPalettePanelMaxHeight,
+                    alignment: .top
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            self.glassCardBackground(cornerRadius: 20, tint: self.glassWhiteTint(light: 0.16, dark: 0.10))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(self.glassStrokeColor.opacity(0.5), lineWidth: 0.9)
+        }
+    }
+
+    private var reviewModePickerPanelBody: some View {
+        ScrollView {
+            VStack(spacing: 10) {
+                self.reviewModeOptionButton(
+                    title: "Review uncommitted changes",
+                    subtitle: "Start review in a new thread.",
+                    systemImage: "doc.badge.magnifyingglass",
+                    isSelected: self.reviewModeSelection == .uncommittedChanges
+                ) {
+                    self.dismissCommandPalette()
+                    self.startReviewForCurrentThread(target: .uncommittedChanges)
+                }
+
+                self.reviewModeOptionButton(
+                    title: "Review against a base branch",
+                    subtitle: "Diff against the branch you specify.",
+                    systemImage: "arrow.triangle.branch",
+                    isSelected: self.reviewModeSelection == .baseBranch
+                ) {
+                    self.reviewModeSelection = .baseBranch
+                    self.isReviewBaseBranchFieldFocused = true
+                }
+
+                if self.reviewModeSelection == .baseBranch {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Base branch")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.white.opacity(0.8))
+
+                        TextField("main", text: self.$reviewBaseBranch)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled(true)
+                            .focused(self.$isReviewBaseBranchFieldFocused)
+                            .foregroundStyle(Color.white)
+                            .tint(Color.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color.white.opacity(0.07))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(Color.white.opacity(0.14), lineWidth: 0.8)
+                            )
+
+                        Button("Start review") {
+                            self.startReviewAgainstBaseBranch()
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.black)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.white, in: Capsule())
+                        .buttonStyle(.plain)
+                        .disabled(self.reviewBaseBranch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .opacity(
+                            self.reviewBaseBranch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1
+                        )
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.white.opacity(0.06))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.white.opacity(0.10), lineWidth: 0.8)
+                    )
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
+        }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: self.commandPalettePanelMinHeight,
+            maxHeight: self.commandPalettePanelMaxHeight,
+            alignment: .top
+        )
+    }
+
+    private func reviewModeOptionButton(
+        title: String,
+        subtitle: String,
+        systemImage: String,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.86))
+                    .frame(width: 20, height: 20)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.94))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(Color.white.opacity(0.62))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.white.opacity(isSelected ? 0.12 : 0.07))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.white.opacity(isSelected ? 0.20 : 0.12), lineWidth: 0.7)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var statusPanel: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                Text("Status")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(Color.white)
+
+                Spacer(minLength: 8)
+
+                if self.isStatusRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(Color.white.opacity(0.9))
+                }
+
+                Button("Refresh") {
+                    self.refreshStatusPanel()
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.white.opacity(0.92))
+
+                Button("Close") {
+                    self.dismissStatusPanel()
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.white.opacity(0.92))
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+
+            if let snapshot = self.statusSnapshot {
+                VStack(alignment: .leading, spacing: 12) {
+                    self.statusHeaderRow(label: "Session", value: snapshot.sessionID)
+                    self.statusHeaderRow(label: "Context", value: self.statusContextSummary(snapshot))
+
+                    if snapshot.limits.isEmpty {
+                        Text("No rate-limit data available")
+                            .font(.caption)
+                            .foregroundStyle(Color.white.opacity(0.66))
+                    } else {
+                        ForEach(snapshot.limits) { limit in
+                            self.statusLimitRow(limit)
+                        }
+                    }
+
+                    HStack(spacing: 8) {
+                        Text("Updated: \(snapshot.updatedAt.formatted(date: .omitted, time: .shortened))")
+                        Spacer(minLength: 8)
+                        Text(snapshot.fallbackStatus.uppercased())
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(Color.white.opacity(0.58))
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
+                .frame(maxWidth: .infinity, alignment: .top)
+            } else {
+                Text(self.isStatusRefreshing ? "Refreshing status..." : "No status available")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.white.opacity(0.72))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.white.opacity(0.06))
+                    )
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            self.glassCardBackground(cornerRadius: 20, tint: self.glassWhiteTint(light: 0.16, dark: 0.10))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(self.glassStrokeColor.opacity(0.5), lineWidth: 0.9)
+        }
+    }
+
+    @ViewBuilder
+    private func statusHeaderRow(label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text("\(label):")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Color.white.opacity(0.70))
+                .frame(minWidth: 62, alignment: .leading)
+
+            Text(value)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.white.opacity(0.94))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .textSelection(.enabled)
+        }
+    }
+
+    @ViewBuilder
+    private func statusLimitRow(_ limit: StatusLimitBarSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("\(limit.label):")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.white.opacity(0.70))
+                    .frame(minWidth: 62, alignment: .leading)
+
+                Spacer(minLength: 8)
+
+                Text(self.statusLimitRemainingText(limit))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.94))
+
+                if let resetText = self.statusLimitResetText(limit.resetAt) {
+                    Text("(resets \(resetText))")
+                        .font(.caption2)
+                        .foregroundStyle(Color.white.opacity(0.58))
+                }
+            }
+
+            GeometryReader { proxy in
+                let fillFraction = self.statusLimitFillFraction(limit.remainingPercent)
+
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Color.white.opacity(0.17))
+
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Color.white.opacity(0.92))
+                        .frame(width: proxy.size.width * fillFraction)
+                }
+            }
+            .frame(height: 10)
+        }
+    }
+
+    private func statusContextSummary(_ snapshot: StatusPanelSnapshot) -> String {
+        guard let used = snapshot.contextUsedTokens,
+              let max = snapshot.contextMaxTokens,
+              max > 0 else {
+            return "Unavailable"
+        }
+        let usedText = self.groupedTokenCount(used)
+        let maxText = self.compactTokenCount(max)
+        if let remainingPercent = snapshot.contextRemainingPercent {
+            return "\(Int(remainingPercent.rounded()))% left (\(usedText) used / \(maxText))"
+        }
+        return "\(usedText) used / \(maxText)"
+    }
+
+    private func statusLimitRemainingText(_ limit: StatusLimitBarSnapshot) -> String {
+        guard let remainingPercent = limit.remainingPercent else {
+            return "unknown"
+        }
+        return "\(Int(remainingPercent.rounded()))% left"
+    }
+
+    private func statusLimitResetText(_ resetAt: Date?) -> String? {
+        guard let resetAt else { return nil }
+        if Calendar.current.isDate(resetAt, inSameDayAs: Date()) {
+            return resetAt.formatted(date: .omitted, time: .shortened)
+        }
+        return resetAt.formatted(Date.FormatStyle().month().day())
+    }
+
+    private func statusLimitFillFraction(_ remainingPercent: Double?) -> CGFloat {
+        guard let remainingPercent else {
+            return 0
+        }
+        let normalized = max(0, min(100, remainingPercent)) / 100
+        return CGFloat(normalized)
+    }
+
+    private func groupedTokenCount(_ value: Int) -> String {
+        value.formatted(.number.grouping(.automatic))
+    }
+
+    private func compactTokenCount(_ value: Int) -> String {
+        let absolute = abs(value)
+        if absolute >= 1_000_000 {
+            return String(format: "%.1fM", Double(value) / 1_000_000)
+        }
+        if absolute >= 1_000 {
+            return String(format: "%.0fK", Double(value) / 1_000)
+        }
+        return value.formatted()
+    }
+
+    private func commandPaletteRowButton(_ row: CommandPaletteRow) -> some View {
+        let metadata = self.commandPaletteMetadata(for: row)
+        let disabled = self.isCommandPaletteRowDisabled(row)
+
+        return Button {
+            self.handleCommandPaletteSelection(row)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: metadata.systemImage)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.86))
+                    .frame(width: 20, height: 20)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(metadata.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.94))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if let subtitle = metadata.subtitle, !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(Color.white.opacity(0.62))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .lineLimit(self.commandPaletteSubtitleLineLimit(for: row))
+                            .truncationMode(.tail)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.white.opacity(0.07))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 0.7)
+            )
+            .opacity(disabled ? 0.48 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+    }
+
+    private func commandPaletteMetadata(for row: CommandPaletteRow) -> (title: String, subtitle: String?, systemImage: String) {
+        switch row {
+        case .command(let command):
+            return (command.title, command.description, command.systemImage)
+        case .mcp(let server):
+            let status = server.authStatus ?? "unknown"
+            return (
+                server.name,
+                "MCP server • tools \(server.toolCount) • resources \(server.resourceCount) • auth \(status)",
+                "shippingbox"
+            )
+        case .skill(let skill):
+            let description = skill.description?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (
+                skill.name,
+                (description?.isEmpty == false) ? description : "Skill",
+                "sparkles"
+            )
+        }
+    }
+
+    private func commandPaletteSubtitleLineLimit(for row: CommandPaletteRow) -> Int? {
+        switch row {
+        case .skill:
+            return 1
+        case .command, .mcp:
+            return nil
+        }
+    }
+
+    private func isCommandPaletteRowDisabled(_ row: CommandPaletteRow) -> Bool {
+        switch row {
+        case .command(let command):
+            return self.isSlashCommandDisabled(command)
+        case .mcp, .skill:
+            return false
+        }
+    }
+
     private var chatComposer: some View {
         let isInactive = !self.isComposerInteractive
 
         return VStack(alignment: .leading, spacing: 8) {
+            if self.isStatusPanelPresented {
+                self.statusPanel
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+
+            if self.isCommandPalettePresented {
+                self.commandPalettePanel
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+
             self.composerControlBar
 
             HStack(alignment: .bottom, spacing: 10) {
@@ -1892,17 +2602,27 @@ struct SessionWorkbenchView: View {
     @ViewBuilder
     private func chatInfoBanner(
         text: String,
-        icon: String,
-        foreground: Color,
-        background: Color
+        tone: InfoBannerTone
     ) -> some View {
-        Label(text, systemImage: icon)
+        let style = self.infoBannerStyle(for: tone)
+        Label(text, systemImage: style.icon)
             .font(.caption)
-            .foregroundStyle(foreground)
+            .foregroundStyle(style.foreground)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(style.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func infoBannerStyle(for tone: InfoBannerTone) -> (icon: String, foreground: Color, background: Color) {
+        switch tone {
+        case .status:
+            return ("checkmark.circle", Color.white.opacity(0.78), Color.white.opacity(0.08))
+        case .success:
+            return ("checkmark.circle.fill", Color.white.opacity(0.88), Color.green.opacity(0.18))
+        case .error:
+            return ("exclamationmark.triangle.fill", .red, Color.red.opacity(0.12))
+        }
     }
 
     private func chatStreamingStatusRow(baseText: String) -> some View {
@@ -2306,7 +3026,7 @@ struct SessionWorkbenchView: View {
         self.appState.hostSessionStore.selectProject(hostID: self.host.id, projectID: selectedWorkspace.id)
         self.selectedThreadID = nil
         self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: nil)
-        self.localStatusMessage = "Ready for a new thread. Send a prompt to start."
+        self.showComposerInfo("Ready for a new thread. Send a prompt to start.")
     }
 
     private func deleteWorkspace(_ workspace: ProjectWorkspace) {
@@ -2538,6 +3258,7 @@ struct SessionWorkbenchView: View {
         Task {
             do {
                 try await self.appState.appServerClient.connect(to: self.host)
+                await self.appState.appServerClient.refreshCatalogs(primaryCWD: self.selectedWorkspace?.remotePath)
                 self.localStatusMessage = "Connected to app-server."
             } catch {
                 self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
@@ -2710,6 +3431,303 @@ struct SessionWorkbenchView: View {
                 self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
             }
         }
+    }
+
+    private func presentCommandPalette() {
+        guard self.isCommandPaletteAvailable else { return }
+        if self.isCommandPalettePresented {
+            self.dismissCommandPalette()
+            return
+        }
+        self.dismissStatusPanel()
+        self.dismissReviewModePicker()
+        self.isCommandPalettePresented = true
+        self.refreshCommandPalette()
+    }
+
+    private func dismissCommandPalette() {
+        self.isCommandPalettePresented = false
+        self.dismissReviewModePicker()
+    }
+
+    private func presentReviewModePicker() {
+        guard self.isCommandPalettePresented else {
+            self.localErrorMessage = "Open commands and select /review again."
+            return
+        }
+        self.reviewModeSelection = .uncommittedChanges
+        self.reviewBaseBranch = ""
+        self.isReviewModePickerPresented = true
+    }
+
+    private func dismissReviewModePicker() {
+        self.isReviewModePickerPresented = false
+        self.reviewModeSelection = .uncommittedChanges
+        self.reviewBaseBranch = ""
+        self.isReviewBaseBranchFieldFocused = false
+    }
+
+    private func refreshCommandPalette() {
+        guard !self.isSSHTransport else { return }
+        self.isCommandPaletteRefreshing = true
+
+        Task {
+            defer {
+                self.isCommandPaletteRefreshing = false
+            }
+            do {
+                try await self.ensureAppServerReady(refreshCatalogs: true)
+            } catch {
+                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+            }
+        }
+    }
+
+    private func presentStatusPanel() {
+        guard !self.isSSHTransport else {
+            self.localErrorMessage = "Slash commands are only available in App Server mode."
+            return
+        }
+        self.dismissCommandPalette()
+        self.isStatusPanelPresented = true
+        self.statusSnapshot = self.makeStatusSnapshot()
+        self.refreshStatusPanel()
+    }
+
+    private func dismissStatusPanel() {
+        self.isStatusPanelPresented = false
+    }
+
+    private func refreshStatusPanel() {
+        guard !self.isSSHTransport else { return }
+        self.isStatusRefreshing = true
+        self.statusSnapshot = self.makeStatusSnapshot()
+
+        Task {
+            defer {
+                self.isStatusRefreshing = false
+            }
+            do {
+                try await self.ensureAppServerReady(refreshCatalogs: true)
+                _ = try await self.appState.appServerClient.runDiagnostics()
+                _ = try await self.appState.appServerClient.refreshRateLimits()
+                self.statusSnapshot = self.makeStatusSnapshot()
+            } catch {
+                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+            }
+        }
+    }
+
+    private func showComposerInfo(
+        _ text: String,
+        tone: InfoBannerTone = .success,
+        autoDismissAfter seconds: TimeInterval = 2.5
+    ) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        self.composerInfoDismissTask?.cancel()
+        let message = ComposerInfoMessage(text: trimmed, tone: tone)
+        self.composerInfoMessage = message
+
+        let nanos = UInt64(max(0, seconds) * 1_000_000_000)
+        self.composerInfoDismissTask = Task {
+            if nanos > 0 {
+                try? await Task.sleep(nanoseconds: nanos)
+            }
+            guard !Task.isCancelled else { return }
+            if self.composerInfoMessage?.id == message.id {
+                self.composerInfoMessage = nil
+            }
+            self.composerInfoDismissTask = nil
+        }
+    }
+
+    private func clearComposerInfo() {
+        self.composerInfoDismissTask?.cancel()
+        self.composerInfoDismissTask = nil
+        self.composerInfoMessage = nil
+    }
+
+    private func handleCommandPaletteSelection(_ row: CommandPaletteRow) {
+        switch row {
+        case .command(let command):
+            if command.kind != .startReview {
+                self.dismissCommandPalette()
+            }
+            self.executeSlashCommand(command)
+        case .mcp(let server):
+            self.insertComposerToken("/mcp \(server.name)")
+            self.dismissCommandPalette()
+        case .skill(let skill):
+            self.insertComposerToken("$\(skill.name)")
+            self.dismissCommandPalette()
+        }
+    }
+
+    private func insertComposerToken(_ token: String) {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if self.prompt.isEmpty {
+            self.prompt = trimmed + " "
+        } else if self.prompt.hasSuffix(" ") || self.prompt.hasSuffix("\n") {
+            self.prompt += trimmed + " "
+        } else {
+            self.prompt += "\n" + trimmed + " "
+        }
+
+        self.isPromptFieldFocused = true
+    }
+
+    private func executeSlashCommand(_ command: AppServerSlashCommandDescriptor) {
+        guard !self.isSSHTransport else {
+            self.localErrorMessage = "Slash commands are only available in App Server mode."
+            return
+        }
+        guard !self.isSlashCommandDisabled(command) else {
+            self.localErrorMessage = "Select a thread first."
+            return
+        }
+
+        self.localErrorMessage = ""
+        self.localStatusMessage = ""
+
+        switch command.kind {
+        case .newThread:
+            self.createNewThread()
+        case .forkThread:
+            self.forkCurrentThread()
+        case .startReview:
+            self.presentReviewModePicker()
+        case .showStatus:
+            self.showStatusSlashCommand()
+        }
+    }
+
+    private func refreshAppServerCatalogsForCurrentWorkspace() {
+        guard !self.isSSHTransport else { return }
+        Task {
+            await self.appState.appServerClient.refreshCatalogs(primaryCWD: self.selectedWorkspace?.remotePath)
+        }
+    }
+
+    private func ensureAppServerReady(refreshCatalogs: Bool) async throws {
+        if self.appState.appServerClient.state != .connected {
+            try await self.appState.appServerClient.connect(to: self.host)
+        }
+        if refreshCatalogs {
+            await self.appState.appServerClient.refreshCatalogs(primaryCWD: self.selectedWorkspace?.remotePath)
+        }
+    }
+
+    private func forkCurrentThread() {
+        guard let sourceThreadID = self.selectedThreadID else {
+            self.localErrorMessage = "Select a thread first."
+            return
+        }
+        let sourceSummary = self.selectedThreadSummary
+        let selectedWorkspace = self.selectedWorkspace
+
+        Task {
+            do {
+                try await self.ensureAppServerReady(refreshCatalogs: false)
+                let forkedThreadID = try await self.appState.appServerClient.threadFork(threadID: sourceThreadID)
+
+                self.selectedThreadID = forkedThreadID
+                self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: forkedThreadID)
+                if let selectedWorkspace {
+                    self.appState.threadBookmarkStore.upsert(
+                        summary: CodexThreadSummary(
+                            threadID: forkedThreadID,
+                            hostID: self.host.id,
+                            workspaceID: selectedWorkspace.id,
+                            preview: sourceSummary?.preview ?? "Forked from \(sourceThreadID)",
+                            updatedAt: Date(),
+                            archived: false,
+                            cwd: selectedWorkspace.remotePath,
+                            model: sourceSummary?.model,
+                            reasoningEffort: sourceSummary?.reasoningEffort
+                        )
+                    )
+                }
+
+                self.loadThread(forkedThreadID)
+                self.refreshThreads()
+                self.showComposerInfo("Forked thread: \(forkedThreadID)")
+            } catch {
+                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+            }
+        }
+    }
+
+    private func startReviewAgainstBaseBranch() {
+        let trimmedBaseBranch = self.reviewBaseBranch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBaseBranch.isEmpty else {
+            self.localErrorMessage = "Enter a base branch name."
+            return
+        }
+        self.dismissCommandPalette()
+        self.startReviewForCurrentThread(
+            target: .baseBranch(trimmedBaseBranch),
+            preview: "Code review (\(trimmedBaseBranch))",
+            successMessage: "Started review against \(trimmedBaseBranch) in a new thread."
+        )
+    }
+
+    private func startReviewForCurrentThread(
+        target: AppServerClient.ReviewTarget,
+        preview: String = "Code review",
+        successMessage: String = "Started code review in a new thread."
+    ) {
+        guard let sourceThreadID = self.selectedThreadID else {
+            self.localErrorMessage = "Select a thread first."
+            return
+        }
+        let sourceSummary = self.selectedThreadSummary
+        let selectedWorkspace = self.selectedWorkspace
+
+        Task {
+            do {
+                try await self.ensureAppServerReady(refreshCatalogs: false)
+                let reviewThreadID = try await self.appState.appServerClient.reviewStart(
+                    threadID: sourceThreadID,
+                    delivery: .detached,
+                    target: target
+                )
+                self.selectedThreadID = reviewThreadID
+                self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: reviewThreadID)
+
+                if let selectedWorkspace,
+                   self.appState.threadBookmarkStore
+                    .threads(for: selectedWorkspace.id)
+                    .contains(where: { $0.threadID == reviewThreadID }) == false {
+                    self.appState.threadBookmarkStore.upsert(
+                        summary: CodexThreadSummary(
+                            threadID: reviewThreadID,
+                            hostID: self.host.id,
+                            workspaceID: selectedWorkspace.id,
+                            preview: preview,
+                            updatedAt: Date(),
+                            archived: false,
+                            cwd: selectedWorkspace.remotePath,
+                            model: sourceSummary?.model,
+                            reasoningEffort: sourceSummary?.reasoningEffort
+                        )
+                    )
+                }
+
+                self.loadThread(reviewThreadID)
+                self.refreshThreads()
+                self.showComposerInfo(successMessage)
+            } catch {
+                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+            }
+        }
+    }
+
+    private func showStatusSlashCommand() {
+        self.presentStatusPanel()
     }
 
     private func sendPromptViaSSH(
