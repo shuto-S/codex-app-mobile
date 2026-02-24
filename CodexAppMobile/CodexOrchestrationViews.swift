@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Textual
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -2892,9 +2893,10 @@ struct SessionWorkbenchView: View {
             let assistantForeground = message.isProgressDetail
                 ? Color.white.opacity(0.62)
                 : Color.white
-            let assistantFont: Font = message.isProgressDetail ? .footnote : .body
-            Text(self.markdownAttributedText(message.text))
-                .font(assistantFont)
+            self.assistantMarkdownView(
+                message.text,
+                isProgressDetail: message.isProgressDetail
+            )
                 .foregroundStyle(assistantForeground)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
@@ -2902,7 +2904,7 @@ struct SessionWorkbenchView: View {
         } else {
             HStack {
                 Spacer(minLength: 48)
-                Text(self.markdownAttributedText(message.text))
+                InlineText(markdown: self.normalizedMarkdown(message.text))
                     .font(.subheadline)
                     .foregroundStyle(Color.white)
                     .padding(.horizontal, 14)
@@ -2915,20 +2917,22 @@ struct SessionWorkbenchView: View {
         }
     }
 
-    private func markdownAttributedText(_ text: String) -> AttributedString {
-        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
-        let hasListSyntax = normalized.range(
-            of: #"(?m)^\s{0,3}([-+*]|\d+[.)])\s+"#,
-            options: .regularExpression
-        ) != nil
-        let options = AttributedString.MarkdownParsingOptions(
-            interpretedSyntax: hasListSyntax ? .inlineOnlyPreservingWhitespace : .full,
-            failurePolicy: .returnPartiallyParsedIfPossible
-        )
-        if let attributed = try? AttributedString(markdown: normalized, options: options) {
-            return attributed
+    @ViewBuilder
+    private func assistantMarkdownView(
+        _ text: String,
+        isProgressDetail: Bool
+    ) -> some View {
+        if isProgressDetail {
+            InlineText(markdown: self.normalizedMarkdown(text))
+                .font(.footnote)
+        } else {
+            StructuredText(markdown: self.normalizedMarkdown(text))
+                .font(.body)
         }
-        return AttributedString(normalized)
+    }
+
+    private func normalizedMarkdown(_ text: String) -> String {
+        text.replacingOccurrences(of: "\r\n", with: "\n")
     }
 
     private var sideMenu: some View {
