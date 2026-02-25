@@ -595,7 +595,10 @@ extension SessionWorkbenchView {
                     let version = try await self.sshCodexExecService.checkCodexVersion(host: self.host, password: password)
                     self.localStatusMessage = "SSH ready (\(version))."
                 } catch {
-                    self.localErrorMessage = self.userFacingSSHError(error)
+                    let message = self.userFacingSSHError(error)
+                    self.localStatusMessage = ""
+                    self.localErrorMessage = message
+                    self.showComposerInfo(message, tone: .error, autoDismissAfter: 4.0)
                 }
             }
             return

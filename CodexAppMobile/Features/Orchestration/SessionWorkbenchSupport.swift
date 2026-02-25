@@ -83,9 +83,10 @@ actor SSHCodexExecService {
                 let engine = SSHClientEngine()
                 let startMarker = "__CODEX_EXEC_START__"
                 let endMarker = "__CODEX_EXEC_END__"
+                let connectTimeoutSeconds = min(20, max(5, timeoutSeconds))
 
                 let timeoutSource = DispatchSource.makeTimerSource(queue: queue)
-                timeoutSource.schedule(deadline: .now() + .seconds(timeoutSeconds))
+                timeoutSource.schedule(deadline: .now() + .seconds(connectTimeoutSeconds))
                 timeoutSource.setEventHandler {
                     guard !state.completed else { return }
                     state.completed = true
@@ -103,42 +104,56 @@ actor SSHCodexExecService {
                 }
 
                 engine.onOutput = { chunk in
-                    state.fullOutput += chunk
-                    guard state.fullOutput.contains(endMarker) else { return }
-                    do {
-                        let parsed = try Self.parseDelimitedOutput(
-                            state.fullOutput,
-                            startMarker: startMarker,
-                            endMarker: endMarker
-                        )
-                        complete(.success(parsed))
-                    } catch {
-                        complete(.failure(error))
+                    queue.async {
+                        guard !state.completed else { return }
+                        state.fullOutput += chunk
+                        guard state.fullOutput.contains(endMarker) else { return }
+                        do {
+                            let parsed = try Self.parseDelimitedOutput(
+                                state.fullOutput,
+                                startMarker: startMarker,
+                                endMarker: endMarker
+                            )
+                            complete(.success(parsed))
+                        } catch {
+                            complete(.failure(error))
+                        }
                     }
                 }
 
                 engine.onError = { error in
-                    complete(.failure(error))
-                }
-
-                engine.onConnected = {
-                    let wrappedCommand = "printf '\(startMarker)\\n'; \(command) 2>&1; printf '\\n\(endMarker)\\n'"
-                    do {
-                        try engine.send(command: wrappedCommand + "\n")
-                    } catch {
+                    queue.async {
                         complete(.failure(error))
                     }
                 }
 
-                do {
-                    try engine.connect(
-                        host: host.host,
-                        port: host.sshPort,
-                        username: host.username,
-                        password: password.isEmpty ? nil : password
-                    )
-                } catch {
-                    complete(.failure(error))
+                engine.onConnected = {
+                    queue.async {
+                        guard !state.completed else { return }
+                        timeoutSource.schedule(deadline: .now() + .seconds(timeoutSeconds))
+
+                        let wrappedCommand = "printf '\(startMarker)\\n'; \(command) 2>&1; printf '\\n\(endMarker)\\n'"
+                        do {
+                            try engine.send(command: wrappedCommand + "\n")
+                        } catch {
+                            complete(.failure(error))
+                        }
+                    }
+                }
+
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        try engine.connect(
+                            host: host.host,
+                            port: host.sshPort,
+                            username: host.username,
+                            password: password.isEmpty ? nil : password
+                        )
+                    } catch {
+                        queue.async {
+                            complete(.failure(error))
+                        }
+                    }
                 }
             }
         }

@@ -96,6 +96,7 @@ struct SessionWorkbenchView: View {
     @State var pendingPromptDispatchCount = 0
     @State var chatDistanceFromBottom: CGFloat = 0
     @State var scrollToBottomRequestCount = 0
+    @State var shouldForceScrollToBottomOnNextTranscriptUpdate = false
     @FocusState var isPromptFieldFocused: Bool
     @FocusState var isReviewBaseBranchFieldFocused: Bool
 

@@ -113,8 +113,10 @@ extension SessionWorkbenchView {
                         .buttonStyle(.plain)
                     }
 
-                    if self.selectedWorkspace == nil {
-                        self.chatPlaceholder("Create or select a project.")
+                    if self.workspaces.isEmpty {
+                        self.chatCreateProjectCallToAction
+                    } else if self.selectedWorkspace == nil {
+                        self.chatPlaceholder("Select a project.")
                     } else if self.selectedThreadID != nil && self.parsedChatMessages.isEmpty {
                         self.chatPlaceholder("No messages yet.")
                     } else if self.selectedThreadID != nil {
@@ -151,15 +153,22 @@ extension SessionWorkbenchView {
             }
             .animation(.easeOut(duration: 0.18), value: self.shouldShowScrollToBottomButton)
             .onAppear {
+                self.shouldForceScrollToBottomOnNextTranscriptUpdate = true
                 self.scrollToBottom(proxy: proxy)
             }
             .onChange(of: self.scrollToBottomRequestCount) {
                 self.scrollToBottom(proxy: proxy)
             }
             .onChange(of: self.selectedThreadID) {
+                self.shouldForceScrollToBottomOnNextTranscriptUpdate = true
                 self.scrollToBottom(proxy: proxy)
             }
             .onChange(of: self.selectedThreadTranscript) {
+                if self.shouldForceScrollToBottomOnNextTranscriptUpdate {
+                    self.shouldForceScrollToBottomOnNextTranscriptUpdate = false
+                    self.scrollToBottom(proxy: proxy)
+                    return
+                }
                 guard self.shouldAutoFollowChatUpdates else { return }
                 self.scrollToBottom(proxy: proxy)
             }
@@ -234,6 +243,37 @@ extension SessionWorkbenchView {
             .padding(.vertical, 10)
             .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
+    }
+
+    var chatCreateProjectCallToAction: some View {
+        VStack(spacing: 14) {
+            Text("No projects yet.")
+                .font(.headline)
+                .foregroundStyle(Color.white.opacity(0.88))
+
+            Button {
+                self.isPromptFieldFocused = false
+                self.editingWorkspace = nil
+                self.isPresentingProjectEditor = true
+                self.isMenuOpen = false
+            } label: {
+                Label("Create Project", systemImage: "plus")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity)
+                    .background {
+                        self.glassCardBackground(
+                            cornerRadius: 14,
+                            tint: self.accentGlassTint(light: 0.18, dark: 0.14)
+                        )
+                    }
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, minHeight: 220, alignment: .center)
+        .padding(.horizontal, 16)
     }
 
     @ViewBuilder

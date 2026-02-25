@@ -797,7 +797,6 @@ struct ProjectEditorView: View {
     @State private var remotePath: String
     @State private var defaultModel: String
     @State private var defaultApprovalPolicy: CodexApprovalPolicy
-    @State private var isPresentingPathBrowser = false
 
     init(
         workspace: ProjectWorkspace?,
@@ -833,11 +832,6 @@ struct ProjectEditorView: View {
                     TextField("/absolute/remote/path", text: self.$remotePath)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
-
-                    Button("Browse Remote Path") {
-                        self.isPresentingPathBrowser = true
-                    }
-                    .codexActionButtonStyle()
                 }
 
                 Section("Defaults") {
@@ -872,15 +866,6 @@ struct ProjectEditorView: View {
                     .disabled(!self.draft.isValid)
                     .codexActionButtonStyle()
                 }
-            }
-        }
-        .sheet(isPresented: self.$isPresentingPathBrowser) {
-            RemotePathBrowserView(
-                host: self.host,
-                hostPassword: self.hostPassword,
-                initialPath: self.remotePath.isEmpty ? "~" : self.remotePath
-            ) { selectedPath in
-                self.remotePath = selectedPath
             }
         }
     }

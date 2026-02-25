@@ -696,7 +696,11 @@ extension SessionWorkbenchView {
                 self.selectedComposerTokenBadges = []
                 self.localStatusMessage = "Executed via codex exec over SSH."
             } catch {
-                self.localErrorMessage = self.userFacingSSHError(error)
+                let message = self.userFacingSSHError(error)
+                self.localStatusMessage = ""
+                self.localErrorMessage = message
+                self.showComposerInfo(message, tone: .error, autoDismissAfter: 4.0)
+                self.isPromptFieldFocused = true
             }
         }
     }
