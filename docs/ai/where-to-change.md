@@ -18,7 +18,7 @@
 ## Verification Baseline
 
 ```bash
-cd /Users/shuto/src/private/codex-app-mobile
+cd "$(git rev-parse --show-toplevel)"
 make test-ios
 ```
 

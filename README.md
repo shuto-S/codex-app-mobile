@@ -129,6 +129,14 @@ Use the host row context menu and open `Terminal` to operate directly over SSH.
 - app-server disconnects right after startup:
   - Check `.build/logs/app-server.log` and `.build/logs/ws-proxy.log`
 
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for development and pull request guidelines.
+
+## Security
+
+See [SECURITY.md](./SECURITY.md) for responsible vulnerability reporting.
+
 ## References
 
 - Codex app-server docs: [https://developers.openai.com/codex/app-server.md](https://developers.openai.com/codex/app-server.md)

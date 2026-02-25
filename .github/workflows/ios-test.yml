@@ -1,0 +1,45 @@
+name: iOS Tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-ios:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve simulator device type
+        id: simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          type_id="$(xcrun simctl list devicetypes | awk -F '[()]' '
+            /iPhone/ {
+              gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+              if ($2 ~ /^com\.apple\.CoreSimulator\.SimDeviceType\./) {
+                print $2
+                exit
+              }
+            }
+          ')"
+
+          if [[ -z "${type_id}" ]]; then
+            echo "No iPhone simulator device type found." >&2
+            exit 1
+          fi
+
+          echo "device_type=${type_id}" >> "$GITHUB_OUTPUT"
+          echo "device_name=CodexAppMobile CI iPhone" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure iOS runtime
+        run: make setup-ios-runtime
+
+      - name: Run iOS tests
+        env:
+          IOS_DEVICE_NAME: ${{ steps.simulator.outputs.device_name }}
+          IOS_DEVICE_TYPE_IDENTIFIER: ${{ steps.simulator.outputs.device_type }}
+        run: make test-ios

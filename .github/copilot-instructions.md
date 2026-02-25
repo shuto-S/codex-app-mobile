@@ -6,7 +6,7 @@
 - SSH terminal is a fallback path when app-server is unavailable.
 
 ## Build/Test Entry Points
-- Always start from repository root: `/Users/shuto/src/private/codex-app-mobile`
+- Always start from this repository root.
 - Primary commands:
   - `make run-ios`
   - `make test-ios`
