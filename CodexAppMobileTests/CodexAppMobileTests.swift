@@ -837,6 +837,79 @@ final class CodexAppMobileTests: XCTestCase {
         )
     }
 
+    func testThreadListEntryPayloadDefaultsMissingCWDtoEmptyString() throws {
+        let payload = """
+        {
+          "id": "thread-1",
+          "preview": "hello",
+          "updatedAt": 1700000000
+        }
+        """
+        let decoded = try JSONDecoder().decode(ThreadListEntryPayload.self, from: Data(payload.utf8))
+        XCTAssertEqual(decoded.cwd, "")
+    }
+
+    func testSessionWorkbenchPathMatchingNormalizesTrailingSlash() {
+        XCTAssertTrue(
+            SessionWorkbenchView.isThreadPath(
+                "/tmp//project/",
+                inWorkspacePath: " /tmp/project "
+            )
+        )
+        XCTAssertTrue(
+            SessionWorkbenchView.isThreadPath(
+                "/",
+                inWorkspacePath: "/"
+            )
+        )
+        XCTAssertFalse(
+            SessionWorkbenchView.isThreadPath(
+                "/tmp/project-a",
+                inWorkspacePath: "/tmp/project-b"
+            )
+        )
+    }
+
+    @MainActor
+    func testAppServerClientParsesSnakeCaseUserInputRequest() {
+        let client = AppServerClient()
+        client.applyServerRequestForTesting(
+            id: .number(1),
+            method: "tool/request_user_input",
+            params: .object([
+                "threadId": .string("thread-9"),
+                "turnId": .string("turn-9"),
+                "questions": .array([
+                    .object([
+                        "questionId": .string("new-dir"),
+                        "prompt": .string("Allow access to this directory?"),
+                        "choices": .array([
+                            .object([
+                                "title": .string("Allow"),
+                                "helpText": .string("Proceed with this directory.")
+                            ])
+                        ])
+                    ])
+                ])
+            ])
+        )
+
+        XCTAssertEqual(client.pendingRequests.count, 1)
+        let request = client.pendingRequests[0]
+        XCTAssertEqual(request.method, "tool/request_user_input")
+        XCTAssertEqual(request.threadID, "thread-9")
+        XCTAssertEqual(request.turnID, "turn-9")
+
+        guard case .userInput(let questions) = request.kind else {
+            return XCTFail("Expected user-input pending request.")
+        }
+        XCTAssertEqual(questions.count, 1)
+        XCTAssertEqual(questions[0].id, "new-dir")
+        XCTAssertEqual(questions[0].prompt, "Allow access to this directory?")
+        XCTAssertEqual(questions[0].options.count, 1)
+        XCTAssertEqual(questions[0].options[0].label, "Allow")
+    }
+
     @MainActor
     func testAppServerParsingModelCatalogWithEmptyArrayReturnsEmpty() {
         let parsed = AppServerClient.parseModelCatalog([])

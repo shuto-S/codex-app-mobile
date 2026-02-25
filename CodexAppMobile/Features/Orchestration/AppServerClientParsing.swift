@@ -612,6 +612,17 @@ extension AppServerClient {
             || normalized.contains("collaboration mode")
     }
 
+    static func shouldRetryInitializeWithoutCapabilities(_ error: Error) -> Bool {
+        guard case let AppServerClientError.remote(code, message) = error else {
+            return false
+        }
+        let normalized = message.lowercased()
+        return code == -32602
+            || normalized.contains("invalid params")
+            || normalized.contains("capabilit")
+            || normalized.contains("unknown field")
+    }
+
     static func shouldRetryReviewStartTarget(_ error: Error) -> Bool {
         guard case let AppServerClientError.remote(code, message) = error else {
             return false

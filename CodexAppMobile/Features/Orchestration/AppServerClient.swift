@@ -601,15 +601,37 @@ final class AppServerClient: ObservableObject {
         self.startPingLoop()
 
         do {
-            let initializeResult = try await self.request(
-                method: "initialize",
-                params: .object([
+            func initializeParams(includeExperimentalCapability: Bool) -> JSONValue {
+                var payload: [String: JSONValue] = [
                     "clientInfo": .object([
                         "name": .string("CodexAppMobile"),
                         "version": .string("0.1.0")
                     ])
-                ])
-            )
+                ]
+                if includeExperimentalCapability {
+                    payload["capabilities"] = .object([
+                        "experimentalApi": .bool(true)
+                    ])
+                }
+                return .object(payload)
+            }
+
+            let initializeResult: JSONValue
+            do {
+                initializeResult = try await self.request(
+                    method: "initialize",
+                    params: initializeParams(includeExperimentalCapability: true)
+                )
+            } catch {
+                guard Self.shouldRetryInitializeWithoutCapabilities(error) else {
+                    throw error
+                }
+                self.appendEvent("initialize rejected capabilities; retrying without capabilities.")
+                initializeResult = try await self.request(
+                    method: "initialize",
+                    params: initializeParams(includeExperimentalCapability: false)
+                )
+            }
             self.applyInitializeMetadata(from: initializeResult)
             try await self.sendEnvelope(
                 JSONRPCEnvelope(
@@ -1073,43 +1095,71 @@ final class AppServerClient: ObservableObject {
         self.handleNotification(method: method, params: params)
     }
 
+    func applyServerRequestForTesting(id: JSONValue, method: String, params: JSONValue?) {
+        self.handleServerRequest(id: id, method: method, params: params)
+    }
+
     private func parsePendingRequest(id: JSONValue, method: String, params: JSONValue?) -> AppServerPendingRequest {
         let paramsObject = params?.objectValue ?? [:]
         let threadID = paramsObject["threadId"]?.stringValue ?? ""
         let turnID = paramsObject["turnId"]?.stringValue ?? ""
         let itemID = paramsObject["itemId"]?.stringValue ?? ""
+        let normalizedMethod = method
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
 
         let kind: AppServerPendingRequestKind
-        switch method {
-        case "item/commandExecution/requestApproval":
+        switch normalizedMethod {
+        case "item/commandexecution/requestapproval":
             let command = paramsObject["command"]?.stringValue ?? ""
             let cwd = paramsObject["cwd"]?.stringValue
             let reason = paramsObject["reason"]?.stringValue
             kind = .commandApproval(command: command, cwd: cwd, reason: reason)
 
-        case "item/fileChange/requestApproval":
+        case "item/filechange/requestapproval":
             let reason = paramsObject["reason"]?.stringValue
             kind = .fileChange(reason: reason)
 
-        case "tool/requestUserInput", "item/tool/requestUserInput":
+        case "tool/requestuserinput", "item/tool/requestuserinput":
             let questions = (paramsObject["questions"]?.arrayValue ?? []).compactMap { rawQuestion -> AppServerUserInputQuestion? in
-                guard let questionObject = rawQuestion.objectValue,
-                      let questionID = questionObject["id"]?.stringValue
+                guard let questionObject = rawQuestion.objectValue else {
+                    return nil
+                }
+
+                let questionID = questionObject["id"]?.stringValue
+                    ?? questionObject["questionId"]?.stringValue
+                    ?? questionObject["name"]?.stringValue
+                    ?? questionObject["key"]?.stringValue
+                guard let questionID,
+                      !questionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 else {
                     return nil
                 }
 
                 let prompt = questionObject["question"]?.stringValue
+                    ?? questionObject["prompt"]?.stringValue
                     ?? questionObject["header"]?.stringValue
+                    ?? questionObject["title"]?.stringValue
                     ?? "Input required"
 
-                let options = (questionObject["options"]?.arrayValue ?? []).compactMap { rawOption -> AppServerUserInputQuestionOption? in
+                let optionRows = questionObject["options"]?.arrayValue
+                    ?? questionObject["choices"]?.arrayValue
+                    ?? questionObject["answers"]?.arrayValue
+
+                let options = (optionRows ?? []).compactMap { rawOption -> AppServerUserInputQuestionOption? in
                     guard let optionObject = rawOption.objectValue,
                           let label = optionObject["label"]?.stringValue
+                            ?? optionObject["title"]?.stringValue
+                            ?? optionObject["value"]?.stringValue
+                            ?? optionObject["id"]?.stringValue
                     else {
                         return nil
                     }
-                    let description = optionObject["description"]?.stringValue ?? ""
+                    let description = optionObject["description"]?.stringValue
+                        ?? optionObject["helpText"]?.stringValue
+                        ?? optionObject["details"]?.stringValue
+                        ?? ""
                     return AppServerUserInputQuestionOption(label: label, description: description)
                 }
 
@@ -1493,5 +1543,3 @@ final class AppServerClient: ObservableObject {
         }
     }
 }
-
-

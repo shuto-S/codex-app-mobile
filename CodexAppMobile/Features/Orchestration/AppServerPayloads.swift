@@ -134,7 +134,7 @@ struct ThreadListEntryPayload: Decodable {
         self.id = try container.decode(String.self, forKey: .id)
         self.preview = try container.decode(String.self, forKey: .preview)
         self.updatedAt = try container.decode(Int.self, forKey: .updatedAt)
-        self.cwd = try container.decode(String.self, forKey: .cwd)
+        self.cwd = try container.decodeIfPresent(String.self, forKey: .cwd) ?? ""
         self.model = try container.decodeIfPresent(String.self, forKey: .model)
         self.reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
             ?? container.decodeIfPresent(String.self, forKey: .reasoningEffortSnake)

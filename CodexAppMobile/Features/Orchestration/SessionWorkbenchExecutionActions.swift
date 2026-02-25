@@ -3,6 +3,39 @@ import SwiftUI
 import Textual
 
 extension SessionWorkbenchView {
+    static func normalizedRemotePathForThreadScope(_ rawPath: String) -> String {
+        var normalized = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            return ""
+        }
+
+        while normalized.contains("//") {
+            normalized = normalized.replacingOccurrences(of: "//", with: "/")
+        }
+
+        if normalized == "/" {
+            return normalized
+        }
+
+        while normalized.count > 1 && normalized.hasSuffix("/") {
+            normalized.removeLast()
+        }
+
+        return normalized
+    }
+
+    static func isThreadPath(_ threadPath: String, inWorkspacePath workspacePath: String) -> Bool {
+        let normalizedThreadPath = Self.normalizedRemotePathForThreadScope(threadPath)
+        let normalizedWorkspacePath = Self.normalizedRemotePathForThreadScope(workspacePath)
+
+        guard !normalizedThreadPath.isEmpty,
+              !normalizedWorkspacePath.isEmpty else {
+            return false
+        }
+
+        return normalizedThreadPath == normalizedWorkspacePath
+    }
+
     func refreshThreads() {
         guard let selectedWorkspace else {
             self.localErrorMessage = "Select a project first."
@@ -38,7 +71,9 @@ extension SessionWorkbenchView {
                 }
 
                 let fetched = try await self.appState.appServerClient.threadList(archived: false, limit: 300)
-                let scoped = fetched.filter { $0.cwd == selectedWorkspace.remotePath }
+                let scoped = fetched.filter {
+                    Self.isThreadPath($0.cwd, inWorkspacePath: selectedWorkspace.remotePath)
+                }
                 let existingByThreadID = Dictionary(
                     uniqueKeysWithValues: self.appState.threadBookmarkStore
                         .threads(for: selectedWorkspace.id)
