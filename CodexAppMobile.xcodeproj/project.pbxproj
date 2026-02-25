@@ -28,9 +28,10 @@
 			A1B2C3D4E5F6010000000219 /* SessionWorkbenchMenuAndActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000118 /* SessionWorkbenchMenuAndActions.swift */; };
 			A1B2C3D4E5F6010000000220 /* AppServerClientParsing.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000119 /* AppServerClientParsing.swift */; };
 			A1B2C3D4E5F6010000000221 /* AppServerPayloads.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000120 /* AppServerPayloads.swift */; };
-			A1B2C3D4E5F6010000000222 /* CodexUIStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000121 /* CodexUIStyle.swift */; };
-			A1B2C3D4E5F6010000000223 /* ANSIRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000122 /* ANSIRenderer.swift */; };
-			A1B2C3D4E5F6010000000224 /* SSHTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000123 /* SSHTransport.swift */; };
+		A1B2C3D4E5F6010000000222 /* CodexUIStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000121 /* CodexUIStyle.swift */; };
+		A1B2C3D4E5F6010000000223 /* ANSIRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000122 /* ANSIRenderer.swift */; };
+		A1B2C3D4E5F6010000000224 /* SSHTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000123 /* SSHTransport.swift */; };
+		A1B2C3D4E5F6010000000225 /* SessionWorkbenchExecutionActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000124 /* SessionWorkbenchExecutionActions.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -67,6 +68,7 @@
 			A1B2C3D4E5F6010000000121 /* CodexUIStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Terminal/CodexUIStyle.swift; sourceTree = "<group>"; };
 			A1B2C3D4E5F6010000000122 /* ANSIRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Terminal/ANSIRenderer.swift; sourceTree = "<group>"; };
 			A1B2C3D4E5F6010000000123 /* SSHTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Terminal/SSHTransport.swift; sourceTree = "<group>"; };
+			A1B2C3D4E5F6010000000124 /* SessionWorkbenchExecutionActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/SessionWorkbenchExecutionActions.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -130,6 +132,7 @@
 				A1B2C3D4E5F6010000000116 /* SessionWorkbenchChatUI.swift */,
 				A1B2C3D4E5F6010000000117 /* SessionWorkbenchPanels.swift */,
 				A1B2C3D4E5F6010000000118 /* SessionWorkbenchMenuAndActions.swift */,
+				A1B2C3D4E5F6010000000124 /* SessionWorkbenchExecutionActions.swift */,
 				A1B2C3D4E5F6010000000108 /* Assets.xcassets */,
 			);
 			path = CodexAppMobile;
@@ -273,6 +276,7 @@
 				A1B2C3D4E5F6010000000217 /* SessionWorkbenchChatUI.swift in Sources */,
 				A1B2C3D4E5F6010000000218 /* SessionWorkbenchPanels.swift in Sources */,
 				A1B2C3D4E5F6010000000219 /* SessionWorkbenchMenuAndActions.swift in Sources */,
+				A1B2C3D4E5F6010000000225 /* SessionWorkbenchExecutionActions.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
