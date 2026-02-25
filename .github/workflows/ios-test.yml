@@ -12,31 +12,54 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Ensure iOS runtime
+        run: make setup-ios-runtime
+
       - name: Resolve simulator device type
         id: simulator
         shell: bash
         run: |
           set -euo pipefail
-          type_id="$(xcrun simctl list devicetypes | awk -F '[()]' '
-            /iPhone/ {
-              gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
-              if ($2 ~ /^com\.apple\.CoreSimulator\.SimDeviceType\./) {
-                print $2
+          runtime_id="$(xcrun simctl list runtimes | awk '
+            /^iOS / && $0 !~ /unavailable/ {
+              if (match($0, /com\.apple\.CoreSimulator\.SimRuntime\.iOS[-0-9A-Za-z.]*/)) {
+                print substr($0, RSTART, RLENGTH)
                 exit
               }
             }
           ')"
 
+          if [[ -z "${runtime_id}" ]]; then
+            echo "No available iOS runtime found." >&2
+            exit 1
+          fi
+
+          type_id=""
+          while IFS= read -r candidate_type; do
+            [[ -n "${candidate_type}" ]] || continue
+
+            probe_name="CodexAppMobile-CI-Probe-${RANDOM}-${RANDOM}"
+            if probe_udid="$(xcrun simctl create "${probe_name}" "${candidate_type}" "${runtime_id}" 2>/dev/null)"; then
+              type_id="${candidate_type}"
+              xcrun simctl delete "${probe_udid}" >/dev/null 2>&1 || true
+              break
+            fi
+          done < <(xcrun simctl list devicetypes | awk -F '[()]' '
+            /iPhone/ {
+              gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+              if ($2 ~ /^com\.apple\.CoreSimulator\.SimDeviceType\./) {
+                print $2
+              }
+            }
+          ')
+
           if [[ -z "${type_id}" ]]; then
-            echo "No iPhone simulator device type found." >&2
+            echo "No compatible iPhone simulator device type found for runtime ${runtime_id}." >&2
             exit 1
           fi
 
           echo "device_type=${type_id}" >> "$GITHUB_OUTPUT"
           echo "device_name=CodexAppMobile CI iPhone" >> "$GITHUB_OUTPUT"
-
-      - name: Ensure iOS runtime
-        run: make setup-ios-runtime
 
       - name: Run iOS tests
         env:
