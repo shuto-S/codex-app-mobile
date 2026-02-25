@@ -16,6 +16,13 @@
 		A1B2C3D4E5F6010000000207 /* CodexOrchestrationViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000107 /* CodexOrchestrationViews.swift */; };
 		A1B2C3D4E5F6010000000208 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000108 /* Assets.xcassets */; };
 		A1B2C3D4E5F6010000000209 /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F6010000000803 /* Textual */; };
+		A1B2C3D4E5F6010000000210 /* OrchestrationStores.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000109 /* OrchestrationStores.swift */; };
+		A1B2C3D4E5F6010000000211 /* AppServerDomain.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000110 /* AppServerDomain.swift */; };
+		A1B2C3D4E5F6010000000212 /* AppServerClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000111 /* AppServerClient.swift */; };
+		A1B2C3D4E5F6010000000213 /* SessionWorkbenchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000112 /* SessionWorkbenchView.swift */; };
+		A1B2C3D4E5F6010000000214 /* HostDiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000113 /* HostDiagnosticsView.swift */; };
+		A1B2C3D4E5F6010000000215 /* PendingRequestSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000114 /* PendingRequestSheet.swift */; };
+		A1B2C3D4E5F6010000000216 /* SessionWorkbenchSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000115 /* SessionWorkbenchSupport.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -29,14 +36,21 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		A1B2C3D4E5F6010000000101 /* CodexAppMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexAppMobileApp.swift; sourceTree = "<group>"; };
-		A1B2C3D4E5F6010000000102 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6010000000101 /* CodexAppMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/CodexAppMobileApp.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6010000000102 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Terminal/ContentView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6010000000103 /* CodexAppMobileTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexAppMobileTests.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6010000000104 /* CodexAppMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = CodexAppMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1B2C3D4E5F6010000000105 /* CodexAppMobileTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = CodexAppMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		A1B2C3D4E5F6010000000106 /* CodexOrchestration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOrchestration.swift; sourceTree = "<group>"; };
-		A1B2C3D4E5F6010000000107 /* CodexOrchestrationViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexOrchestrationViews.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6010000000106 /* CodexOrchestration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/CodexOrchestration.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6010000000107 /* CodexOrchestrationViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/CodexOrchestrationViews.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6010000000108 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A1B2C3D4E5F6010000000109 /* OrchestrationStores.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/OrchestrationStores.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6010000000110 /* AppServerDomain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/AppServerDomain.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6010000000111 /* AppServerClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/AppServerClient.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6010000000112 /* SessionWorkbenchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/SessionWorkbenchView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6010000000113 /* HostDiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/HostDiagnosticsView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6010000000114 /* PendingRequestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/PendingRequestSheet.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6010000000115 /* SessionWorkbenchSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/SessionWorkbenchSupport.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -84,7 +98,14 @@
 				A1B2C3D4E5F6010000000101 /* CodexAppMobileApp.swift */,
 				A1B2C3D4E5F6010000000102 /* ContentView.swift */,
 				A1B2C3D4E5F6010000000106 /* CodexOrchestration.swift */,
+				A1B2C3D4E5F6010000000109 /* OrchestrationStores.swift */,
+				A1B2C3D4E5F6010000000110 /* AppServerDomain.swift */,
+				A1B2C3D4E5F6010000000111 /* AppServerClient.swift */,
 				A1B2C3D4E5F6010000000107 /* CodexOrchestrationViews.swift */,
+				A1B2C3D4E5F6010000000112 /* SessionWorkbenchView.swift */,
+				A1B2C3D4E5F6010000000113 /* HostDiagnosticsView.swift */,
+				A1B2C3D4E5F6010000000114 /* PendingRequestSheet.swift */,
+				A1B2C3D4E5F6010000000115 /* SessionWorkbenchSupport.swift */,
 				A1B2C3D4E5F6010000000108 /* Assets.xcassets */,
 			);
 			path = CodexAppMobile;
@@ -212,7 +233,14 @@
 				A1B2C3D4E5F6010000000201 /* CodexAppMobileApp.swift in Sources */,
 				A1B2C3D4E5F6010000000202 /* ContentView.swift in Sources */,
 				A1B2C3D4E5F6010000000206 /* CodexOrchestration.swift in Sources */,
+				A1B2C3D4E5F6010000000210 /* OrchestrationStores.swift in Sources */,
+				A1B2C3D4E5F6010000000211 /* AppServerDomain.swift in Sources */,
+				A1B2C3D4E5F6010000000212 /* AppServerClient.swift in Sources */,
 				A1B2C3D4E5F6010000000207 /* CodexOrchestrationViews.swift in Sources */,
+				A1B2C3D4E5F6010000000213 /* SessionWorkbenchView.swift in Sources */,
+				A1B2C3D4E5F6010000000214 /* HostDiagnosticsView.swift in Sources */,
+				A1B2C3D4E5F6010000000215 /* PendingRequestSheet.swift in Sources */,
+				A1B2C3D4E5F6010000000216 /* SessionWorkbenchSupport.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
