@@ -22,7 +22,15 @@
 		A1B2C3D4E5F6010000000213 /* SessionWorkbenchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000112 /* SessionWorkbenchView.swift */; };
 		A1B2C3D4E5F6010000000214 /* HostDiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000113 /* HostDiagnosticsView.swift */; };
 		A1B2C3D4E5F6010000000215 /* PendingRequestSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000114 /* PendingRequestSheet.swift */; };
-		A1B2C3D4E5F6010000000216 /* SessionWorkbenchSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000115 /* SessionWorkbenchSupport.swift */; };
+			A1B2C3D4E5F6010000000216 /* SessionWorkbenchSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000115 /* SessionWorkbenchSupport.swift */; };
+			A1B2C3D4E5F6010000000217 /* SessionWorkbenchChatUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000116 /* SessionWorkbenchChatUI.swift */; };
+			A1B2C3D4E5F6010000000218 /* SessionWorkbenchPanels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000117 /* SessionWorkbenchPanels.swift */; };
+			A1B2C3D4E5F6010000000219 /* SessionWorkbenchMenuAndActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000118 /* SessionWorkbenchMenuAndActions.swift */; };
+			A1B2C3D4E5F6010000000220 /* AppServerClientParsing.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000119 /* AppServerClientParsing.swift */; };
+			A1B2C3D4E5F6010000000221 /* AppServerPayloads.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000120 /* AppServerPayloads.swift */; };
+			A1B2C3D4E5F6010000000222 /* CodexUIStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000121 /* CodexUIStyle.swift */; };
+			A1B2C3D4E5F6010000000223 /* ANSIRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000122 /* ANSIRenderer.swift */; };
+			A1B2C3D4E5F6010000000224 /* SSHTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000123 /* SSHTransport.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -51,6 +59,14 @@
 		A1B2C3D4E5F6010000000113 /* HostDiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/HostDiagnosticsView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6010000000114 /* PendingRequestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/PendingRequestSheet.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6010000000115 /* SessionWorkbenchSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/SessionWorkbenchSupport.swift; sourceTree = "<group>"; };
+			A1B2C3D4E5F6010000000116 /* SessionWorkbenchChatUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/SessionWorkbenchChatUI.swift; sourceTree = "<group>"; };
+			A1B2C3D4E5F6010000000117 /* SessionWorkbenchPanels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/SessionWorkbenchPanels.swift; sourceTree = "<group>"; };
+			A1B2C3D4E5F6010000000118 /* SessionWorkbenchMenuAndActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/SessionWorkbenchMenuAndActions.swift; sourceTree = "<group>"; };
+			A1B2C3D4E5F6010000000119 /* AppServerClientParsing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/AppServerClientParsing.swift; sourceTree = "<group>"; };
+			A1B2C3D4E5F6010000000120 /* AppServerPayloads.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/AppServerPayloads.swift; sourceTree = "<group>"; };
+			A1B2C3D4E5F6010000000121 /* CodexUIStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Terminal/CodexUIStyle.swift; sourceTree = "<group>"; };
+			A1B2C3D4E5F6010000000122 /* ANSIRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Terminal/ANSIRenderer.swift; sourceTree = "<group>"; };
+			A1B2C3D4E5F6010000000123 /* SSHTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Terminal/SSHTransport.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -94,18 +110,26 @@
 		};
 		A1B2C3D4E5F6010000000007 /* CodexAppMobile */ = {
 			isa = PBXGroup;
-			children = (
-				A1B2C3D4E5F6010000000101 /* CodexAppMobileApp.swift */,
-				A1B2C3D4E5F6010000000102 /* ContentView.swift */,
-				A1B2C3D4E5F6010000000106 /* CodexOrchestration.swift */,
-				A1B2C3D4E5F6010000000109 /* OrchestrationStores.swift */,
-				A1B2C3D4E5F6010000000110 /* AppServerDomain.swift */,
-				A1B2C3D4E5F6010000000111 /* AppServerClient.swift */,
-				A1B2C3D4E5F6010000000107 /* CodexOrchestrationViews.swift */,
-				A1B2C3D4E5F6010000000112 /* SessionWorkbenchView.swift */,
-				A1B2C3D4E5F6010000000113 /* HostDiagnosticsView.swift */,
+				children = (
+					A1B2C3D4E5F6010000000101 /* CodexAppMobileApp.swift */,
+					A1B2C3D4E5F6010000000102 /* ContentView.swift */,
+					A1B2C3D4E5F6010000000121 /* CodexUIStyle.swift */,
+					A1B2C3D4E5F6010000000122 /* ANSIRenderer.swift */,
+					A1B2C3D4E5F6010000000123 /* SSHTransport.swift */,
+					A1B2C3D4E5F6010000000106 /* CodexOrchestration.swift */,
+					A1B2C3D4E5F6010000000109 /* OrchestrationStores.swift */,
+					A1B2C3D4E5F6010000000110 /* AppServerDomain.swift */,
+					A1B2C3D4E5F6010000000111 /* AppServerClient.swift */,
+					A1B2C3D4E5F6010000000119 /* AppServerClientParsing.swift */,
+					A1B2C3D4E5F6010000000120 /* AppServerPayloads.swift */,
+					A1B2C3D4E5F6010000000107 /* CodexOrchestrationViews.swift */,
+					A1B2C3D4E5F6010000000112 /* SessionWorkbenchView.swift */,
+					A1B2C3D4E5F6010000000113 /* HostDiagnosticsView.swift */,
 				A1B2C3D4E5F6010000000114 /* PendingRequestSheet.swift */,
 				A1B2C3D4E5F6010000000115 /* SessionWorkbenchSupport.swift */,
+				A1B2C3D4E5F6010000000116 /* SessionWorkbenchChatUI.swift */,
+				A1B2C3D4E5F6010000000117 /* SessionWorkbenchPanels.swift */,
+				A1B2C3D4E5F6010000000118 /* SessionWorkbenchMenuAndActions.swift */,
 				A1B2C3D4E5F6010000000108 /* Assets.xcassets */,
 			);
 			path = CodexAppMobile;
@@ -229,18 +253,26 @@
 		A1B2C3D4E5F6010000000301 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = (
-				A1B2C3D4E5F6010000000201 /* CodexAppMobileApp.swift in Sources */,
-				A1B2C3D4E5F6010000000202 /* ContentView.swift in Sources */,
-				A1B2C3D4E5F6010000000206 /* CodexOrchestration.swift in Sources */,
-				A1B2C3D4E5F6010000000210 /* OrchestrationStores.swift in Sources */,
-				A1B2C3D4E5F6010000000211 /* AppServerDomain.swift in Sources */,
-				A1B2C3D4E5F6010000000212 /* AppServerClient.swift in Sources */,
-				A1B2C3D4E5F6010000000207 /* CodexOrchestrationViews.swift in Sources */,
-				A1B2C3D4E5F6010000000213 /* SessionWorkbenchView.swift in Sources */,
-				A1B2C3D4E5F6010000000214 /* HostDiagnosticsView.swift in Sources */,
+				files = (
+					A1B2C3D4E5F6010000000201 /* CodexAppMobileApp.swift in Sources */,
+					A1B2C3D4E5F6010000000202 /* ContentView.swift in Sources */,
+					A1B2C3D4E5F6010000000222 /* CodexUIStyle.swift in Sources */,
+					A1B2C3D4E5F6010000000223 /* ANSIRenderer.swift in Sources */,
+					A1B2C3D4E5F6010000000224 /* SSHTransport.swift in Sources */,
+					A1B2C3D4E5F6010000000206 /* CodexOrchestration.swift in Sources */,
+					A1B2C3D4E5F6010000000210 /* OrchestrationStores.swift in Sources */,
+					A1B2C3D4E5F6010000000211 /* AppServerDomain.swift in Sources */,
+					A1B2C3D4E5F6010000000212 /* AppServerClient.swift in Sources */,
+					A1B2C3D4E5F6010000000220 /* AppServerClientParsing.swift in Sources */,
+					A1B2C3D4E5F6010000000221 /* AppServerPayloads.swift in Sources */,
+					A1B2C3D4E5F6010000000207 /* CodexOrchestrationViews.swift in Sources */,
+					A1B2C3D4E5F6010000000213 /* SessionWorkbenchView.swift in Sources */,
+					A1B2C3D4E5F6010000000214 /* HostDiagnosticsView.swift in Sources */,
 				A1B2C3D4E5F6010000000215 /* PendingRequestSheet.swift in Sources */,
 				A1B2C3D4E5F6010000000216 /* SessionWorkbenchSupport.swift in Sources */,
+				A1B2C3D4E5F6010000000217 /* SessionWorkbenchChatUI.swift in Sources */,
+				A1B2C3D4E5F6010000000218 /* SessionWorkbenchPanels.swift in Sources */,
+				A1B2C3D4E5F6010000000219 /* SessionWorkbenchMenuAndActions.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

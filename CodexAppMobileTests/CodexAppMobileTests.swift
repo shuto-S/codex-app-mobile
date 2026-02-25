@@ -837,6 +837,83 @@ final class CodexAppMobileTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testAppServerParsingModelCatalogWithEmptyArrayReturnsEmpty() {
+        let parsed = AppServerClient.parseModelCatalog([])
+        XCTAssertTrue(parsed.isEmpty)
+    }
+
+    @MainActor
+    func testAppServerParsingModelCatalogSupportsSnakeCaseFields() throws {
+        let payloadJSON = """
+        {
+          "data": [
+            {
+              "id": "gpt-5",
+              "name": "GPT-5",
+              "supported_reasoning_efforts": ["low", "medium"],
+              "default_reasoning_effort": "medium",
+              "isDefault": true
+            }
+          ],
+          "next_cursor": "cursor-1"
+        }
+        """
+
+        let payload = try JSONDecoder().decode(ModelListResponsePayload.self, from: Data(payloadJSON.utf8))
+        XCTAssertEqual(payload.nextCursor, "cursor-1")
+
+        let catalog = AppServerClient.parseModelCatalog(payload.data)
+        XCTAssertEqual(catalog.count, 1)
+
+        let descriptor = try XCTUnwrap(catalog.first)
+        XCTAssertEqual(descriptor.model, "gpt-5")
+        XCTAssertEqual(descriptor.displayName, "GPT-5")
+        XCTAssertEqual(descriptor.defaultReasoningEffort, "medium")
+        XCTAssertEqual(descriptor.reasoningEffortOptions.map(\.value), ["low", "medium"])
+    }
+
+    @MainActor
+    func testAppServerParsingRateLimitCatalogSupportsPolymorphicForms() {
+        let byLimitID: JSONValue = .object([
+            "rateLimitsByLimitId": .object([
+                "requests_per_minute": .object([
+                    "limitName": .string("Requests"),
+                    "primary": .object([
+                        "window_duration_mins": .number(1),
+                        "used_percent": .number(0.25),
+                        "resets_at_unix_seconds": .number(1_700_000_000),
+                    ]),
+                ]),
+            ]),
+        ])
+
+        let byLimitSummaries = AppServerClient.parseRateLimitCatalog(byLimitID)
+        XCTAssertEqual(byLimitSummaries.count, 1)
+        XCTAssertEqual(byLimitSummaries[0].name, "Requests")
+        XCTAssertEqual(byLimitSummaries[0].windowMinutes, 1)
+        XCTAssertEqual(byLimitSummaries[0].usedPercent ?? -1, 25, accuracy: 0.001)
+        XCTAssertEqual(byLimitSummaries[0].remainingPercent ?? -1, 75, accuracy: 0.001)
+        XCTAssertNotNil(byLimitSummaries[0].resetsAt)
+
+        let itemsForm: JSONValue = .object([
+            "items": .array([
+                .object([
+                    "name": .string("Tokens"),
+                    "windowMinutes": .number(60),
+                    "used": .number(50),
+                    "limit": .number(200),
+                ]),
+            ]),
+        ])
+
+        let itemSummaries = AppServerClient.parseRateLimitCatalog(itemsForm)
+        XCTAssertEqual(itemSummaries.count, 1)
+        XCTAssertEqual(itemSummaries[0].name, "Tokens")
+        XCTAssertEqual(itemSummaries[0].windowMinutes, 60)
+        XCTAssertEqual(itemSummaries[0].usedPercent ?? -1, 25, accuracy: 0.001)
+    }
+
     func testBuildCommandPaletteRowsWithCommandsOnly() {
         let commands = [
             AppServerSlashCommandDescriptor(
