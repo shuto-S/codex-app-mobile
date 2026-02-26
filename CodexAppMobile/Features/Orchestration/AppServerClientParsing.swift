@@ -568,13 +568,40 @@ extension AppServerClient {
         return raw.lowercased()
     }
 
-    static func collaborationModePayload(for rawModeID: String) -> JSONValue? {
-        guard let modeID = Self.nonEmpty(rawModeID) else {
+    static func collaborationModePayload(for rawModeID: String, model: String?, effort: String?) -> JSONValue? {
+        guard let mode = Self.collaborationModeKind(for: rawModeID),
+              let model = Self.nonEmpty(model) else {
             return nil
         }
+
         return .object([
-            "id": .string(modeID)
+            "mode": .string(mode),
+            "settings": .object([
+                "model": .string(model),
+                "reasoning_effort": Self.normalizedReasoningEffort(effort).map(JSONValue.string) ?? .null,
+                // `null` means "use built-in instructions for the selected mode".
+                "developer_instructions": .null,
+            ]),
         ])
+    }
+
+    static func collaborationModeKind(for rawModeID: String) -> String? {
+        guard let modeID = Self.nonEmpty(rawModeID)?.lowercased() else {
+            return nil
+        }
+        if modeID == "plan" || modeID.contains("plan") {
+            return "plan"
+        }
+        if modeID == "default"
+            || modeID.contains("default")
+            || modeID == "code"
+            || modeID == "pair_programming"
+            || modeID == "pair-programming"
+            || modeID == "execute"
+            || modeID == "custom" {
+            return "default"
+        }
+        return nil
     }
 
     static func shouldRetryWithoutEffort(_ error: Error) -> Bool {

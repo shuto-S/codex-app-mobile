@@ -917,6 +917,45 @@ final class CodexAppMobileTests: XCTestCase {
     }
 
     @MainActor
+    func testAppServerClientBuildsPlanCollaborationModePayload() {
+        let payload = AppServerClient.collaborationModePayload(
+            for: "plan",
+            model: "gpt-5.3-codex",
+            effort: "high"
+        )
+
+        XCTAssertEqual(
+            payload,
+            .object([
+                "mode": .string("plan"),
+                "settings": .object([
+                    "model": .string("gpt-5.3-codex"),
+                    "reasoning_effort": .string("high"),
+                    "developer_instructions": .null,
+                ]),
+            ])
+        )
+    }
+
+    @MainActor
+    func testAppServerClientCollaborationModePayloadRequiresModeAndModel() {
+        XCTAssertNil(
+            AppServerClient.collaborationModePayload(
+                for: "plan",
+                model: nil,
+                effort: "medium"
+            )
+        )
+        XCTAssertNil(
+            AppServerClient.collaborationModePayload(
+                for: "unsupported-mode",
+                model: "gpt-5.3-codex",
+                effort: nil
+            )
+        )
+    }
+
+    @MainActor
     func testAppServerParsingModelCatalogSupportsSnakeCaseFields() throws {
         let payloadJSON = """
         {

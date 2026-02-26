@@ -439,9 +439,21 @@ final class AppServerClient: ObservableObject {
             if let effort {
                 params["effort"] = .string(effort)
             }
-            if let collaborationModeID,
-               let collaborationMode = Self.collaborationModePayload(for: collaborationModeID) {
-                params["collaborationMode"] = collaborationMode
+            if let collaborationModeID {
+                let collaborationModel = model
+                    ?? self.availableModels.first(where: { $0.isDefault })?.model
+                    ?? self.availableModels.first?.model
+                    ?? Self.nonEmpty(self.diagnostics.currentModel)
+
+                if let collaborationMode = Self.collaborationModePayload(
+                    for: collaborationModeID,
+                    model: collaborationModel,
+                    effort: effort
+                ) {
+                    params["collaborationMode"] = collaborationMode
+                } else {
+                    self.appendEvent("turn/start skipped collaboration mode: unsupported mode id or unresolved model.")
+                }
             }
 
             let result = try await self.request(method: "turn/start", params: .object(params))
