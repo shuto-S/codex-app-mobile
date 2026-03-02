@@ -1,6 +1,12 @@
 import SwiftUI
 
 struct PendingRequestSheet: View {
+    private struct CommandDecisionRow: Identifiable {
+        let id: String
+        let title: String
+        let decision: AppServerCommandApprovalDecisionResponse?
+    }
+
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
 
@@ -41,7 +47,16 @@ struct PendingRequestSheet: View {
                 }
 
                 switch self.request.kind {
-                case .commandApproval(let command, let cwd, let reason):
+                case .commandApproval(
+                    let command,
+                    let cwd,
+                    let reason,
+                    let availableDecisions,
+                    let proposedExecPolicyAmendment,
+                    let proposedNetworkPolicyAmendments,
+                    let networkApprovalContext,
+                    let additionalPermissions
+                ):
                     Section("Command") {
                         Text(command.isEmpty ? "(empty command)" : command)
                             .font(.system(.footnote, design: .monospaced))
@@ -62,11 +77,57 @@ struct PendingRequestSheet: View {
                         }
                     }
 
+                    if let additionalPermissions {
+                        Section("Requested Access") {
+                            if let network = additionalPermissions.network {
+                                Text("Network: \(network ? "required" : "not required")")
+                                    .font(.caption)
+                            }
+                            if let fileSystem = additionalPermissions.fileSystem {
+                                let readable = fileSystem.read?.count ?? 0
+                                let writable = fileSystem.write?.count ?? 0
+                                Text("File system: read \(readable) path(s), write \(writable) path(s)")
+                                    .font(.caption)
+                            }
+                        }
+                    }
+
+                    if let proposedExecPolicyAmendment,
+                       !proposedExecPolicyAmendment.command.isEmpty {
+                        Section("Exec Policy Proposal") {
+                            Text(proposedExecPolicyAmendment.command.joined(separator: " "))
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                        }
+                    }
+
+                    if !proposedNetworkPolicyAmendments.isEmpty || networkApprovalContext != nil {
+                        Section("Network Policy") {
+                            if let networkApprovalContext {
+                                let protocolValue = networkApprovalContext.protocol?.uppercased() ?? "UNKNOWN"
+                                Text("Host: \(networkApprovalContext.host) (\(protocolValue))")
+                                    .font(.caption)
+                            }
+                            ForEach(proposedNetworkPolicyAmendments.indices, id: \.self) { index in
+                                let amendment = proposedNetworkPolicyAmendments[index]
+                                Text("\(amendment.action.rawValue.uppercased()): \(amendment.host)")
+                                    .font(.caption)
+                            }
+                        }
+                    }
+
                     Section("Decision") {
-                        ForEach(AppServerCommandApprovalDecision.allCases) { decision in
-                            Button(decision.rawValue) {
+                        ForEach(self.commandDecisionRows(
+                            availableDecisions: availableDecisions,
+                            proposedExecPolicyAmendment: proposedExecPolicyAmendment,
+                            proposedNetworkPolicyAmendments: proposedNetworkPolicyAmendments,
+                            networkApprovalContext: networkApprovalContext
+                        )) { row in
+                            Button(row.title) {
+                                guard let decision = row.decision else { return }
                                 self.respondCommand(decision)
                             }
+                            .disabled(row.decision == nil)
                         }
                     }
 
@@ -158,7 +219,108 @@ struct PendingRequestSheet: View {
         }
     }
 
-    private func respondCommand(_ decision: AppServerCommandApprovalDecision) {
+    private func commandDecisionRows(
+        availableDecisions: [AppServerCommandApprovalDecisionOption],
+        proposedExecPolicyAmendment: AppServerExecPolicyAmendment?,
+        proposedNetworkPolicyAmendments: [AppServerNetworkPolicyAmendment],
+        networkApprovalContext: AppServerNetworkApprovalContext?
+    ) -> [CommandDecisionRow] {
+        let sourceDecisions: [AppServerCommandApprovalDecisionOption]
+        if availableDecisions.isEmpty {
+            sourceDecisions = [.accept, .acceptForSession, .decline, .cancel]
+        } else {
+            sourceDecisions = availableDecisions
+        }
+
+        var rows: [CommandDecisionRow] = []
+        var counter = 0
+        func nextID(_ prefix: String) -> String {
+            defer { counter += 1 }
+            return "\(prefix)-\(counter)"
+        }
+
+        for decision in sourceDecisions {
+            switch decision {
+            case .accept:
+                rows.append(CommandDecisionRow(
+                    id: nextID("accept"),
+                    title: "Accept",
+                    decision: .accept
+                ))
+            case .acceptForSession:
+                rows.append(CommandDecisionRow(
+                    id: nextID("accept-session"),
+                    title: "Accept for Session",
+                    decision: .acceptForSession
+                ))
+            case .decline:
+                rows.append(CommandDecisionRow(
+                    id: nextID("decline"),
+                    title: "Decline",
+                    decision: .decline
+                ))
+            case .cancel:
+                rows.append(CommandDecisionRow(
+                    id: nextID("cancel"),
+                    title: "Cancel Turn",
+                    decision: .cancel
+                ))
+            case .acceptWithExecpolicyAmendment(let amendment):
+                if let amendment = amendment ?? proposedExecPolicyAmendment {
+                    rows.append(CommandDecisionRow(
+                        id: nextID("accept-execpolicy"),
+                        title: "Accept + Save Exec Policy",
+                        decision: .acceptWithExecpolicyAmendment(amendment: amendment)
+                    ))
+                } else {
+                    rows.append(CommandDecisionRow(
+                        id: nextID("accept-execpolicy-missing"),
+                        title: "Accept + Save Exec Policy (Unavailable)",
+                        decision: nil
+                    ))
+                }
+            case .applyNetworkPolicyAmendment(let amendment):
+                if let amendment = amendment ?? proposedNetworkPolicyAmendments.first {
+                    rows.append(CommandDecisionRow(
+                        id: nextID("network-policy"),
+                        title: "Apply Network Policy: \(amendment.action.rawValue.uppercased()) \(amendment.host)",
+                        decision: .applyNetworkPolicyAmendment(amendment: amendment)
+                    ))
+                } else if let networkApprovalContext {
+                    rows.append(CommandDecisionRow(
+                        id: nextID("network-allow"),
+                        title: "Allow host \(networkApprovalContext.host)",
+                        decision: .applyNetworkPolicyAmendment(
+                            amendment: AppServerNetworkPolicyAmendment(
+                                host: networkApprovalContext.host,
+                                action: .allow
+                            )
+                        )
+                    ))
+                    rows.append(CommandDecisionRow(
+                        id: nextID("network-deny"),
+                        title: "Deny host \(networkApprovalContext.host)",
+                        decision: .applyNetworkPolicyAmendment(
+                            amendment: AppServerNetworkPolicyAmendment(
+                                host: networkApprovalContext.host,
+                                action: .deny
+                            )
+                        )
+                    ))
+                } else {
+                    rows.append(CommandDecisionRow(
+                        id: nextID("network-policy-missing"),
+                        title: "Apply Network Policy (Unavailable)",
+                        decision: nil
+                    ))
+                }
+            }
+        }
+
+        return rows
+    }
+
+    private func respondCommand(_ decision: AppServerCommandApprovalDecisionResponse) {
         self.submitError = ""
         Task {
             do {

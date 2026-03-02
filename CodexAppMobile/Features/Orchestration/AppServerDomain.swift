@@ -227,13 +227,100 @@ actor AppServerMessageRouter {
     }
 }
 
-enum AppServerCommandApprovalDecision: String, CaseIterable, Identifiable {
+struct AppServerExecPolicyAmendment: Equatable {
+    let command: [String]
+}
+
+enum AppServerNetworkPolicyRuleAction: String, CaseIterable, Identifiable {
+    case allow
+    case deny
+
+    var id: String { self.rawValue }
+}
+
+struct AppServerNetworkPolicyAmendment: Equatable {
+    let host: String
+    let action: AppServerNetworkPolicyRuleAction
+}
+
+struct AppServerNetworkApprovalContext: Equatable {
+    let host: String
+    let `protocol`: String?
+}
+
+struct AppServerAdditionalFileSystemPermissions: Equatable {
+    let read: [String]?
+    let write: [String]?
+}
+
+struct AppServerAdditionalPermissions: Equatable {
+    let network: Bool?
+    let fileSystem: AppServerAdditionalFileSystemPermissions?
+}
+
+enum AppServerCommandApprovalDecisionOption: Equatable, Identifiable {
     case accept
     case acceptForSession
+    case acceptWithExecpolicyAmendment(amendment: AppServerExecPolicyAmendment?)
+    case applyNetworkPolicyAmendment(amendment: AppServerNetworkPolicyAmendment?)
     case decline
     case cancel
 
-    var id: String { self.rawValue }
+    var id: String {
+        switch self {
+        case .accept:
+            return "accept"
+        case .acceptForSession:
+            return "acceptForSession"
+        case .acceptWithExecpolicyAmendment(let amendment):
+            return "acceptWithExecpolicyAmendment:\(amendment?.command.joined(separator: " ") ?? "none")"
+        case .applyNetworkPolicyAmendment(let amendment):
+            return "applyNetworkPolicyAmendment:\(amendment?.host ?? "none"):\(amendment?.action.rawValue ?? "none")"
+        case .decline:
+            return "decline"
+        case .cancel:
+            return "cancel"
+        }
+    }
+}
+
+enum AppServerCommandApprovalDecisionResponse: Equatable {
+    case accept
+    case acceptForSession
+    case acceptWithExecpolicyAmendment(amendment: AppServerExecPolicyAmendment)
+    case applyNetworkPolicyAmendment(amendment: AppServerNetworkPolicyAmendment)
+    case decline
+    case cancel
+
+    var jsonValue: JSONValue {
+        switch self {
+        case .accept:
+            return .string("accept")
+        case .acceptForSession:
+            return .string("acceptForSession")
+        case .acceptWithExecpolicyAmendment(let amendment):
+            return .object([
+                "acceptWithExecpolicyAmendment": .object([
+                    "execpolicy_amendment": .array(
+                        amendment.command.map { .string($0) }
+                    )
+                ])
+            ])
+        case .applyNetworkPolicyAmendment(let amendment):
+            return .object([
+                "applyNetworkPolicyAmendment": .object([
+                    "network_policy_amendment": .object([
+                        "host": .string(amendment.host),
+                        "action": .string(amendment.action.rawValue),
+                    ])
+                ])
+            ])
+        case .decline:
+            return .string("decline")
+        case .cancel:
+            return .string("cancel")
+        }
+    }
 }
 
 enum AppServerFileApprovalDecision: String, CaseIterable, Identifiable {
@@ -257,20 +344,31 @@ struct AppServerUserInputQuestion: Identifiable, Equatable {
 }
 
 enum AppServerPendingRequestKind: Equatable {
-    case commandApproval(command: String, cwd: String?, reason: String?)
+    case commandApproval(
+        command: String,
+        cwd: String?,
+        reason: String?,
+        availableDecisions: [AppServerCommandApprovalDecisionOption],
+        proposedExecPolicyAmendment: AppServerExecPolicyAmendment?,
+        proposedNetworkPolicyAmendments: [AppServerNetworkPolicyAmendment],
+        networkApprovalContext: AppServerNetworkApprovalContext?,
+        additionalPermissions: AppServerAdditionalPermissions?
+    )
     case fileChange(reason: String?)
     case userInput(questions: [AppServerUserInputQuestion])
     case unknown
 }
 
 struct AppServerPendingRequest: Identifiable, Equatable {
-    let id = UUID()
+    let requestIDKey: String
     let rpcID: JSONValue
     let method: String
     let threadID: String
     let turnID: String
     let itemID: String
     let kind: AppServerPendingRequestKind
+
+    var id: String { self.requestIDKey }
 
     var title: String {
         switch self.kind {
@@ -291,9 +389,17 @@ struct RemoteThreadRecord: Equatable, Identifiable {
     let preview: String
     let updatedAt: Date
     let archived: Bool
+    let ephemeral: Bool
     let cwd: String
     let model: String?
     let reasoningEffort: String?
+}
+
+struct AppServerModelUpgradeInfo: Equatable {
+    let model: String
+    let upgradeCopy: String?
+    let modelLink: String?
+    let migrationMarkdown: String?
 }
 
 struct AppServerModelDescriptor: Equatable, Identifiable {
@@ -302,6 +408,8 @@ struct AppServerModelDescriptor: Equatable, Identifiable {
     let reasoningEffortOptions: [CodexReasoningEffortOption]
     let defaultReasoningEffort: String?
     let isDefault: Bool
+    let upgradeInfo: AppServerModelUpgradeInfo?
+    let availabilityNuxMessage: String?
 
     var id: String { self.model }
 }
@@ -400,10 +508,11 @@ enum AppServerErrorCategory: String {
 struct AppServerDiagnostics: Equatable {
     var cliVersion: String = ""
     var authStatus: String = "unknown"
+    var planType: String?
     var currentModel: String = ""
     var lastPingLatencyMS: Double?
     var lastCheckedAt: Date?
-    var minimumRequiredVersion: String = "0.101.0"
+    var minimumRequiredVersion: String = "0.106.0"
 }
 
 struct AppServerRateLimitSummary: Equatable, Identifiable {
@@ -431,4 +540,12 @@ struct AppServerContextUsageSummary: Equatable {
         }
         return nil
     }
+}
+
+struct AppServerResolvedPendingRequest: Equatable, Identifiable {
+    let threadID: String
+    let requestIDKey: String
+    let resolvedAt: Date
+
+    var id: String { "\(self.threadID):\(self.requestIDKey):\(self.resolvedAt.timeIntervalSince1970)" }
 }

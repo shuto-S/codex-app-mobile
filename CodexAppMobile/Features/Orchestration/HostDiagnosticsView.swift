@@ -27,6 +27,7 @@ struct HostDiagnosticsView: View {
                     Text("CLI version: \(self.diagnostics.cliVersion.isEmpty ? "unknown" : self.diagnostics.cliVersion)")
                     Text("Required >= \(self.diagnostics.minimumRequiredVersion)")
                     Text("Auth status: \(self.diagnostics.authStatus)")
+                    Text("Plan type: \(self.diagnostics.planType?.uppercased() ?? "unknown")")
                     Text("Current model: \(self.diagnostics.currentModel.isEmpty ? "unknown" : self.diagnostics.currentModel)")
                 }
 

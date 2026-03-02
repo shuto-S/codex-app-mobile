@@ -34,6 +34,10 @@ struct SessionWorkbenchView: View {
 
     struct StatusPanelSnapshot: Equatable {
         let sessionID: String
+        let currentModel: String
+        let planType: String?
+        let modelUpgradeNotice: String?
+        let modelAvailabilityNotice: String?
         let contextUsedTokens: Int?
         let contextMaxTokens: Int?
         let contextRemainingPercent: Double?
@@ -87,6 +91,8 @@ struct SessionWorkbenchView: View {
     @State var pendingUserInputSubmitError = ""
     @State var isSubmittingPendingUserInput = false
     @State var shouldPresentNextUserInputPanelAfterPlan = false
+    @State var isResolvedPendingRequestAlertPresented = false
+    @State var resolvedPendingRequestAlertMessage = ""
     @State var isStatusPanelPresented = false
     @State var isStatusRefreshing = false
     @State var statusSnapshot: StatusPanelSnapshot?
@@ -275,7 +281,9 @@ struct SessionWorkbenchView: View {
                     displayName: displayName ?? trimmed,
                     reasoningEffortOptions: [],
                     defaultReasoningEffort: nil,
-                    isDefault: isDefault
+                    isDefault: isDefault,
+                    upgradeInfo: nil,
+                    availabilityNuxMessage: nil
                 )
             )
         }
@@ -424,6 +432,20 @@ struct SessionWorkbenchView: View {
 
     func makeStatusSnapshot() -> StatusPanelSnapshot {
         let contextUsage = self.appState.appServerClient.contextUsage(for: self.selectedThreadID)
+        let diagnostics = self.appState.appServerClient.diagnostics
+        let trimmedCurrentModel = diagnostics.currentModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackModel = self.composerModelForRequest ?? "-"
+        let currentModel = trimmedCurrentModel.isEmpty ? fallbackModel : trimmedCurrentModel
+        let modelDescriptor = self.appState.appServerClient.availableModels.first(where: { descriptor in
+            descriptor.model == currentModel
+        }) ?? self.selectedComposerModelDescriptor
+        let modelUpgradeNotice: String?
+        if let upgradeInfo = modelDescriptor?.upgradeInfo {
+            modelUpgradeNotice = upgradeInfo.upgradeCopy
+                ?? "Upgrade available: \(upgradeInfo.model)"
+        } else {
+            modelUpgradeNotice = nil
+        }
         let limits = self.preferredStatusRateLimits(from: self.appState.appServerClient.rateLimits).map {
             StatusLimitBarSnapshot(
                 id: $0.id,
@@ -435,6 +457,10 @@ struct SessionWorkbenchView: View {
 
         return StatusPanelSnapshot(
             sessionID: self.selectedThreadID ?? "-",
+            currentModel: currentModel,
+            planType: diagnostics.planType,
+            modelUpgradeNotice: modelUpgradeNotice,
+            modelAvailabilityNotice: modelDescriptor?.availabilityNuxMessage,
             contextUsedTokens: contextUsage?.usedTokens,
             contextMaxTokens: contextUsage?.maxTokens,
             contextRemainingPercent: contextUsage?.remainingPercent,
@@ -489,7 +515,14 @@ struct SessionWorkbenchView: View {
     }
 
     func isSlashCommandDisabled(_ command: AppServerSlashCommandDescriptor) -> Bool {
-        command.requiresThread && self.selectedThreadID == nil
+        if command.requiresThread && self.selectedThreadID == nil {
+            return true
+        }
+        if command.kind == .forkThread,
+           self.selectedThreadSummary?.ephemeral == true {
+            return true
+        }
+        return false
     }
 
     var menuWidth: CGFloat {
@@ -610,6 +643,9 @@ struct SessionWorkbenchView: View {
         .onChange(of: self.appState.appServerClient.pendingRequests) {
             self.handlePendingRequestsUpdated()
         }
+        .onChange(of: self.appState.appServerClient.lastResolvedPendingRequest) {
+            self.handleResolvedPendingRequestUpdated()
+        }
         .alert(
             "Delete this project?",
             isPresented: Binding(
@@ -630,6 +666,11 @@ struct SessionWorkbenchView: View {
             }
         } message: { workspace in
             Text("Delete \"\(workspace.displayName)\"? This cannot be undone.")
+        }
+        .alert("Approval Request Resolved", isPresented: self.$isResolvedPendingRequestAlertPresented) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(self.resolvedPendingRequestAlertMessage)
         }
         .sheet(isPresented: self.$isPresentingProjectEditor) {
             ProjectEditorView(

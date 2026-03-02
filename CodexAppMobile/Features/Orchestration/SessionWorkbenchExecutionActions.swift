@@ -88,6 +88,7 @@ extension SessionWorkbenchView {
                         preview: thread.preview,
                         updatedAt: thread.updatedAt,
                         archived: thread.archived,
+                        ephemeral: thread.ephemeral,
                         cwd: thread.cwd,
                         model: thread.model ?? existing?.model,
                         reasoningEffort: thread.reasoningEffort ?? existing?.reasoningEffort
@@ -177,6 +178,7 @@ extension SessionWorkbenchView {
 
                 var selectedModelForThread = self.selectedThreadSummary?.model
                 var selectedReasoningForThread = self.selectedThreadSummary?.reasoningEffort
+                let selectedEphemeralForThread = self.selectedThreadSummary?.ephemeral ?? false
                 if let activeTurnID = self.appState.appServerClient.activeTurnID(for: threadID) {
                     try await self.appState.appServerClient.turnSteer(
                         threadID: threadID,
@@ -205,6 +207,7 @@ extension SessionWorkbenchView {
                         preview: trimmedPrompt,
                         updatedAt: Date(),
                         archived: false,
+                        ephemeral: selectedEphemeralForThread,
                         cwd: selectedWorkspace.remotePath,
                         model: selectedModelForThread,
                         reasoningEffort: selectedReasoningForThread
@@ -302,6 +305,26 @@ extension SessionWorkbenchView {
             self.shouldPresentNextUserInputPanelAfterPlan = false
             self.presentPendingUserInputPanel(userInputRequest)
         }
+    }
+
+    func handleResolvedPendingRequestUpdated() {
+        guard let resolved = self.appState.appServerClient.lastResolvedPendingRequest else {
+            return
+        }
+
+        let matchedUserInput = self.pendingUserInputRequest?.requestIDKey == resolved.requestIDKey
+        let matchedSheetRequest = self.activePendingRequest?.requestIDKey == resolved.requestIDKey
+
+        if matchedUserInput {
+            self.dismissPendingUserInputPanel()
+            self.dismissCommandPalette()
+        }
+        if matchedSheetRequest {
+            self.activePendingRequest = nil
+        }
+
+        self.resolvedPendingRequestAlertMessage = "Request \(resolved.requestIDKey) for thread \(resolved.threadID) was resolved by the server."
+        self.isResolvedPendingRequestAlertPresented = true
     }
 
     func presentFirstPendingRequest() {
@@ -519,7 +542,12 @@ extension SessionWorkbenchView {
             return
         }
         guard !self.isSlashCommandDisabled(command) else {
-            self.localErrorMessage = "Select a thread first."
+            if command.kind == .forkThread,
+               self.selectedThreadSummary?.ephemeral == true {
+                self.localErrorMessage = "Ephemeral threads cannot be forked."
+            } else {
+                self.localErrorMessage = "Select a thread first."
+            }
             return
         }
 
@@ -562,6 +590,10 @@ extension SessionWorkbenchView {
             return
         }
         let sourceSummary = self.selectedThreadSummary
+        if sourceSummary?.ephemeral == true {
+            self.localErrorMessage = "Ephemeral threads cannot be forked."
+            return
+        }
         let selectedWorkspace = self.selectedWorkspace
 
         Task {
@@ -781,6 +813,7 @@ extension SessionWorkbenchView {
                 self.applyComposerSelection(model: resolvedModel, reasoningEffort: resolvedReasoning)
                 self.updateThreadBookmarkSettings(
                     threadID: threadID,
+                    ephemeral: detail.ephemeral,
                     model: resolvedModel,
                     reasoningEffort: resolvedReasoning
                 )
@@ -812,6 +845,10 @@ extension SessionWorkbenchView {
     }
 
     func archiveThread(summary: CodexThreadSummary, archived: Bool) {
+        if summary.ephemeral {
+            self.localErrorMessage = "Ephemeral threads cannot be archived."
+            return
+        }
         if self.isSSHTransport {
             var updated = summary
             updated.archived = archived

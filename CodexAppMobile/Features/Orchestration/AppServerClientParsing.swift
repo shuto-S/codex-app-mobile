@@ -65,7 +65,16 @@ extension AppServerClient {
                     displayName: displayName,
                     reasoningEffortOptions: reasoningOptions,
                     defaultReasoningEffort: defaultReasoningEffort,
-                    isDefault: entry.isDefault
+                    isDefault: entry.isDefault,
+                    upgradeInfo: entry.upgradeInfo.map { info in
+                        AppServerModelUpgradeInfo(
+                            model: info.model,
+                            upgradeCopy: Self.nonEmpty(info.upgradeCopy),
+                            modelLink: Self.nonEmpty(info.modelLink),
+                            migrationMarkdown: Self.nonEmpty(info.migrationMarkdown)
+                        )
+                    },
+                    availabilityNuxMessage: Self.nonEmpty(entry.availabilityNuxMessage)
                 )
             )
         }
@@ -532,6 +541,131 @@ extension AppServerClient {
         return nil
     }
 
+    static func parsePlanType(from value: JSONValue?) -> String? {
+        guard let object = value?.objectValue else { return nil }
+        return Self.findString(
+            in: object,
+            paths: [
+                ["planType"],
+                ["plan_type"],
+                ["rateLimits", "planType"],
+                ["rateLimits", "plan_type"],
+                ["rate_limits", "planType"],
+                ["rate_limits", "plan_type"],
+                ["data", "planType"],
+                ["data", "plan_type"],
+            ]
+        )
+    }
+
+    static func parseExecPolicyAmendment(_ value: JSONValue?) -> AppServerExecPolicyAmendment? {
+        guard let values = value?.arrayValue else { return nil }
+        let commands = values.compactMap(\.stringValue)
+        guard !commands.isEmpty else { return nil }
+        return AppServerExecPolicyAmendment(command: commands)
+    }
+
+    static func parseNetworkPolicyAmendment(_ object: [String: JSONValue]) -> AppServerNetworkPolicyAmendment? {
+        guard let host = Self.findString(in: object, paths: [["host"]]),
+              let actionRaw = Self.findString(in: object, paths: [["action"]])?.lowercased(),
+              let action = AppServerNetworkPolicyRuleAction(rawValue: actionRaw) else {
+            return nil
+        }
+        return AppServerNetworkPolicyAmendment(host: host, action: action)
+    }
+
+    static func parseAdditionalPermissions(_ value: JSONValue?) -> AppServerAdditionalPermissions? {
+        guard let object = value?.objectValue else { return nil }
+        let network = Self.findBool(in: object, paths: [["network"]])
+        let fileSystemObject = object["fileSystem"]?.objectValue
+            ?? object["file_system"]?.objectValue
+        let fileSystem = fileSystemObject.map { object in
+            AppServerAdditionalFileSystemPermissions(
+                read: object["read"]?.arrayValue?.compactMap(\.stringValue),
+                write: object["write"]?.arrayValue?.compactMap(\.stringValue)
+            )
+        }
+        if network == nil, fileSystem == nil {
+            return nil
+        }
+        return AppServerAdditionalPermissions(network: network, fileSystem: fileSystem)
+    }
+
+    static func parseNetworkApprovalContext(_ value: JSONValue?) -> AppServerNetworkApprovalContext? {
+        guard let object = value?.objectValue,
+              let host = Self.findString(in: object, paths: [["host"]]) else {
+            return nil
+        }
+        let protocolValue = Self.findString(in: object, paths: [["protocol"]])
+        return AppServerNetworkApprovalContext(host: host, protocol: protocolValue)
+    }
+
+    static func parseProposedNetworkPolicyAmendments(_ value: JSONValue?) -> [AppServerNetworkPolicyAmendment] {
+        let rows = value?.arrayValue ?? []
+        return rows.compactMap { row in
+            guard let object = row.objectValue else { return nil }
+            return Self.parseNetworkPolicyAmendment(object)
+        }
+    }
+
+    static func parseAvailableCommandApprovalDecisions(
+        _ rows: [JSONValue],
+        proposedExecPolicyAmendment: AppServerExecPolicyAmendment?,
+        proposedNetworkPolicyAmendments: [AppServerNetworkPolicyAmendment]
+    ) -> [AppServerCommandApprovalDecisionOption] {
+        var decisions: [AppServerCommandApprovalDecisionOption] = []
+        for row in rows {
+            if let raw = row.stringValue {
+                let normalized = raw
+                    .replacingOccurrences(of: "_", with: "")
+                    .replacingOccurrences(of: "-", with: "")
+                    .lowercased()
+                switch normalized {
+                case "accept":
+                    decisions.append(.accept)
+                case "acceptforsession":
+                    decisions.append(.acceptForSession)
+                case "decline":
+                    decisions.append(.decline)
+                case "cancel":
+                    decisions.append(.cancel)
+                default:
+                    continue
+                }
+                continue
+            }
+
+            guard let object = row.objectValue else { continue }
+            if object["acceptWithExecpolicyAmendment"] != nil
+                || object["accept_with_execpolicy_amendment"] != nil {
+                let nested = object["acceptWithExecpolicyAmendment"]?.objectValue
+                    ?? object["accept_with_execpolicy_amendment"]?.objectValue
+                let amendment = Self.parseExecPolicyAmendment(
+                    nested?["execpolicy_amendment"]
+                ) ?? proposedExecPolicyAmendment
+                decisions.append(
+                    .acceptWithExecpolicyAmendment(amendment: amendment)
+                )
+                continue
+            }
+
+            if let raw = object["applyNetworkPolicyAmendment"]?.objectValue
+                ?? object["apply_network_policy_amendment"]?.objectValue {
+                if let amendmentObject = raw["network_policy_amendment"]?.objectValue,
+                   let amendment = Self.parseNetworkPolicyAmendment(amendmentObject) {
+                    decisions.append(.applyNetworkPolicyAmendment(amendment: amendment))
+                    continue
+                }
+                if let proposal = proposedNetworkPolicyAmendments.first {
+                    decisions.append(.applyNetworkPolicyAmendment(amendment: proposal))
+                } else {
+                    decisions.append(.applyNetworkPolicyAmendment(amendment: nil))
+                }
+            }
+        }
+        return decisions
+    }
+
     static func dataArray(from result: JSONValue, fallbackKeys: [String] = []) -> [JSONValue] {
         guard let object = result.objectValue else { return [] }
         if let data = object["data"]?.arrayValue {
@@ -986,6 +1120,7 @@ extension AppServerClient {
         return CodexThreadDetail(
             threadID: thread.id,
             turns: turns,
+            ephemeral: thread.ephemeral,
             model: resolvedThreadModel,
             reasoningEffort: resolvedThreadReasoningEffort
         )

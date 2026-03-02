@@ -180,6 +180,10 @@ extension SessionWorkbenchView {
                                         } label: {
                                             Label("Archive", systemImage: "archivebox")
                                         }
+                                        .disabled(summary.ephemeral)
+                                        if summary.ephemeral {
+                                            Text("Ephemeral threads cannot be archived")
+                                        }
                                     }
                                 }
                             }
@@ -436,7 +440,7 @@ extension SessionWorkbenchView {
         self.syncComposerReasoningWithModel()
     }
 
-    func updateThreadBookmarkSettings(threadID: String, model: String?, reasoningEffort: String?) {
+    func updateThreadBookmarkSettings(threadID: String, ephemeral: Bool?, model: String?, reasoningEffort: String?) {
         guard let selectedWorkspaceID else { return }
         guard var summary = self.appState.threadBookmarkStore
             .threads(for: selectedWorkspaceID)
@@ -445,6 +449,11 @@ extension SessionWorkbenchView {
         }
 
         var didChange = false
+
+        if let ephemeral, summary.ephemeral != ephemeral {
+            summary.ephemeral = ephemeral
+            didChange = true
+        }
 
         if let normalizedModel = model?.trimmingCharacters(in: .whitespacesAndNewlines),
            !normalizedModel.isEmpty,

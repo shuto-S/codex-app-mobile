@@ -362,6 +362,7 @@ struct CodexThreadSummary: Identifiable, Codable, Equatable {
     var preview: String
     var updatedAt: Date
     var archived: Bool
+    var ephemeral: Bool
     var cwd: String
     var model: String?
     var reasoningEffort: String?
@@ -374,6 +375,7 @@ struct CodexThreadSummary: Identifiable, Codable, Equatable {
         case preview
         case updatedAt
         case archived
+        case ephemeral
         case cwd
         case model
         case reasoningEffort
@@ -387,6 +389,7 @@ struct CodexThreadSummary: Identifiable, Codable, Equatable {
         preview: String,
         updatedAt: Date,
         archived: Bool,
+        ephemeral: Bool = false,
         cwd: String,
         model: String? = nil,
         reasoningEffort: String? = nil
@@ -397,6 +400,7 @@ struct CodexThreadSummary: Identifiable, Codable, Equatable {
         self.preview = preview
         self.updatedAt = updatedAt
         self.archived = archived
+        self.ephemeral = ephemeral
         self.cwd = cwd
         self.model = Self.normalizedValue(model)
         self.reasoningEffort = Self.normalizedReasoningEffort(reasoningEffort)
@@ -414,6 +418,7 @@ struct CodexThreadSummary: Identifiable, Codable, Equatable {
         self.preview = try container.decode(String.self, forKey: .preview)
         self.updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         self.archived = try container.decode(Bool.self, forKey: .archived)
+        self.ephemeral = try container.decodeIfPresent(Bool.self, forKey: .ephemeral) ?? false
         self.cwd = try container.decode(String.self, forKey: .cwd)
         self.model = Self.normalizedValue(try container.decodeIfPresent(String.self, forKey: .model))
         self.reasoningEffort = Self.normalizedReasoningEffort(
@@ -430,6 +435,7 @@ struct CodexThreadSummary: Identifiable, Codable, Equatable {
         try container.encode(self.preview, forKey: .preview)
         try container.encode(self.updatedAt, forKey: .updatedAt)
         try container.encode(self.archived, forKey: .archived)
+        try container.encode(self.ephemeral, forKey: .ephemeral)
         try container.encode(self.cwd, forKey: .cwd)
         try container.encodeIfPresent(Self.normalizedValue(self.model), forKey: .model)
         try container.encodeIfPresent(Self.normalizedReasoningEffort(self.reasoningEffort), forKey: .reasoningEffort)
@@ -481,6 +487,7 @@ struct CodexTurn: Identifiable, Equatable {
 struct CodexThreadDetail: Equatable {
     let threadID: String
     let turns: [CodexTurn]
+    let ephemeral: Bool
     let model: String?
     let reasoningEffort: String?
 }

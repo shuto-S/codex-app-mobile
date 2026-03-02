@@ -457,6 +457,23 @@ extension SessionWorkbenchView {
             if let snapshot = self.statusSnapshot {
                 VStack(alignment: .leading, spacing: 12) {
                     self.statusHeaderRow(label: "Session", value: snapshot.sessionID)
+                    self.statusHeaderRow(label: "Model", value: snapshot.currentModel)
+                    self.statusHeaderRow(
+                        label: "Plan",
+                        value: snapshot.planType?.uppercased() ?? "Unknown"
+                    )
+                    if let modelUpgradeNotice = snapshot.modelUpgradeNotice,
+                       !modelUpgradeNotice.isEmpty {
+                        Text(modelUpgradeNotice)
+                            .font(.caption)
+                            .foregroundStyle(Color.yellow.opacity(0.92))
+                    }
+                    if let modelAvailabilityNotice = snapshot.modelAvailabilityNotice,
+                       !modelAvailabilityNotice.isEmpty {
+                        Text(modelAvailabilityNotice)
+                            .font(.caption)
+                            .foregroundStyle(Color.orange.opacity(0.90))
+                    }
                     self.statusHeaderRow(label: "Context", value: self.statusContextSummary(snapshot))
 
                     if snapshot.limits.isEmpty {
@@ -713,6 +730,22 @@ extension SessionWorkbenchView {
             }
 
             self.composerControlBar
+
+            if let descriptor = self.selectedComposerModelDescriptor {
+                if let upgradeInfo = descriptor.upgradeInfo {
+                    Text(upgradeInfo.upgradeCopy ?? "Upgrade available: \(upgradeInfo.model)")
+                        .font(.caption2)
+                        .foregroundStyle(Color.yellow.opacity(0.92))
+                        .padding(.horizontal, 4)
+                }
+                if let availabilityNuxMessage = descriptor.availabilityNuxMessage,
+                   !availabilityNuxMessage.isEmpty {
+                    Text(availabilityNuxMessage)
+                        .font(.caption2)
+                        .foregroundStyle(Color.orange.opacity(0.90))
+                        .padding(.horizontal, 4)
+                }
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 if self.isPlanModeEnabled {

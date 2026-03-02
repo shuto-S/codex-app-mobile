@@ -284,6 +284,7 @@ final class CodexAppMobileTests: XCTestCase {
         decoder.dateDecodingStrategy = .iso8601
         let summary = try decoder.decode(CodexThreadSummary.self, from: Data(payload.utf8))
         XCTAssertEqual(summary.hostID.uuidString.lowercased(), "11111111-2222-3333-4444-555555555555")
+        XCTAssertFalse(summary.ephemeral)
     }
 
     func testThreadSummaryDecodesModelAndReasoningEffort() throws {
@@ -305,6 +306,25 @@ final class CodexAppMobileTests: XCTestCase {
         let summary = try decoder.decode(CodexThreadSummary.self, from: Data(payload.utf8))
         XCTAssertEqual(summary.model, "gpt-5.3-codex")
         XCTAssertEqual(summary.reasoningEffort, "high")
+    }
+
+    func testThreadSummaryDecodesEphemeralFlag() throws {
+        let payload = """
+        {
+          "threadID":"thread-ephemeral",
+          "hostID":"11111111-2222-3333-4444-555555555555",
+          "workspaceID":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+          "preview":"hello",
+          "updatedAt":"2026-02-18T00:00:00Z",
+          "archived":false,
+          "ephemeral":true,
+          "cwd":"/tmp/project"
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let summary = try decoder.decode(CodexThreadSummary.self, from: Data(payload.utf8))
+        XCTAssertTrue(summary.ephemeral)
     }
 
     @MainActor
@@ -577,10 +597,10 @@ final class CodexAppMobileTests: XCTestCase {
 
     @MainActor
     func testAppServerClientVersionCompatibility() {
-        XCTAssertTrue(AppServerClient.isVersion("0.101.0", atLeast: "0.101.0"))
-        XCTAssertTrue(AppServerClient.isVersion("0.101.1", atLeast: "0.101.0"))
-        XCTAssertTrue(AppServerClient.isVersion("v0.102.0-beta.1", atLeast: "0.101.0"))
-        XCTAssertFalse(AppServerClient.isVersion("0.100.9", atLeast: "0.101.0"))
+        XCTAssertTrue(AppServerClient.isVersion("0.106.0", atLeast: "0.106.0"))
+        XCTAssertTrue(AppServerClient.isVersion("0.106.1", atLeast: "0.106.0"))
+        XCTAssertTrue(AppServerClient.isVersion("v0.107.0-beta.1", atLeast: "0.106.0"))
+        XCTAssertFalse(AppServerClient.isVersion("0.105.9", atLeast: "0.106.0"))
     }
 
     @MainActor
@@ -623,7 +643,7 @@ final class CodexAppMobileTests: XCTestCase {
         let client = AppServerClient()
 
         let compatibilityMessage = client.userFacingMessage(
-            for: AppServerClientError.incompatibleVersion(current: "0.100.0", minimum: "0.101.0")
+            for: AppServerClientError.incompatibleVersion(current: "0.105.0", minimum: "0.106.0")
         )
         XCTAssertTrue(compatibilityMessage.contains("[Compatibility]"))
 
@@ -847,6 +867,33 @@ final class CodexAppMobileTests: XCTestCase {
         """
         let decoded = try JSONDecoder().decode(ThreadListEntryPayload.self, from: Data(payload.utf8))
         XCTAssertEqual(decoded.cwd, "")
+        XCTAssertFalse(decoded.ephemeral)
+    }
+
+    func testThreadListEntryPayloadDecodesEphemeralFlag() throws {
+        let payload = """
+        {
+          "id": "thread-2",
+          "preview": "hello",
+          "updatedAt": 1700000000,
+          "cwd": "/tmp/project",
+          "ephemeral": true
+        }
+        """
+        let decoded = try JSONDecoder().decode(ThreadListEntryPayload.self, from: Data(payload.utf8))
+        XCTAssertTrue(decoded.ephemeral)
+    }
+
+    func testThreadReadThreadPayloadDefaultsEphemeralToFalse() throws {
+        let payload = """
+        {
+          "id": "thread-read-1",
+          "turns": [],
+          "model": "gpt-5"
+        }
+        """
+        let decoded = try JSONDecoder().decode(ThreadReadThreadPayload.self, from: Data(payload.utf8))
+        XCTAssertFalse(decoded.ephemeral)
     }
 
     func testSessionWorkbenchPathMatchingNormalizesTrailingSlash() {
@@ -908,6 +955,174 @@ final class CodexAppMobileTests: XCTestCase {
         XCTAssertEqual(questions[0].prompt, "Allow access to this directory?")
         XCTAssertEqual(questions[0].options.count, 1)
         XCTAssertEqual(questions[0].options[0].label, "Allow")
+    }
+
+    @MainActor
+    func testAppServerClientParsesCommandApprovalAvailableDecisionsInOrder() {
+        let client = AppServerClient()
+        client.applyServerRequestForTesting(
+            id: .number(7),
+            method: "item/commandExecution/requestApproval",
+            params: .object([
+                "threadId": .string("thread-approval"),
+                "turnId": .string("turn-approval"),
+                "itemId": .string("item-approval"),
+                "command": .string("ls -la"),
+                "cwd": .string("/tmp/project"),
+                "proposedExecpolicyAmendment": .array([
+                    .string("ls"),
+                    .string("-la"),
+                ]),
+                "proposedNetworkPolicyAmendments": .array([
+                    .object([
+                        "host": .string("example.com"),
+                        "action": .string("allow"),
+                    ])
+                ]),
+                "availableDecisions": .array([
+                    .string("acceptForSession"),
+                    .object([
+                        "acceptWithExecpolicyAmendment": .object([:])
+                    ]),
+                    .object([
+                        "applyNetworkPolicyAmendment": .object([:])
+                    ]),
+                    .string("decline"),
+                ])
+            ])
+        )
+
+        XCTAssertEqual(client.pendingRequests.count, 1)
+        guard case .commandApproval(
+            let command,
+            let cwd,
+            _,
+            let availableDecisions,
+            let proposedExecPolicyAmendment,
+            let proposedNetworkPolicyAmendments,
+            _,
+            _
+        ) = client.pendingRequests[0].kind else {
+            return XCTFail("Expected command approval request.")
+        }
+
+        XCTAssertEqual(command, "ls -la")
+        XCTAssertEqual(cwd, "/tmp/project")
+        XCTAssertEqual(proposedExecPolicyAmendment?.command, ["ls", "-la"])
+        XCTAssertEqual(proposedNetworkPolicyAmendments.first?.host, "example.com")
+        XCTAssertEqual(availableDecisions.count, 4)
+
+        XCTAssertEqual(availableDecisions[0], .acceptForSession)
+        XCTAssertEqual(
+            availableDecisions[1],
+            .acceptWithExecpolicyAmendment(
+                amendment: AppServerExecPolicyAmendment(command: ["ls", "-la"])
+            )
+        )
+        XCTAssertEqual(
+            availableDecisions[2],
+            .applyNetworkPolicyAmendment(
+                amendment: AppServerNetworkPolicyAmendment(host: "example.com", action: .allow)
+            )
+        )
+        XCTAssertEqual(availableDecisions[3], .decline)
+    }
+
+    @MainActor
+    func testAppServerClientDeduplicatesPendingRequestsByRequestID() {
+        let client = AppServerClient()
+        client.applyServerRequestForTesting(
+            id: .number(77),
+            method: "tool/request_user_input",
+            params: .object([
+                "threadId": .string("thread-a"),
+                "turnId": .string("turn-a"),
+                "questions": .array([])
+            ])
+        )
+        client.applyServerRequestForTesting(
+            id: .number(77),
+            method: "tool/request_user_input",
+            params: .object([
+                "threadId": .string("thread-b"),
+                "turnId": .string("turn-b"),
+                "questions": .array([])
+            ])
+        )
+
+        XCTAssertEqual(client.pendingRequests.count, 1)
+        XCTAssertEqual(client.pendingRequests[0].threadID, "thread-b")
+    }
+
+    @MainActor
+    func testAppServerClientResolvedRequestRemovesPendingRequest() {
+        let client = AppServerClient()
+        client.applyServerRequestForTesting(
+            id: .number(9),
+            method: "tool/request_user_input",
+            params: .object([
+                "threadId": .string("thread-9"),
+                "turnId": .string("turn-9"),
+                "questions": .array([])
+            ])
+        )
+        XCTAssertEqual(client.pendingRequests.count, 1)
+
+        client.applyNotificationForTesting(
+            method: "serverRequest/resolved",
+            params: .object([
+                "threadId": .string("thread-9"),
+                "requestId": .number(9),
+            ])
+        )
+
+        XCTAssertTrue(client.pendingRequests.isEmpty)
+        XCTAssertEqual(client.lastResolvedPendingRequest?.threadID, "thread-9")
+        XCTAssertEqual(client.lastResolvedPendingRequest?.requestIDKey, "9")
+    }
+
+    @MainActor
+    func testAppServerClientAccountUpdatedUpdatesPlanTypeAndAuth() {
+        let client = AppServerClient()
+        client.applyNotificationForTesting(
+            method: "account/updated",
+            params: .object([
+                "authMode": .string("chatgpt"),
+                "planType": .string("pro"),
+            ])
+        )
+
+        XCTAssertEqual(client.diagnostics.authStatus, "chatgpt")
+        XCTAssertEqual(client.diagnostics.planType, "pro")
+    }
+
+    func testCommandApprovalDecisionResponseEncodesCompositePayloads() {
+        let execPolicy = AppServerCommandApprovalDecisionResponse.acceptWithExecpolicyAmendment(
+            amendment: AppServerExecPolicyAmendment(command: ["npm", "test"])
+        )
+        XCTAssertEqual(
+            execPolicy.jsonValue,
+            .object([
+                "acceptWithExecpolicyAmendment": .object([
+                    "execpolicy_amendment": .array([.string("npm"), .string("test")])
+                ])
+            ])
+        )
+
+        let networkPolicy = AppServerCommandApprovalDecisionResponse.applyNetworkPolicyAmendment(
+            amendment: AppServerNetworkPolicyAmendment(host: "example.com", action: .deny)
+        )
+        XCTAssertEqual(
+            networkPolicy.jsonValue,
+            .object([
+                "applyNetworkPolicyAmendment": .object([
+                    "network_policy_amendment": .object([
+                        "host": .string("example.com"),
+                        "action": .string("deny"),
+                    ])
+                ])
+            ])
+        )
     }
 
     @MainActor
@@ -983,6 +1198,39 @@ final class CodexAppMobileTests: XCTestCase {
         XCTAssertEqual(descriptor.displayName, "GPT-5")
         XCTAssertEqual(descriptor.defaultReasoningEffort, "medium")
         XCTAssertEqual(descriptor.reasoningEffortOptions.map(\.value), ["low", "medium"])
+    }
+
+    @MainActor
+    func testAppServerParsingModelCatalogIncludesUpgradeInfoAndAvailabilityNux() throws {
+        let payloadJSON = """
+        {
+          "data": [
+            {
+              "id": "gpt-5",
+              "model": "gpt-5",
+              "displayName": "GPT-5",
+              "supported_reasoning_efforts": ["low"],
+              "default_reasoning_effort": "low",
+              "upgrade_info": {
+                "model": "gpt-5.1",
+                "upgrade_copy": "Upgrade recommended",
+                "model_link": "https://example.com/model",
+                "migration_markdown": "Use gpt-5.1"
+              },
+              "availability_nux": {
+                "message": "Limited availability"
+              }
+            }
+          ]
+        }
+        """
+
+        let payload = try JSONDecoder().decode(ModelListResponsePayload.self, from: Data(payloadJSON.utf8))
+        let catalog = AppServerClient.parseModelCatalog(payload.data)
+        let descriptor = try XCTUnwrap(catalog.first)
+        XCTAssertEqual(descriptor.upgradeInfo?.model, "gpt-5.1")
+        XCTAssertEqual(descriptor.upgradeInfo?.upgradeCopy, "Upgrade recommended")
+        XCTAssertEqual(descriptor.availabilityNuxMessage, "Limited availability")
     }
 
     @MainActor

@@ -43,6 +43,10 @@ extension SessionWorkbenchView {
                     } label: {
                         Label("Archive", systemImage: "archivebox")
                     }
+                    .disabled(selectedThreadSummary.ephemeral)
+                    if selectedThreadSummary.ephemeral {
+                        Text("Ephemeral threads cannot be archived")
+                    }
                 } else {
                     Text("No thread to archive")
                 }

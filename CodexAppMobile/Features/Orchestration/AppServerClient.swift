@@ -6,7 +6,7 @@ import UIKit
 
 @MainActor
 final class AppServerClient: ObservableObject {
-    static let minimumSupportedCLIVersion = "0.101.0"
+    static let minimumSupportedCLIVersion = "0.106.0"
 
     enum State: String {
         case disconnected
@@ -27,6 +27,7 @@ final class AppServerClient: ObservableObject {
     @Published private(set) var lastErrorMessage = ""
     @Published private(set) var connectedEndpoint = ""
     @Published private(set) var pendingRequests: [AppServerPendingRequest] = []
+    @Published private(set) var lastResolvedPendingRequest: AppServerResolvedPendingRequest?
     @Published private(set) var transcriptByThread: [String: String] = [:]
     @Published private(set) var activeTurnIDByThread: [String: String] = [:]
     @Published private(set) var turnStreamingPhaseByThread: [String: TurnStreamingPhase] = [:]
@@ -122,6 +123,7 @@ final class AppServerClient: ObservableObject {
         self.availableApps = []
         self.availableSlashCommands = []
         self.rateLimits = []
+        self.lastResolvedPendingRequest = nil
         self.contextUsageByThread.removeAll()
         self.state = .disconnected
         self.connectedEndpoint = ""
@@ -171,6 +173,9 @@ final class AppServerClient: ObservableObject {
                 parsed = Self.parseRateLimitCatalog(data)
             }
             self.rateLimits = parsed
+            if let planType = Self.parsePlanType(from: result) {
+                self.diagnostics.planType = planType
+            }
             return parsed
         } catch let AppServerClientError.remote(code, message) where code == -32601 {
             self.rateLimits = []
@@ -202,6 +207,7 @@ final class AppServerClient: ObservableObject {
                 preview: thread.preview,
                 updatedAt: Date(timeIntervalSince1970: Double(thread.updatedAt)),
                 archived: archived ?? false,
+                ephemeral: thread.ephemeral,
                 cwd: thread.cwd,
                 model: Self.nonEmpty(thread.model),
                 reasoningEffort: Self.normalizedReasoningEffort(thread.reasoningEffort)
@@ -546,9 +552,9 @@ final class AppServerClient: ObservableObject {
 
     func respondCommandApproval(
         request: AppServerPendingRequest,
-        decision: AppServerCommandApprovalDecision
+        decision: AppServerCommandApprovalDecisionResponse
     ) async throws {
-        let result: JSONValue = .object(["decision": .string(decision.rawValue)])
+        let result: JSONValue = .object(["decision": decision.jsonValue])
         try await self.respond(to: request, result: result)
     }
 
@@ -598,6 +604,7 @@ final class AppServerClient: ObservableObject {
         self.availableSkills = []
         self.availableApps = []
         self.availableSlashCommands = []
+        self.lastResolvedPendingRequest = nil
         self.turnStreamingPhaseByThread.removeAll()
         self.streamedItemPrefixKeys.removeAll()
         self.diagnostics = AppServerDiagnostics(
@@ -743,7 +750,7 @@ final class AppServerClient: ObservableObject {
                 result: result
             )
         )
-        self.pendingRequests.removeAll(where: { $0.id == request.id })
+        self.pendingRequests.removeAll(where: { $0.requestIDKey == request.requestIDKey })
     }
 
     private func sendEnvelope(_ envelope: JSONRPCEnvelope) async throws {
@@ -845,6 +852,7 @@ final class AppServerClient: ObservableObject {
 
     private func handleServerRequest(id: JSONValue, method: String, params: JSONValue?) {
         let parsed = self.parsePendingRequest(id: id, method: method, params: params)
+        self.pendingRequests.removeAll(where: { $0.requestIDKey == parsed.requestIDKey })
         self.pendingRequests.append(parsed)
         self.appendEvent("Server request: \(method)")
     }
@@ -1045,6 +1053,29 @@ final class AppServerClient: ObservableObject {
                 parsed = Self.parseRateLimitCatalog(data)
             }
             self.rateLimits = parsed
+            if let planType = Self.parsePlanType(from: .object(paramsObject)) {
+                self.diagnostics.planType = planType
+            }
+
+        case "account/updated":
+            if let payload = try? self.decode(.object(paramsObject), as: AccountUpdatedNotificationPayload.self) {
+                if let authMode = Self.nonEmpty(payload.authMode) {
+                    self.diagnostics.authStatus = authMode
+                }
+                self.diagnostics.planType = Self.nonEmpty(payload.planType)
+            }
+
+        case "serverRequest/resolved":
+            guard let payload = try? self.decode(.object(paramsObject), as: ServerRequestResolvedNotificationPayload.self),
+                  let requestIDKey = AppServerMessageRouter.idKey(from: payload.requestID) else {
+                return
+            }
+            self.pendingRequests.removeAll(where: { $0.requestIDKey == requestIDKey })
+            self.lastResolvedPendingRequest = AppServerResolvedPendingRequest(
+                threadID: payload.threadID,
+                requestIDKey: requestIDKey,
+                resolvedAt: Date()
+            )
 
         case "thread/started":
             if let thread = paramsObject["thread"]?.objectValue,
@@ -1113,9 +1144,10 @@ final class AppServerClient: ObservableObject {
 
     private func parsePendingRequest(id: JSONValue, method: String, params: JSONValue?) -> AppServerPendingRequest {
         let paramsObject = params?.objectValue ?? [:]
-        let threadID = paramsObject["threadId"]?.stringValue ?? ""
-        let turnID = paramsObject["turnId"]?.stringValue ?? ""
-        let itemID = paramsObject["itemId"]?.stringValue ?? ""
+        let threadID = Self.findString(in: paramsObject, paths: [["threadId"], ["thread_id"]]) ?? ""
+        let turnID = Self.findString(in: paramsObject, paths: [["turnId"], ["turn_id"]]) ?? ""
+        let itemID = Self.findString(in: paramsObject, paths: [["itemId"], ["item_id"]]) ?? ""
+        let requestIDKey = AppServerMessageRouter.idKey(from: id) ?? UUID().uuidString
         let normalizedMethod = method
             .lowercased()
             .replacingOccurrences(of: "_", with: "")
@@ -1127,7 +1159,58 @@ final class AppServerClient: ObservableObject {
             let command = paramsObject["command"]?.stringValue ?? ""
             let cwd = paramsObject["cwd"]?.stringValue
             let reason = paramsObject["reason"]?.stringValue
-            kind = .commandApproval(command: command, cwd: cwd, reason: reason)
+            let proposedExecPolicyAmendment = Self.parseExecPolicyAmendment(
+                paramsObject["proposedExecpolicyAmendment"]
+                    ?? paramsObject["proposed_execpolicy_amendment"]
+            )
+            let proposedNetworkPolicyAmendments = Self.parseProposedNetworkPolicyAmendments(
+                paramsObject["proposedNetworkPolicyAmendments"]
+                    ?? paramsObject["proposed_network_policy_amendments"]
+            )
+            let networkApprovalContext = Self.parseNetworkApprovalContext(
+                paramsObject["networkApprovalContext"]
+                    ?? paramsObject["network_approval_context"]
+            )
+            let additionalPermissions = Self.parseAdditionalPermissions(
+                paramsObject["additionalPermissions"]
+                    ?? paramsObject["additional_permissions"]
+            )
+
+            let availableDecisionRows = paramsObject["availableDecisions"]?.arrayValue
+                ?? paramsObject["available_decisions"]?.arrayValue
+                ?? []
+            var availableDecisions = Self.parseAvailableCommandApprovalDecisions(
+                availableDecisionRows,
+                proposedExecPolicyAmendment: proposedExecPolicyAmendment,
+                proposedNetworkPolicyAmendments: proposedNetworkPolicyAmendments
+            )
+            if availableDecisions.isEmpty {
+                availableDecisions = [.accept, .acceptForSession]
+                if proposedExecPolicyAmendment != nil {
+                    availableDecisions.append(
+                        .acceptWithExecpolicyAmendment(amendment: proposedExecPolicyAmendment)
+                    )
+                }
+                if let firstNetworkAmendment = proposedNetworkPolicyAmendments.first {
+                    availableDecisions.append(
+                        .applyNetworkPolicyAmendment(amendment: firstNetworkAmendment)
+                    )
+                } else if networkApprovalContext != nil {
+                    availableDecisions.append(.applyNetworkPolicyAmendment(amendment: nil))
+                }
+                availableDecisions.append(contentsOf: [.decline, .cancel])
+            }
+
+            kind = .commandApproval(
+                command: command,
+                cwd: cwd,
+                reason: reason,
+                availableDecisions: availableDecisions,
+                proposedExecPolicyAmendment: proposedExecPolicyAmendment,
+                proposedNetworkPolicyAmendments: proposedNetworkPolicyAmendments,
+                networkApprovalContext: networkApprovalContext,
+                additionalPermissions: additionalPermissions
+            )
 
         case "item/filechange/requestapproval":
             let reason = paramsObject["reason"]?.stringValue
@@ -1184,6 +1267,7 @@ final class AppServerClient: ObservableObject {
         }
 
         return AppServerPendingRequest(
+            requestIDKey: requestIDKey,
             rpcID: id,
             method: method,
             threadID: threadID,
@@ -1292,6 +1376,9 @@ final class AppServerClient: ObservableObject {
             ]
         ) {
             self.diagnostics.authStatus = authStatus
+        }
+        if let planType = Self.parsePlanType(from: .object(object)) {
+            self.diagnostics.planType = planType
         }
 
         if let model = Self.findString(
