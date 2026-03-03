@@ -501,6 +501,20 @@ extension SessionWorkbenchView {
         }
     }
 
+    func refreshParsedChatMessagesIfNeeded() {
+        let threadID = self.selectedThreadID
+        let transcript = self.selectedThreadTranscript
+
+        if self.lastParsedThreadID == threadID,
+           self.lastParsedTranscript == transcript {
+            return
+        }
+
+        self.lastParsedThreadID = threadID
+        self.lastParsedTranscript = transcript
+        self.parsedChatMessages = Self.parseChatMessages(from: transcript)
+    }
+
     static func parseChatMessages(from transcript: String) -> [SessionChatMessage] {
         let normalized = transcript.replacingOccurrences(of: "\r\n", with: "\n")
         let lines = normalized.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)

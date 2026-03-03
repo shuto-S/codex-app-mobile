@@ -40,7 +40,7 @@ struct ANSIRenderer {
     private var savedCursorColumn = 0
     private let defaultForeground = RGBColor(red: 0.82, green: 0.95, blue: 0.88)
 
-    mutating func process(_ input: String) -> AttributedString {
+    mutating func process(_ input: String, lineLimit: Int) -> AttributedString {
         for scalar in input.unicodeScalars {
             let value = scalar.value
 
@@ -133,7 +133,19 @@ struct ANSIRenderer {
             }
         }
 
+        self.trimLinesIfNeeded(limit: lineLimit)
         return self.renderSnapshot()
+    }
+
+    private mutating func trimLinesIfNeeded(limit: Int) {
+        let clampedLimit = max(1, limit)
+        guard self.lines.count > clampedLimit else { return }
+
+        let overflow = self.lines.count - clampedLimit
+        self.lines.removeFirst(overflow)
+        self.cursorRow = max(0, self.cursorRow - overflow)
+        self.savedCursorRow = max(0, self.savedCursorRow - overflow)
+        self.ensureCursorRowExists()
     }
 
     private mutating func beginCSI() {

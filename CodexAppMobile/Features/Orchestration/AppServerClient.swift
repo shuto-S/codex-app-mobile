@@ -65,6 +65,16 @@ final class AppServerClient: ObservableObject {
     private var streamedItemPrefixKeys: Set<String> = []
     /// Tracks the transcript snapshot before a turn starts so we can extract the response delta.
     private var transcriptSnapshotBeforeTurn: [String: String] = [:]
+    private var slashCommandCatalogRebuildCount = 0
+
+    struct CatalogRefreshOverrides {
+        var modelCatalog: [AppServerModelDescriptor]?
+        var collaborationModes: [AppServerCollaborationModeDescriptor]
+        var mcpServers: [AppServerMCPServerSummary]
+        var skills: [AppServerSkillSummary]
+        var apps: [AppServerAppSummary]
+    }
+    var catalogRefreshOverrides: CatalogRefreshOverrides?
 
     private let requestTimeoutSeconds: TimeInterval = 30
     private let overloadRetryMaxAttempts = 4
@@ -1152,6 +1162,18 @@ final class AppServerClient: ObservableObject {
         self.handleServerRequest(id: id, method: method, params: params)
     }
 
+    func setStateForTesting(_ state: State) {
+        self.state = state
+    }
+
+    func resetSlashCommandCatalogRebuildCountForTesting() {
+        self.slashCommandCatalogRebuildCount = 0
+    }
+
+    var slashCommandCatalogRebuildCountForTesting: Int {
+        self.slashCommandCatalogRebuildCount
+    }
+
     private func parsePendingRequest(id: JSONValue, method: String, params: JSONValue?) -> AppServerPendingRequest {
         let paramsObject = params?.objectValue ?? [:]
         let threadID = Self.findString(in: paramsObject, paths: [["threadId"], ["thread_id"]]) ?? ""
@@ -1410,17 +1432,52 @@ final class AppServerClient: ObservableObject {
             return
         }
 
-        async let modelTask: Void = self.refreshModelCatalog()
-        async let collaborationModeTask: Void = self.refreshCollaborationModeCatalog()
-        async let mcpTask: Void = self.refreshMCPServerCatalog()
-        async let skillTask: Void = self.refreshSkillCatalog(primaryCWD: primaryCWD)
-        async let appTask: Void = self.refreshAppCatalog()
-        _ = await (modelTask, collaborationModeTask, mcpTask, skillTask, appTask)
+        if let overrides = self.catalogRefreshOverrides {
+            if let modelCatalog = overrides.modelCatalog {
+                self.availableModels = modelCatalog
+                if self.nonEmptyOrNil(self.diagnostics.currentModel) == nil,
+                   let preferredModel = modelCatalog.first(where: { $0.isDefault })?.model ?? modelCatalog.first?.model {
+                    self.diagnostics.currentModel = preferredModel
+                }
+            }
+            self.availableCollaborationModes = overrides.collaborationModes
+            self.mcpServers = overrides.mcpServers
+            self.availableSkills = overrides.skills
+            self.availableApps = overrides.apps
+            self.rebuildSlashCommandCatalog()
+            return
+        }
+
+        async let fetchedModels = self.fetchModelCatalog()
+        async let fetchedCollaborationModes = self.fetchCollaborationModeCatalog()
+        async let fetchedMCPServers = self.fetchMCPServerCatalog()
+        async let fetchedSkills = self.fetchSkillCatalog(primaryCWD: primaryCWD)
+        async let fetchedApps = self.fetchAppCatalog()
+
+        let (modelCatalog, collaborationModes, mcpServers, skills, apps) = await (
+            fetchedModels,
+            fetchedCollaborationModes,
+            fetchedMCPServers,
+            fetchedSkills,
+            fetchedApps
+        )
+
+        if let modelCatalog {
+            self.availableModels = modelCatalog
+            if self.nonEmptyOrNil(self.diagnostics.currentModel) == nil,
+               let preferredModel = modelCatalog.first(where: { $0.isDefault })?.model ?? modelCatalog.first?.model {
+                self.diagnostics.currentModel = preferredModel
+            }
+        }
+        self.availableCollaborationModes = collaborationModes
+        self.mcpServers = mcpServers
+        self.availableSkills = skills
+        self.availableApps = apps
 
         self.rebuildSlashCommandCatalog()
     }
 
-    private func refreshModelCatalog() async {
+    private func fetchModelCatalog() async -> [AppServerModelDescriptor]? {
         var entries: [ModelListEntryPayload] = []
         var cursor: String?
         var seenCursors: Set<String> = []
@@ -1450,36 +1507,27 @@ final class AppServerClient: ObservableObject {
             }
         } catch {
             self.appendEvent("model/list unavailable: \(error.localizedDescription)")
-            return
+            return nil
         }
 
         let catalog = Self.parseModelCatalog(entries)
-        guard !catalog.isEmpty else { return }
-
-        self.availableModels = catalog
-        if self.nonEmptyOrNil(self.diagnostics.currentModel) == nil,
-           let preferredModel = catalog.first(where: { $0.isDefault })?.model ?? catalog.first?.model {
-            self.diagnostics.currentModel = preferredModel
-        }
-        self.rebuildSlashCommandCatalog()
+        return catalog.isEmpty ? nil : catalog
     }
 
-    private func refreshCollaborationModeCatalog() async {
+    private func fetchCollaborationModeCatalog() async -> [AppServerCollaborationModeDescriptor] {
         do {
             let result = try await self.request(method: "collaborationMode/list", params: nil)
-            self.availableCollaborationModes = Self.parseCollaborationModeCatalog(result)
+            return Self.parseCollaborationModeCatalog(result)
         } catch let AppServerClientError.remote(code, message) where code == -32601 {
-            self.availableCollaborationModes = []
             self.appendEvent("collaborationMode/list unavailable: \(message)")
+            return []
         } catch {
-            self.availableCollaborationModes = []
             self.appendEvent("collaborationMode/list unavailable: \(error.localizedDescription)")
+            return []
         }
-
-        self.rebuildSlashCommandCatalog()
     }
 
-    private func refreshMCPServerCatalog() async {
+    private func fetchMCPServerCatalog() async -> [AppServerMCPServerSummary] {
         var rows: [JSONValue] = []
         var cursor: String?
         var seenCursors: Set<String> = []
@@ -1510,19 +1558,16 @@ final class AppServerClient: ObservableObject {
             }
         } catch {
             self.appendEvent("mcpServerStatus/list unavailable: \(error.localizedDescription)")
-            self.mcpServers = []
-            self.rebuildSlashCommandCatalog()
-            return
+            return []
         }
 
         let parsed = Self.parseMCPServerCatalog(rows)
-        self.mcpServers = parsed.sorted {
+        return parsed.sorted {
             $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }
-        self.rebuildSlashCommandCatalog()
     }
 
-    private func refreshSkillCatalog(primaryCWD: String?) async {
+    private func fetchSkillCatalog(primaryCWD: String?) async -> [AppServerSkillSummary] {
         var params: [String: JSONValue] = [
             "forceReload": .bool(false)
         ]
@@ -1539,18 +1584,16 @@ final class AppServerClient: ObservableObject {
                 entries = [.object(["skills": .array(directSkills)])]
             }
             let parsed = Self.parseSkillCatalog(entries)
-            self.availableSkills = parsed.sorted {
+            return parsed.sorted {
                 $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             }
         } catch {
             self.appendEvent("skills/list unavailable: \(error.localizedDescription)")
-            self.availableSkills = []
+            return []
         }
-
-        self.rebuildSlashCommandCatalog()
     }
 
-    private func refreshAppCatalog() async {
+    private func fetchAppCatalog() async -> [AppServerAppSummary] {
         var rows: [JSONValue] = []
         var cursor: String?
         var seenCursors: Set<String> = []
@@ -1582,19 +1625,17 @@ final class AppServerClient: ObservableObject {
             }
         } catch {
             self.appendEvent("app/list unavailable: \(error.localizedDescription)")
-            self.availableApps = []
-            self.rebuildSlashCommandCatalog()
-            return
+            return []
         }
 
         let parsed = Self.parseAppCatalog(rows)
-        self.availableApps = parsed.sorted {
+        return parsed.sorted {
             $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
         }
-        self.rebuildSlashCommandCatalog()
     }
 
     private func rebuildSlashCommandCatalog() {
+        self.slashCommandCatalogRebuildCount += 1
         guard self.state == .connected else {
             self.availableSlashCommands = []
             return

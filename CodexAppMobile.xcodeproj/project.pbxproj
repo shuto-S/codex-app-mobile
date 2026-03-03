@@ -32,6 +32,7 @@
 		A1B2C3D4E5F6010000000223 /* ANSIRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000122 /* ANSIRenderer.swift */; };
 		A1B2C3D4E5F6010000000224 /* SSHTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000123 /* SSHTransport.swift */; };
 		A1B2C3D4E5F6010000000225 /* SessionWorkbenchExecutionActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000124 /* SessionWorkbenchExecutionActions.swift */; };
+		A1B2C3D4E5F6010000000226 /* LegacySSHProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000125 /* LegacySSHProfile.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -69,6 +70,9 @@
 			A1B2C3D4E5F6010000000122 /* ANSIRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Terminal/ANSIRenderer.swift; sourceTree = "<group>"; };
 			A1B2C3D4E5F6010000000123 /* SSHTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Terminal/SSHTransport.swift; sourceTree = "<group>"; };
 			A1B2C3D4E5F6010000000124 /* SessionWorkbenchExecutionActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/SessionWorkbenchExecutionActions.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6010000000125 /* LegacySSHProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/LegacySSHProfile.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6010000000126 /* Info.Debug.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.Debug.plist; sourceTree = "<group>"; };
+		A1B2C3D4E5F6010000000127 /* Info.Release.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.Release.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -132,7 +136,10 @@
 				A1B2C3D4E5F6010000000116 /* SessionWorkbenchChatUI.swift */,
 				A1B2C3D4E5F6010000000117 /* SessionWorkbenchPanels.swift */,
 				A1B2C3D4E5F6010000000118 /* SessionWorkbenchMenuAndActions.swift */,
-				A1B2C3D4E5F6010000000124 /* SessionWorkbenchExecutionActions.swift */,
+					A1B2C3D4E5F6010000000124 /* SessionWorkbenchExecutionActions.swift */,
+					A1B2C3D4E5F6010000000125 /* LegacySSHProfile.swift */,
+					A1B2C3D4E5F6010000000126 /* Info.Debug.plist */,
+					A1B2C3D4E5F6010000000127 /* Info.Release.plist */,
 				A1B2C3D4E5F6010000000108 /* Assets.xcassets */,
 			);
 			path = CodexAppMobile;
@@ -277,6 +284,7 @@
 				A1B2C3D4E5F6010000000218 /* SessionWorkbenchPanels.swift in Sources */,
 				A1B2C3D4E5F6010000000219 /* SessionWorkbenchMenuAndActions.swift in Sources */,
 				A1B2C3D4E5F6010000000225 /* SessionWorkbenchExecutionActions.swift in Sources */,
+				A1B2C3D4E5F6010000000226 /* LegacySSHProfile.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -388,7 +396,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = CodexAppMobile/Info.plist;
+				INFOPLIST_FILE = CodexAppMobile/Info.Debug.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -411,7 +419,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = CodexAppMobile/Info.plist;
+				INFOPLIST_FILE = CodexAppMobile/Info.Release.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

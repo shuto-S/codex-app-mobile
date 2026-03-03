@@ -77,6 +77,11 @@ struct SessionWorkbenchView: View {
     @State var workspacePendingDeletion: ProjectWorkspace?
     @State var activePendingRequest: AppServerPendingRequest?
     @State var sshTranscriptByThread: [String: String] = [:]
+    @State var parsedChatMessages: [SessionChatMessage] = []
+    @State var lastParsedThreadID: String?
+    @State var lastParsedTranscript = ""
+    @State var refreshThreadsTask: Task<Void, Never>?
+    @State var refreshCatalogsTask: Task<Void, Never>?
     @State var isMenuOpen = false
     @State var selectedComposerModel = ""
     @State var selectedComposerReasoning = "low"
@@ -160,10 +165,6 @@ struct SessionWorkbenchView: View {
             return self.sshTranscriptByThread[selectedThreadID] ?? ""
         }
         return self.appState.appServerClient.transcriptByThread[selectedThreadID] ?? ""
-    }
-
-    var parsedChatMessages: [SessionChatMessage] {
-        Self.parseChatMessages(from: self.selectedThreadTranscript)
     }
 
     var isPromptEmpty: Bool {
@@ -624,20 +625,27 @@ struct SessionWorkbenchView: View {
                 self.refreshThreads()
                 self.refreshAppServerCatalogsForCurrentWorkspace()
             }
+            self.refreshParsedChatMessagesIfNeeded()
         }
         .onChange(of: self.selectedWorkspaceID) {
             self.syncComposerControlsWithWorkspace()
             if self.selectedWorkspace != nil {
-                self.refreshThreads()
-                self.refreshAppServerCatalogsForCurrentWorkspace()
+                self.refreshThreads(debounceNanoseconds: 250_000_000)
+                self.refreshAppServerCatalogsForCurrentWorkspace(debounceNanoseconds: 250_000_000)
             }
         }
         .onChange(of: self.selectedComposerModel) {
             self.syncComposerReasoningWithModel()
         }
+        .onChange(of: self.selectedThreadID) {
+            self.refreshParsedChatMessagesIfNeeded()
+        }
+        .onChange(of: self.selectedThreadTranscript) {
+            self.refreshParsedChatMessagesIfNeeded()
+        }
         .onChange(of: self.scenePhase) {
             if self.scenePhase == .active, self.selectedWorkspace != nil {
-                self.refreshThreads()
+                self.refreshThreads(debounceNanoseconds: 250_000_000)
                 if let threadID = self.selectedThreadID {
                     self.loadThread(threadID)
                 }
@@ -715,6 +723,10 @@ struct SessionWorkbenchView: View {
                 .environmentObject(self.appState)
         }
         .onDisappear {
+            self.refreshThreadsTask?.cancel()
+            self.refreshThreadsTask = nil
+            self.refreshCatalogsTask?.cancel()
+            self.refreshCatalogsTask = nil
             self.clearComposerInfo()
         }
     }

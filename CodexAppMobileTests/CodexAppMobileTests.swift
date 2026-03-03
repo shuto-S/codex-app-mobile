@@ -17,16 +17,23 @@ final class CodexAppMobileTests: XCTestCase {
         XCTAssertEqual(decoded, [profile])
     }
 
-    func testHostDraftValidation() {
-        let draft = SSHHostDraft(
+    func testRemoteHostDraftValidation() {
+        let draft = RemoteHostDraft(
             name: "dev",
             host: "127.0.0.1",
-            port: 22,
+            sshPort: 22,
             username: "user",
+            appServerHost: "",
+            appServerPort: 8080,
+            preferredTransport: .appServerWS,
             password: ""
         )
 
         XCTAssertTrue(draft.isValid)
+
+        var invalid = draft
+        invalid.appServerHost = "https://invalid.example.com"
+        XCTAssertFalse(invalid.isValid)
     }
 
     func testHostKeyStoreRoundTrip() {
@@ -525,6 +532,20 @@ final class CodexAppMobileTests: XCTestCase {
         )
 
         XCTAssertNotEqual(first.id, second.id)
+    }
+
+    func testANSIRendererLineLimitTrimsOlderLines() {
+        var renderer = ANSIRenderer()
+        let rendered = renderer.process("line-1\nline-2\nline-3", lineLimit: 2)
+
+        XCTAssertEqual(String(rendered.characters), "line-2\nline-3")
+    }
+
+    func testANSIRendererLineLimitKeepsLatestLineWithWideCharacterInput() {
+        var renderer = ANSIRenderer()
+        let rendered = renderer.process("A🙂\nB", lineLimit: 1)
+
+        XCTAssertEqual(String(rendered.characters), "B")
     }
 
     func testJSONRPCEnvelopeDecodesNotification() throws {
@@ -1168,6 +1189,36 @@ final class CodexAppMobileTests: XCTestCase {
                 effort: nil
             )
         )
+    }
+
+    @MainActor
+    func testAppServerClientRefreshCatalogsRebuildsSlashCommandsOnce() async {
+        let client = AppServerClient()
+        client.setStateForTesting(.connected)
+        client.resetSlashCommandCatalogRebuildCountForTesting()
+        client.catalogRefreshOverrides = AppServerClient.CatalogRefreshOverrides(
+            modelCatalog: [
+                AppServerModelDescriptor(
+                    model: "gpt-5.3-codex",
+                    displayName: "GPT-5.3-Codex",
+                    reasoningEffortOptions: [],
+                    defaultReasoningEffort: nil,
+                    isDefault: true,
+                    upgradeInfo: nil,
+                    availabilityNuxMessage: nil
+                )
+            ],
+            collaborationModes: [],
+            mcpServers: [],
+            skills: [],
+            apps: []
+        )
+
+        await client.refreshCatalogs(primaryCWD: "/tmp/project")
+
+        XCTAssertEqual(client.slashCommandCatalogRebuildCountForTesting, 1)
+        XCTAssertEqual(client.availableModels.first?.model, "gpt-5.3-codex")
+        XCTAssertFalse(client.availableSlashCommands.isEmpty)
     }
 
     @MainActor

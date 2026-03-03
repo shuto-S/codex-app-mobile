@@ -36,24 +36,33 @@ extension SessionWorkbenchView {
         return normalizedThreadPath == normalizedWorkspacePath
     }
 
-    func refreshThreads() {
+    func refreshThreads(debounceNanoseconds: UInt64 = 0) {
         guard let selectedWorkspace else {
             self.localErrorMessage = "Select a project first."
             return
         }
 
+        self.refreshThreadsTask?.cancel()
         self.localErrorMessage = ""
         self.localStatusMessage = ""
         self.isRefreshingThreads = true
 
-        Task {
+        let workspaceSnapshot = selectedWorkspace
+        self.refreshThreadsTask = Task { @MainActor in
             defer {
-                self.isRefreshingThreads = false
+                if !Task.isCancelled {
+                    self.isRefreshingThreads = false
+                }
             }
+
+            if debounceNanoseconds > 0 {
+                try? await Task.sleep(nanoseconds: debounceNanoseconds)
+            }
+            guard !Task.isCancelled else { return }
 
             if self.isSSHTransport {
                 let localThreads = self.appState.threadBookmarkStore
-                    .threads(for: selectedWorkspace.id)
+                    .threads(for: workspaceSnapshot.id)
                     .filter { !$0.archived }
                 if let selectedThreadID,
                    localThreads.contains(where: { $0.threadID == selectedThreadID }) {
@@ -69,14 +78,16 @@ extension SessionWorkbenchView {
                 if self.appState.appServerClient.state != .connected {
                     try await self.appState.appServerClient.connect(to: self.host)
                 }
+                guard !Task.isCancelled else { return }
 
                 let fetched = try await self.appState.appServerClient.threadList(archived: false, limit: 300)
+                guard !Task.isCancelled else { return }
                 let scoped = fetched.filter {
-                    Self.isThreadPath($0.cwd, inWorkspacePath: selectedWorkspace.remotePath)
+                    Self.isThreadPath($0.cwd, inWorkspacePath: workspaceSnapshot.remotePath)
                 }
                 let existingByThreadID = Dictionary(
                     uniqueKeysWithValues: self.appState.threadBookmarkStore
-                        .threads(for: selectedWorkspace.id)
+                        .threads(for: workspaceSnapshot.id)
                         .map { ($0.threadID, $0) }
                 )
                 let summaries: [CodexThreadSummary] = scoped.map { thread in
@@ -84,7 +95,7 @@ extension SessionWorkbenchView {
                     return CodexThreadSummary(
                         threadID: thread.id,
                         hostID: self.host.id,
-                        workspaceID: selectedWorkspace.id,
+                        workspaceID: workspaceSnapshot.id,
                         preview: thread.preview,
                         updatedAt: thread.updatedAt,
                         archived: thread.archived,
@@ -96,12 +107,12 @@ extension SessionWorkbenchView {
                 }
 
                 self.appState.threadBookmarkStore.replaceThreads(
-                    for: selectedWorkspace.id,
+                    for: workspaceSnapshot.id,
                     hostID: self.host.id,
                     with: summaries
                 )
 
-                let selectedWorkspaceThreads = self.threads(for: selectedWorkspace.id)
+                let selectedWorkspaceThreads = self.threads(for: workspaceSnapshot.id)
                 if let selectedThreadID = self.selectedThreadID,
                    selectedWorkspaceThreads.contains(where: { $0.threadID == selectedThreadID }) {
                     self.loadThread(selectedThreadID)
@@ -109,8 +120,12 @@ extension SessionWorkbenchView {
                     self.selectedThreadID = nil
                     self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: nil)
                 }
+            } catch is CancellationError {
+                return
             } catch {
-                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+                if !Task.isCancelled {
+                    self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+                }
             }
         }
     }
@@ -584,10 +599,16 @@ extension SessionWorkbenchView {
         }
     }
 
-    func refreshAppServerCatalogsForCurrentWorkspace() {
+    func refreshAppServerCatalogsForCurrentWorkspace(debounceNanoseconds: UInt64 = 0) {
         guard !self.isSSHTransport else { return }
-        Task {
-            await self.appState.appServerClient.refreshCatalogs(primaryCWD: self.selectedWorkspace?.remotePath)
+        self.refreshCatalogsTask?.cancel()
+        let primaryCWD = self.selectedWorkspace?.remotePath
+        self.refreshCatalogsTask = Task { @MainActor in
+            if debounceNanoseconds > 0 {
+                try? await Task.sleep(nanoseconds: debounceNanoseconds)
+            }
+            guard !Task.isCancelled else { return }
+            await self.appState.appServerClient.refreshCatalogs(primaryCWD: primaryCWD)
         }
     }
 

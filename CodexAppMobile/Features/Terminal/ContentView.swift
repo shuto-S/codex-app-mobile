@@ -1,122 +1,6 @@
 import SwiftUI
 import Security
 
-struct SSHHostProfile: Identifiable, Codable, Equatable {
-    let id: UUID
-    var name: String
-    var host: String
-    var port: Int
-    var username: String
-
-    init(
-        id: UUID = UUID(),
-        name: String,
-        host: String,
-        port: Int,
-        username: String
-    ) {
-        self.id = id
-        self.name = name
-        self.host = host
-        self.port = port
-        self.username = username
-    }
-}
-
-struct SSHHostDraft {
-    var name: String
-    var host: String
-    var port: Int
-    var username: String
-    var password: String
-
-    var isValid: Bool {
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && (1...65535).contains(port)
-    }
-}
-
-@MainActor
-final class SSHHostStore: ObservableObject {
-    @Published private(set) var profiles: [SSHHostProfile] = []
-
-    private let profilesKey = "ssh.connection.profiles.v1"
-
-    init() {
-        self.loadProfiles()
-    }
-
-    func upsert(profileID: UUID?, draft: SSHHostDraft) {
-        let normalizedName = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedHost = draft.host.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedUser = draft.username.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let profileID,
-           let index = self.profiles.firstIndex(where: { $0.id == profileID }) {
-            self.profiles[index].name = normalizedName
-            self.profiles[index].host = normalizedHost
-            self.profiles[index].port = draft.port
-            self.profiles[index].username = normalizedUser
-            PasswordVault.save(password: draft.password, for: profileID)
-        } else {
-            let profile = SSHHostProfile(
-                name: normalizedName,
-                host: normalizedHost,
-                port: draft.port,
-                username: normalizedUser
-            )
-            self.profiles.append(profile)
-            PasswordVault.save(password: draft.password, for: profile.id)
-        }
-
-        self.sortAndPersist()
-    }
-
-    func delete(profileID: UUID) {
-        self.profiles.removeAll(where: { $0.id == profileID })
-        PasswordVault.deletePassword(for: profileID)
-        self.persistProfiles()
-    }
-
-    func password(for profileID: UUID) -> String {
-        PasswordVault.readPassword(for: profileID) ?? ""
-    }
-
-    func updatePassword(_ password: String, for profileID: UUID) {
-        PasswordVault.save(password: password, for: profileID)
-    }
-
-    private func loadProfiles() {
-        guard let data = UserDefaults.standard.data(forKey: self.profilesKey) else {
-            self.profiles = []
-            return
-        }
-
-        do {
-            self.profiles = try JSONDecoder().decode([SSHHostProfile].self, from: data)
-            self.profiles.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        } catch {
-            self.profiles = []
-        }
-    }
-
-    private func sortAndPersist() {
-        self.profiles.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        self.persistProfiles()
-    }
-
-    private func persistProfiles() {
-        do {
-            let data = try JSONEncoder().encode(self.profiles)
-            UserDefaults.standard.set(data, forKey: self.profilesKey)
-        } catch {
-            UserDefaults.standard.removeObject(forKey: self.profilesKey)
-        }
-    }
-}
-
 enum PasswordVault {
     private static let service = "com.example.CodexAppMobile.ssh"
 
@@ -129,19 +13,11 @@ enum PasswordVault {
             kSecAttrService as String: self.service,
             kSecAttrAccount as String: account,
         ]
-
-        let attributes: [String: Any] = [
-            kSecValueData as String: data,
-        ]
-
-        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if status == errSecSuccess {
-            return
-        }
+        SecItemDelete(query as CFDictionary)
 
         var addQuery = query
         addQuery[kSecValueData as String] = data
-        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         SecItemAdd(addQuery as CFDictionary, nil)
     }
 
@@ -414,110 +290,6 @@ struct KnownHostsView: View {
     }
 }
 
-struct SSHHostEditorView: View {
-    let profile: SSHHostProfile?
-    let onSave: (SSHHostDraft) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var name: String
-    @State private var host: String
-    @State private var portText: String
-    @State private var username: String
-    @State private var password: String
-
-    @State private var validationMessage: String?
-
-    init(
-        profile: SSHHostProfile?,
-        initialPassword: String,
-        onSave: @escaping (SSHHostDraft) -> Void
-    ) {
-        self.profile = profile
-        self.onSave = onSave
-
-        _name = State(initialValue: profile?.name ?? "")
-        _host = State(initialValue: profile?.host ?? "")
-        _portText = State(initialValue: String(profile?.port ?? 22))
-        _username = State(initialValue: profile?.username ?? "")
-        _password = State(initialValue: initialPassword)
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Basic") {
-                    TextField("Name", text: self.$name)
-
-                    TextField("Host", text: self.$host)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled(true)
-
-                    TextField("Port", text: self.$portText)
-                        .keyboardType(.numberPad)
-
-                    TextField("Username", text: self.$username)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled(true)
-                }
-
-                Section("Authentication (Optional)") {
-                    SecureField("Password", text: self.$password)
-                }
-
-                if let validationMessage {
-                    Section {
-                        Text(validationMessage)
-                            .foregroundStyle(.red)
-                    }
-                }
-            }
-            .navigationTitle(self.profile == nil ? "New Host" : "Edit Host")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        self.dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                    }
-                    .accessibilityLabel("Cancel")
-                    .codexActionButtonStyle()
-                }
-
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Save") {
-                        self.saveTapped()
-                    }
-                    .codexActionButtonStyle()
-                }
-            }
-        }
-    }
-
-    private func saveTapped() {
-        guard let port = Int(self.portText), (1...65535).contains(port) else {
-            self.validationMessage = "Port must be between 1 and 65535."
-            return
-        }
-
-        let draft = SSHHostDraft(
-            name: self.name,
-            host: self.host,
-            port: port,
-            username: self.username,
-            password: self.password
-        )
-
-        guard draft.isValid else {
-            self.validationMessage = "Fill all required fields."
-            return
-        }
-
-        self.onSave(draft)
-        self.dismiss()
-    }
-}
-
 struct TerminalSessionView: View {
     let host: RemoteHost
     let initialCommand: String?
@@ -719,12 +491,16 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
     private var activeEndpoint = "unknown host"
     private var ansiRenderer = ANSIRenderer()
     private var suppressErrorsUntilNextConnect = false
+    private var pendingOutputBuffer = ""
+    private var scheduledFlushTask: Task<Void, Never>?
+    private let outputLineLimit = 2_000
+    private let outputFlushIntervalNanoseconds: UInt64 = 33_000_000
 
     init() {
         self.engine.onOutput = { [weak self] text in
             guard let self else { return }
             self.dispatchMain { [self] in
-                self.appendRenderedOutput(text)
+                self.enqueueOutputChunk(text)
             }
         }
 
@@ -739,6 +515,7 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
         self.engine.onDisconnected = { [weak self] in
             guard let self else { return }
             self.dispatchMain { [self] in
+                self.flushPendingOutput()
                 self.state = .disconnected
             }
         }
@@ -757,6 +534,8 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
     }
 
     deinit {
+        self.scheduledFlushTask?.cancel()
+        self.scheduledFlushTask = nil
         self.engine.disconnect()
     }
 
@@ -771,6 +550,9 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
 
         self.configureEndpoint(host: host.host, port: host.sshPort)
         self.suppressErrorsUntilNextConnect = false
+        self.scheduledFlushTask?.cancel()
+        self.scheduledFlushTask = nil
+        self.pendingOutputBuffer = ""
         self.ansiRenderer = ANSIRenderer()
         self.output = AttributedString()
         self.state = .connecting
@@ -825,8 +607,27 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func appendRenderedOutput(_ text: String) {
-        let rendered = self.ansiRenderer.process(text)
+    private func enqueueOutputChunk(_ text: String) {
+        guard !text.isEmpty else { return }
+        self.pendingOutputBuffer += text
+        guard self.scheduledFlushTask == nil else { return }
+
+        self.scheduledFlushTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: self.outputFlushIntervalNanoseconds)
+            guard !Task.isCancelled else { return }
+            self.flushPendingOutput()
+        }
+    }
+
+    private func flushPendingOutput() {
+        self.scheduledFlushTask?.cancel()
+        self.scheduledFlushTask = nil
+        let buffered = self.pendingOutputBuffer
+        self.pendingOutputBuffer = ""
+        guard !buffered.isEmpty else { return }
+
+        let rendered = self.ansiRenderer.process(buffered, lineLimit: self.outputLineLimit)
         self.output = rendered
     }
 }
