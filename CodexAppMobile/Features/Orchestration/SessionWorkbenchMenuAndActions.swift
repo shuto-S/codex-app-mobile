@@ -339,10 +339,53 @@ extension SessionWorkbenchView {
         }
     }
 
+    func chatScrollSnapshot(from geometry: ScrollGeometry) -> ChatScrollSnapshot {
+        ChatScrollSnapshot(
+            distanceFromBottom: self.distanceToChatBottom(from: geometry),
+            contentOffsetY: geometry.contentOffset.y,
+            contentHeight: geometry.contentSize.height
+        )
+    }
+
     func distanceToChatBottom(from geometry: ScrollGeometry) -> CGFloat {
         let visibleBottomY = geometry.contentOffset.y + geometry.containerSize.height
         let distance = geometry.contentSize.height - visibleBottomY
         return max(0, distance)
+    }
+
+    static func nextAutoFollowState(
+        previous: ChatScrollSnapshot?,
+        current: ChatScrollSnapshot,
+        wasEnabled: Bool
+    ) -> Bool {
+        let followThreshold: CGFloat = 64
+        let userScrollUpTolerance: CGFloat = 2
+        let distanceStabilityTolerance: CGFloat = 24
+
+        if current.distanceFromBottom <= followThreshold {
+            return true
+        }
+
+        guard wasEnabled else {
+            return false
+        }
+
+        guard let previous else {
+            return true
+        }
+
+        let movedUp = current.contentOffsetY < previous.contentOffsetY - userScrollUpTolerance
+        if movedUp {
+            return false
+        }
+
+        let contentHeightDelta = current.contentHeight - previous.contentHeight
+        if contentHeightDelta > 0 {
+            return true
+        }
+
+        let distanceDelta = current.distanceFromBottom - previous.distanceFromBottom
+        return distanceDelta <= distanceStabilityTolerance
     }
 
     func selectWorkspace(_ workspace: ProjectWorkspace) {

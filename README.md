@@ -43,17 +43,20 @@ make run-ios
 make test-ios
 ```
 
+Notes:
+- `make run-ios` / `make test-ios` do not auto-download iOS Simulator runtime
+- If runtime is missing, they fail fast and print `make setup-ios-runtime`
+
 ## Usage
 
 ### 1. Start app-server on your remote machine
 
 ```bash
-make run-app-server
+codex app-server --listen ws://127.0.0.1:18081
 ```
 
 Default setup:
 - app-server: `ws://127.0.0.1:18081`
-- logs: `.build/logs/app-server.log`
 
 In the iOS app, do not use `localhost`. Use a reachable address instead, for example:  
 `ws://<tailnet-ip>:18081`
@@ -89,8 +92,22 @@ Use the host row context menu and open `Terminal` to operate directly over SSH.
 | `make setup-ios-runtime` | Install iOS Simulator runtime |
 | `make run-ios` | Build and launch on Simulator |
 | `make test-ios` | Run iOS tests |
-| `make run-app-server` | Start `codex app-server` |
 | `make clean` | Remove `.build` |
+
+## Directory Structure
+
+```text
+CodexAppMobile/
+  App/                     # app lifecycle and root wiring
+  Features/
+    Orchestration/         # app-server domain/client/workbench UI
+    Terminal/              # SSH terminal UI, ANSI rendering, transport
+  Assets.xcassets/
+  Info.plist
+
+CodexAppMobileTests/       # iOS tests
+scripts/                   # simulator/runtime/app-server helper scripts
+```
 
 ## Environment Variables
 
@@ -98,11 +115,6 @@ Use the host row context menu and open `Terminal` to operate directly over SSH.
 
 - `IOS_DEVICE_NAME` (default: `CodexAppMobile iPhone 17`)
 - `IOS_DEVICE_TYPE_IDENTIFIER` (default: `com.apple.CoreSimulator.SimDeviceType.iPhone-17`)
-
-### `make run-app-server`
-
-- `APP_SERVER_LISTEN_HOST` (default: `127.0.0.1`)
-- `APP_SERVER_PORT` (default: `18081`)
 
 ## Data Storage and Security
 
@@ -116,11 +128,11 @@ Use the host row context menu and open `Terminal` to operate directly over SSH.
 - `No iOS Simulator runtime found`:
   - Run `make setup-ios-runtime`
 - `port is already in use`:
-  - Free the port, or change `APP_SERVER_PORT`
+  - Free the port, or choose another `--listen` port
 - iOS app cannot connect to app-server:
   - Use a reachable IP/hostname instead of `ws://localhost:...`
 - app-server disconnects right after startup:
-  - Check `.build/logs/app-server.log`
+  - Check app-server stderr/stdout logs on the remote host
 
 ## Contributing
 

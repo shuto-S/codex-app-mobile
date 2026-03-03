@@ -938,6 +938,101 @@ final class CodexAppMobileTests: XCTestCase {
         )
     }
 
+    func testNextAutoFollowStateEnablesWhenNearBottom() {
+        let current = SessionWorkbenchView.ChatScrollSnapshot(
+            distanceFromBottom: 32,
+            contentOffsetY: 640,
+            contentHeight: 1240
+        )
+
+        XCTAssertTrue(
+            SessionWorkbenchView.nextAutoFollowState(
+                previous: nil,
+                current: current,
+                wasEnabled: false
+            )
+        )
+    }
+
+    func testNextAutoFollowStateKeepsEnabledWithoutPreviousSnapshot() {
+        let current = SessionWorkbenchView.ChatScrollSnapshot(
+            distanceFromBottom: 180,
+            contentOffsetY: 640,
+            contentHeight: 1240
+        )
+
+        XCTAssertTrue(
+            SessionWorkbenchView.nextAutoFollowState(
+                previous: nil,
+                current: current,
+                wasEnabled: true
+            )
+        )
+    }
+
+    func testNextAutoFollowStateKeepsEnabledWhenOnlyContentGrows() {
+        let previous = SessionWorkbenchView.ChatScrollSnapshot(
+            distanceFromBottom: 0,
+            contentOffsetY: 640,
+            contentHeight: 1240
+        )
+        let current = SessionWorkbenchView.ChatScrollSnapshot(
+            distanceFromBottom: 96,
+            contentOffsetY: 640.4,
+            contentHeight: 1336
+        )
+
+        XCTAssertTrue(
+            SessionWorkbenchView.nextAutoFollowState(
+                previous: previous,
+                current: current,
+                wasEnabled: true
+            )
+        )
+    }
+
+    func testNextAutoFollowStateDisablesWhenUserScrolledAway() {
+        let previous = SessionWorkbenchView.ChatScrollSnapshot(
+            distanceFromBottom: 0,
+            contentOffsetY: 640,
+            contentHeight: 1240
+        )
+        let current = SessionWorkbenchView.ChatScrollSnapshot(
+            distanceFromBottom: 96,
+            contentOffsetY: 580,
+            contentHeight: 1336
+        )
+
+        XCTAssertFalse(
+            SessionWorkbenchView.nextAutoFollowState(
+                previous: previous,
+                current: current,
+                wasEnabled: true
+            )
+        )
+    }
+
+    func testNextAutoFollowStateStaysDisabledWithoutNearBottom() {
+        let previous = SessionWorkbenchView.ChatScrollSnapshot(
+            distanceFromBottom: 150,
+            contentOffsetY: 580,
+            contentHeight: 1336
+        )
+        let current = SessionWorkbenchView.ChatScrollSnapshot(
+            distanceFromBottom: 190,
+            contentOffsetY: 580,
+            contentHeight: 1336
+        )
+
+        XCTAssertFalse(
+            SessionWorkbenchView.nextAutoFollowState(
+                previous: previous,
+                current: current,
+                wasEnabled: false
+            )
+        )
+    }
+
     @MainActor
     func testAppServerClientParsesSnakeCaseUserInputRequest() {
         let client = AppServerClient()

@@ -142,10 +142,23 @@ extension SessionWorkbenchView {
             }
             .background(Color.black)
             .scrollDismissesKeyboard(.interactively)
-            .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                self.distanceToChatBottom(from: geometry)
+            .onScrollGeometryChange(for: ChatScrollSnapshot.self) { geometry in
+                self.chatScrollSnapshot(from: geometry)
             } action: { _, newValue in
-                self.chatDistanceFromBottom = newValue
+                let previousSnapshot = self.lastChatScrollSnapshot
+                self.chatDistanceFromBottom = newValue.distanceFromBottom
+                self.lastChatScrollSnapshot = newValue
+
+                guard self.selectedThreadID != nil else {
+                    self.isChatAutoFollowEnabled = true
+                    return
+                }
+
+                self.isChatAutoFollowEnabled = Self.nextAutoFollowState(
+                    previous: previousSnapshot,
+                    current: newValue,
+                    wasEnabled: self.isChatAutoFollowEnabled
+                )
             }
             .overlay(alignment: .bottom) {
                 if self.shouldShowScrollToBottomButton {
@@ -180,18 +193,24 @@ extension SessionWorkbenchView {
             }
             .animation(.easeOut(duration: 0.18), value: self.shouldShowScrollToBottomButton)
             .onAppear {
+                self.isChatAutoFollowEnabled = true
+                self.lastChatScrollSnapshot = nil
                 self.shouldForceScrollToBottomOnNextTranscriptUpdate = true
                 self.scrollToBottom(proxy: proxy)
             }
             .onChange(of: self.scrollToBottomRequestCount) {
+                self.isChatAutoFollowEnabled = true
                 self.scrollToBottom(proxy: proxy)
             }
             .onChange(of: self.selectedThreadID) {
+                self.isChatAutoFollowEnabled = true
+                self.lastChatScrollSnapshot = nil
                 self.shouldForceScrollToBottomOnNextTranscriptUpdate = true
                 self.scrollToBottom(proxy: proxy)
             }
             .onChange(of: self.selectedThreadTranscript) {
                 if self.shouldForceScrollToBottomOnNextTranscriptUpdate {
+                    self.isChatAutoFollowEnabled = true
                     self.shouldForceScrollToBottomOnNextTranscriptUpdate = false
                     self.scrollToBottom(proxy: proxy)
                     return
@@ -209,6 +228,7 @@ extension SessionWorkbenchView {
     @ViewBuilder
     func scrollToBottomButton(proxy: ScrollViewProxy) -> some View {
         Button {
+            self.isChatAutoFollowEnabled = true
             self.scrollToBottom(proxy: proxy)
         } label: {
             Image(systemName: "chevron.down")

@@ -99,7 +99,6 @@ CodexAppMobileTests/
 scripts/
   ensure_ios_runtime.sh
   run_ios.sh
-  run_app_server_stack.sh
 ```
 
 ### Responsibility Split
@@ -107,4 +106,4 @@ scripts/
 - `App/`: app lifecycle and root wiring.
 - `Features/Orchestration/`: host/project/thread domain, app-server client (core/parsing/payload), session workbench (core/UI/menu+connection/actions), and approval/diagnostics UI.
 - `Features/Terminal/`: SSH terminal UI, shared style, ANSI rendering, and SSH transport engine.
-- `scripts/`: local run/test and app-server helper automation.
+- `scripts/`: local run/test helper scripts.

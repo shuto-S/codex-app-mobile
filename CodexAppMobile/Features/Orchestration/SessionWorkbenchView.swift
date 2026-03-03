@@ -69,6 +69,12 @@ struct SessionWorkbenchView: View {
         let title: String
     }
 
+    struct ChatScrollSnapshot: Equatable {
+        let distanceFromBottom: CGFloat
+        let contentOffsetY: CGFloat
+        let contentHeight: CGFloat
+    }
+
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) var dismiss
     @Environment(\.colorScheme) var colorScheme
@@ -123,6 +129,8 @@ struct SessionWorkbenchView: View {
     @State var selectedComposerTokenBadges: [ComposerTokenBadge] = []
     @State var pendingPromptDispatchCount = 0
     @State var chatDistanceFromBottom: CGFloat = 0
+    @State var lastChatScrollSnapshot: ChatScrollSnapshot?
+    @State var isChatAutoFollowEnabled = true
     @State var scrollToBottomRequestCount = 0
     @State var shouldForceScrollToBottomOnNextTranscriptUpdate = false
     @FocusState var isPromptFieldFocused: Bool
@@ -269,7 +277,7 @@ struct SessionWorkbenchView: View {
     }
 
     var shouldAutoFollowChatUpdates: Bool {
-        self.selectedThreadID != nil && self.chatDistanceFromBottom <= 64
+        self.selectedThreadID != nil && self.isChatAutoFollowEnabled
     }
 
     var isComposerInteractive: Bool {
