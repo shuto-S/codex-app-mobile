@@ -93,6 +93,8 @@ struct SessionWorkbenchView: View {
     @State var shouldPresentNextUserInputPanelAfterPlan = false
     @State var isResolvedPendingRequestAlertPresented = false
     @State var resolvedPendingRequestAlertMessage = ""
+    @State var pendingPlanUserInputThreadID: String?
+    @State var pendingPlanUserInputTurnID: String?
     @State var isStatusPanelPresented = false
     @State var isStatusRefreshing = false
     @State var statusSnapshot: StatusPanelSnapshot?

@@ -141,10 +141,7 @@ extension SessionWorkbenchView {
         }
 
         let collaborationModeIDForRequest = self.composerCollaborationModeIDForRequest
-        let shouldConsumePlanModeAfterSend = self.isPlanCollaborationMode(collaborationModeIDForRequest)
-        if shouldConsumePlanModeAfterSend {
-            self.consumePlanModeAfterSend()
-        }
+        let didRequestPlanMode = self.isPlanCollaborationMode(collaborationModeIDForRequest)
 
         self.prompt = ""
         self.selectedComposerTokenBadges = []
@@ -185,14 +182,36 @@ extension SessionWorkbenchView {
                         expectedTurnID: activeTurnID,
                         inputText: promptForRequest
                     )
+                    if didRequestPlanMode {
+                        self.showComposerInfo(
+                            "Plan mode will apply to the next new turn after the active turn completes.",
+                            tone: .status,
+                            autoDismissAfter: 4.0
+                        )
+                    }
                 } else {
-                    _ = try await self.appState.appServerClient.turnStart(
+                    let turnStartResult = try await self.appState.appServerClient.turnStart(
                         threadID: threadID,
                         inputText: promptForRequest,
                         model: self.composerModelForRequest,
                         effort: self.selectedComposerReasoning,
                         collaborationModeID: collaborationModeIDForRequest
                     )
+                    if didRequestPlanMode {
+                        if turnStartResult.collaborationModeApplied {
+                            self.armPlanUserInputAutoPresentation(
+                                threadID: threadID,
+                                turnID: turnStartResult.turnID
+                            )
+                        } else {
+                            self.showComposerInfo(
+                                "Plan mode was not applied by the server. Prompt sent in default mode.",
+                                tone: .error,
+                                autoDismissAfter: 5.0
+                            )
+                        }
+                        self.consumePlanModeAfterSend()
+                    }
                     selectedModelForThread = self.composerModelForRequest
                     selectedReasoningForThread = self.selectedComposerReasoning
                 }
@@ -297,12 +316,9 @@ extension SessionWorkbenchView {
 
         if self.shouldPresentNextUserInputPanelAfterPlan,
            let userInputRequest = pendingRequests.first(where: { request in
-               if case .userInput = request.kind {
-                   return true
-               }
-               return false
+               self.shouldAutoPresentPlanUserInputRequest(request)
            }) {
-            self.shouldPresentNextUserInputPanelAfterPlan = false
+            self.clearPlanUserInputAutoPresentation()
             self.presentPendingUserInputPanel(userInputRequest)
         }
     }
@@ -698,23 +714,77 @@ extension SessionWorkbenchView {
     }
 
     func startPlanModeSlashCommand() {
+        let catalog = self.appState.appServerClient.availableCollaborationModes
+        let planModeDiscovered = catalog.contains(where: { mode in
+            mode.normalizedID == "plan" || mode.title.lowercased().contains("plan")
+        })
         self.composerCollaborationModeID = self.planCollaborationModeID
-        self.shouldPresentNextUserInputPanelAfterPlan = true
-        self.showComposerInfo("Plan mode enabled. Send a prompt to continue.", tone: .status)
+        self.clearPlanUserInputAutoPresentation()
+        if planModeDiscovered {
+            self.showComposerInfo("Plan mode enabled. Send a prompt to continue.", tone: .status)
+        } else if catalog.isEmpty {
+            self.showComposerInfo(
+                "Plan mode enabled. Server capability is unknown; we will try on send.",
+                tone: .status,
+                autoDismissAfter: 4.0
+            )
+        } else {
+            self.showComposerInfo(
+                "Plan mode enabled. This server may not support it; we will retry without it if rejected.",
+                tone: .status,
+                autoDismissAfter: 4.0
+            )
+        }
         self.isPromptFieldFocused = true
     }
 
     func disablePlanMode() {
-        guard self.composerCollaborationModeIDForRequest != nil else { return }
+        let wasEnabled = self.composerCollaborationModeIDForRequest != nil
         self.composerCollaborationModeID = ""
-        self.shouldPresentNextUserInputPanelAfterPlan = false
-        self.showComposerInfo("Plan mode disabled.", tone: .status)
+        self.clearPlanUserInputAutoPresentation()
+        if wasEnabled {
+            self.showComposerInfo("Plan mode disabled.", tone: .status)
+        }
     }
 
     func consumePlanModeAfterSend() {
         guard self.isPlanModeEnabled else { return }
-        // Keep pending user-input auto-presentation armed for the already-started plan turn.
         self.composerCollaborationModeID = ""
+    }
+
+    func armPlanUserInputAutoPresentation(threadID: String, turnID: String) {
+        self.shouldPresentNextUserInputPanelAfterPlan = true
+        self.pendingPlanUserInputThreadID = threadID
+        self.pendingPlanUserInputTurnID = turnID
+    }
+
+    func clearPlanUserInputAutoPresentation() {
+        self.shouldPresentNextUserInputPanelAfterPlan = false
+        self.pendingPlanUserInputThreadID = nil
+        self.pendingPlanUserInputTurnID = nil
+    }
+
+    func shouldAutoPresentPlanUserInputRequest(_ request: AppServerPendingRequest) -> Bool {
+        guard case .userInput = request.kind else { return false }
+
+        let expectedThreadID = self.pendingPlanUserInputThreadID?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let expectedTurnID = self.pendingPlanUserInputTurnID?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let requestThreadID = request.threadID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestTurnID = request.turnID.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !expectedThreadID.isEmpty,
+           !requestThreadID.isEmpty,
+           requestThreadID != expectedThreadID {
+            return false
+        }
+        if !expectedTurnID.isEmpty,
+           !requestTurnID.isEmpty,
+           requestTurnID != expectedTurnID {
+            return false
+        }
+        return true
     }
 
     func sendPromptViaSSH(

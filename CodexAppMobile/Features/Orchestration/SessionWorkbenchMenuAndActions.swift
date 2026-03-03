@@ -158,6 +158,7 @@ extension SessionWorkbenchView {
                                                 .font(.subheadline.weight(self.selectedThreadID == summary.threadID ? .semibold : .regular))
                                                 .lineLimit(1)
                                             Spacer(minLength: 8)
+                                            self.threadInferenceIndicator(threadID: summary.threadID)
                                         }
                                         .foregroundStyle(
                                             self.selectedThreadID == summary.threadID
@@ -302,6 +303,32 @@ extension SessionWorkbenchView {
                 )
                 .frame(width: size, height: size)
         }
+    }
+
+    func threadInferenceIndicator(threadID: String) -> some View {
+        let isActive = self.isThreadInferenceActive(threadID)
+        return Circle()
+            .fill(Color.green.opacity(0.95))
+            .frame(width: 8, height: 8)
+            .frame(width: 12, height: 12)
+            .opacity(isActive ? 1 : 0)
+            .accessibilityHidden(true)
+    }
+
+    func isThreadInferenceActive(_ threadID: String) -> Bool {
+        if self.isSSHTransport {
+            return self.selectedThreadID == threadID && self.isRunningSSHAction
+        }
+
+        if self.selectedThreadID == threadID && self.isAwaitingPromptDispatch {
+            return true
+        }
+
+        if self.appState.appServerClient.activeTurnID(for: threadID) != nil {
+            return true
+        }
+
+        return self.appState.appServerClient.turnStreamingPhase(for: threadID) != nil
     }
 
     func scrollToBottom(proxy: ScrollViewProxy) {

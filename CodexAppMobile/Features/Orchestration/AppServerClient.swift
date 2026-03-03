@@ -19,6 +19,11 @@ final class AppServerClient: ObservableObject {
         case responding
     }
 
+    struct TurnStartResult: Equatable {
+        let turnID: String
+        let collaborationModeApplied: Bool
+    }
+
     /// Called on the main actor when a turn completes.
     /// Parameters: threadID, status, response snippet (first ~200 chars of the transcript delta).
     var onTurnCompleted: ((_ threadID: String, _ status: String, _ responseSnippet: String) -> Void)?
@@ -417,7 +422,7 @@ final class AppServerClient: ObservableObject {
         model: String?,
         effort: String?,
         collaborationModeID: String? = nil
-    ) async throws -> String {
+    ) async throws -> TurnStartResult {
         let trimmedModel = model?.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedModel = (trimmedModel?.isEmpty == false) ? trimmedModel : nil
         let trimmedEffort = effort?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -428,7 +433,7 @@ final class AppServerClient: ObservableObject {
             model: String?,
             effort: String?,
             collaborationModeID: String?
-        ) async throws -> String {
+        ) async throws -> TurnStartResult {
             var params: [String: JSONValue] = [
                 "threadId": .string(threadID),
                 "input": .array([
@@ -438,6 +443,7 @@ final class AppServerClient: ObservableObject {
                     ])
                 ]),
             ]
+            var collaborationModeApplied = false
 
             if let model {
                 params["model"] = .string(model)
@@ -457,6 +463,7 @@ final class AppServerClient: ObservableObject {
                     effort: effort
                 ) {
                     params["collaborationMode"] = collaborationMode
+                    collaborationModeApplied = true
                 } else {
                     self.appendEvent("turn/start skipped collaboration mode: unsupported mode id or unresolved model.")
                 }
@@ -466,14 +473,17 @@ final class AppServerClient: ObservableObject {
             let payload: TurnStartResponsePayload = try self.decode(result, as: TurnStartResponsePayload.self)
             self.activeTurnIDByThread[threadID] = payload.turn.id
             self.turnStreamingPhaseByThread[threadID] = .thinking
-            return payload.turn.id
+            return TurnStartResult(
+                turnID: payload.turn.id,
+                collaborationModeApplied: collaborationModeApplied
+            )
         }
 
         func requestTurnStartWithFallbacks(
             model: String?,
             effort: String?,
             collaborationModeID: String?
-        ) async throws -> String {
+        ) async throws -> TurnStartResult {
             do {
                 return try await requestTurnStart(
                     model: model,
