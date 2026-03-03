@@ -369,17 +369,21 @@ struct ServerRequestResolvedNotificationPayload: Decodable {
 
     private enum CodingKeys: String, CodingKey {
         case threadID
+        case threadId
         case threadIDSnake = "thread_id"
         case requestID
+        case requestId
         case requestIDSnake = "request_id"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.threadID = try container.decodeIfPresent(String.self, forKey: .threadID)
+            ?? container.decodeIfPresent(String.self, forKey: .threadId)
             ?? container.decodeIfPresent(String.self, forKey: .threadIDSnake)
             ?? ""
         self.requestID = try container.decodeIfPresent(JSONValue.self, forKey: .requestID)
+            ?? container.decodeIfPresent(JSONValue.self, forKey: .requestId)
             ?? container.decodeIfPresent(JSONValue.self, forKey: .requestIDSnake)
             ?? .null
     }

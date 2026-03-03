@@ -560,7 +560,7 @@ struct SessionWorkbenchView: View {
         self.glassWhiteTint(light: 0.30, dark: 0.20)
     }
 
-    var body: some View {
+    var baseWorkbenchContent: some View {
         ZStack(alignment: .leading) {
             self.chatBackground
                 .ignoresSafeArea()
@@ -603,6 +603,10 @@ struct SessionWorkbenchView: View {
         .animation(.easeOut(duration: 0.18), value: self.composerInfoMessage?.id)
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+    }
+
+    func applyingLifecycleHandlers<Content: View>(to content: Content) -> some View {
+        content
         .onAppear {
             self.appState.selectHost(self.host.id)
             self.appState.hostSessionStore.markOpened(hostID: self.host.id)
@@ -648,16 +652,39 @@ struct SessionWorkbenchView: View {
         .onChange(of: self.appState.appServerClient.lastResolvedPendingRequest) {
             self.handleResolvedPendingRequestUpdated()
         }
+    }
+
+    var isDeleteProjectAlertPresented: Binding<Bool> {
+        Binding(
+            get: { self.workspacePendingDeletion != nil },
+            set: { isPresented in
+                if isPresented == false {
+                    self.workspacePendingDeletion = nil
+                }
+            }
+        )
+    }
+
+    func saveWorkspaceFromEditor(_ draft: ProjectWorkspaceDraft) {
+        let isCreatingWorkspace = self.editingWorkspace == nil
+        let savedWorkspaceID = self.appState.projectStore.upsert(
+            workspaceID: self.editingWorkspace?.id,
+            hostID: self.host.id,
+            draft: draft
+        )
+        if isCreatingWorkspace {
+            self.selectedWorkspaceID = savedWorkspaceID
+            self.createNewThread()
+        } else {
+            self.restoreSelectionFromSession()
+        }
+    }
+
+    func applyingPresentationHandlers<Content: View>(to content: Content) -> some View {
+        content
         .alert(
             "Delete this project?",
-            isPresented: Binding(
-                get: { self.workspacePendingDeletion != nil },
-                set: { isPresented in
-                    if isPresented == false {
-                        self.workspacePendingDeletion = nil
-                    }
-                }
-            ),
+            isPresented: self.isDeleteProjectAlertPresented,
             presenting: self.workspacePendingDeletion
         ) { workspace in
             Button("Cancel", role: .cancel) {
@@ -680,18 +707,7 @@ struct SessionWorkbenchView: View {
                 host: self.host,
                 hostPassword: self.appState.remoteHostStore.password(for: self.host.id)
             ) { draft in
-                let isCreatingWorkspace = self.editingWorkspace == nil
-                let savedWorkspaceID = self.appState.projectStore.upsert(
-                    workspaceID: self.editingWorkspace?.id,
-                    hostID: self.host.id,
-                    draft: draft
-                )
-                if isCreatingWorkspace {
-                    self.selectedWorkspaceID = savedWorkspaceID
-                    self.createNewThread()
-                } else {
-                    self.restoreSelectionFromSession()
-                }
+                self.saveWorkspaceFromEditor(draft)
             }
         }
         .sheet(item: self.$activePendingRequest) { request in
@@ -701,6 +717,13 @@ struct SessionWorkbenchView: View {
         .onDisappear {
             self.clearComposerInfo()
         }
+    }
+
+    var body: some View {
+        let content = self.baseWorkbenchContent
+        return self.applyingPresentationHandlers(
+            to: self.applyingLifecycleHandlers(to: content)
+        )
     }
 
 }
