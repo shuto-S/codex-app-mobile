@@ -38,7 +38,6 @@ scripts/
   ensure_ios_runtime.sh
   run_ios.sh
   run_app_server_stack.sh
-  ws_strip_extensions_proxy.js
 ```
 
 ## Responsibility Split

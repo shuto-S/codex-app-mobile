@@ -1006,7 +1006,7 @@ extension AppServerClient {
             return nil
         }
 
-        return "[Connection] WebSocket handshake failed before app-server initialization. codex app-server may reject iOS WebSocket extension negotiation (Sec-WebSocket-Extensions). Run scripts/ws_strip_extensions_proxy.js on the remote host and connect iOS to that proxy URL, or use Terminal tab."
+        return "[Connection] WebSocket handshake failed before app-server initialization. Verify the app-server URL is reachable and update codex-cli on the remote host if needed, or use Terminal tab."
     }
 
     func shouldAttemptReconnect(after error: Error) -> Bool {

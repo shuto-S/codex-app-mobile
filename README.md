@@ -21,7 +21,6 @@ It primarily communicates through `codex app-server` over WebSocket, with an SSH
 - `make`
 - For app-server usage:
   - `codex` CLI
-  - `node`
 - Recommended network:
   - iPhone and remote machine connected to the same Tailnet (Tailscale)
 
@@ -34,7 +33,6 @@ It primarily communicates through `codex app-server` over WebSocket, with an SSH
 - Dependency licenses: [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md) (`Apache-2.0` / `MIT`)
 - Connectivity:
   - Primary: `codex app-server` (WebSocket)
-  - Helper: `ws_strip_extensions_proxy.js` (to avoid `Sec-WebSocket-Extensions` handshake issues)
   - Fallback: SSH (password authentication)
 
 ## Quick Start (Local)
@@ -55,18 +53,17 @@ make run-app-server
 
 Default setup:
 - app-server: `ws://127.0.0.1:18081`
-- proxy: `ws://0.0.0.0:8080` (the iOS app should connect to this port)
-- logs: `.build/logs/app-server.log`, `.build/logs/ws-proxy.log`
+- logs: `.build/logs/app-server.log`
 
 In the iOS app, do not use `localhost`. Use a reachable address instead, for example:  
-`ws://<tailnet-ip>:8080`
+`ws://<tailnet-ip>:18081`
 
 ### 2. Launch the app and register a host
 
 On the `Hosts` screen, tap `+` and configure:
 - Display name
 - Host / SSH port / username / password
-- App Server host / port (usually same host, port `8080`)
+- App Server host / port (usually same host, port `18081`)
 - Preferred transport (usually `App Server (WebSocket)`)
 
 ### 3. Create a project workspace
@@ -92,7 +89,7 @@ Use the host row context menu and open `Terminal` to operate directly over SSH.
 | `make setup-ios-runtime` | Install iOS Simulator runtime |
 | `make run-ios` | Build and launch on Simulator |
 | `make test-ios` | Run iOS tests |
-| `make run-app-server` | Start `codex app-server` + WS proxy |
+| `make run-app-server` | Start `codex app-server` |
 | `make clean` | Remove `.build` |
 
 ## Environment Variables
@@ -106,10 +103,6 @@ Use the host row context menu and open `Terminal` to operate directly over SSH.
 
 - `APP_SERVER_LISTEN_HOST` (default: `127.0.0.1`)
 - `APP_SERVER_PORT` (default: `18081`)
-- `APP_SERVER_PROXY_LISTEN_HOST` (default: `0.0.0.0`)
-- `APP_SERVER_PROXY_PORT` (default: `8080`)
-- `APP_SERVER_PROXY_UPSTREAM_HOST` (default: `127.0.0.1`)
-- `APP_SERVER_PROXY_UPSTREAM_PORT` (default: same as `APP_SERVER_PORT`)
 
 ## Data Storage and Security
 
@@ -123,11 +116,11 @@ Use the host row context menu and open `Terminal` to operate directly over SSH.
 - `No iOS Simulator runtime found`:
   - Run `make setup-ios-runtime`
 - `port is already in use`:
-  - Free the port, or change `APP_SERVER_PORT` / `APP_SERVER_PROXY_PORT`
+  - Free the port, or change `APP_SERVER_PORT`
 - iOS app cannot connect to app-server:
   - Use a reachable IP/hostname instead of `ws://localhost:...`
 - app-server disconnects right after startup:
-  - Check `.build/logs/app-server.log` and `.build/logs/ws-proxy.log`
+  - Check `.build/logs/app-server.log`
 
 ## Contributing
 
