@@ -36,6 +36,35 @@ extension SessionWorkbenchView {
         return normalizedThreadPath == normalizedWorkspacePath
     }
 
+    func scheduleSessionRefresh(_ work: Set<RefreshWork>, debounceNanoseconds: UInt64 = 0) {
+        guard !work.isEmpty else { return }
+        self.pendingRefreshWork.formUnion(work)
+        self.refreshCoordinatorTask?.cancel()
+
+        self.refreshCoordinatorTask = Task { @MainActor in
+            if debounceNanoseconds > 0 {
+                try? await Task.sleep(nanoseconds: debounceNanoseconds)
+            }
+            guard !Task.isCancelled else { return }
+
+            let workToRun = self.pendingRefreshWork
+            self.pendingRefreshWork.removeAll()
+
+            if workToRun.contains(.threads) {
+                self.refreshThreads()
+            }
+            if workToRun.contains(.catalogs) {
+                self.refreshAppServerCatalogsForCurrentWorkspace()
+            }
+            if workToRun.contains(.selectedThreadDetail),
+               let threadID = self.selectedThreadID {
+                self.loadThread(threadID)
+            }
+
+            self.refreshCoordinatorTask = nil
+        }
+    }
+
     func refreshThreads(debounceNanoseconds: UInt64 = 0) {
         guard let selectedWorkspace else {
             self.localErrorMessage = "Select a project first."
@@ -354,6 +383,18 @@ extension SessionWorkbenchView {
             self.activePendingRequest = nil
         }
 
+        let now = Date()
+        if let suppressedThreadID = self.suppressResolvedPendingRequestAlertThreadID {
+            if now > self.suppressResolvedPendingRequestAlertExpiresAt {
+                self.suppressResolvedPendingRequestAlertThreadID = nil
+                self.suppressResolvedPendingRequestAlertExpiresAt = .distantPast
+            } else if suppressedThreadID == resolved.threadID {
+                self.suppressResolvedPendingRequestAlertThreadID = nil
+                self.suppressResolvedPendingRequestAlertExpiresAt = .distantPast
+                return
+            }
+        }
+
         self.resolvedPendingRequestAlertMessage = "Request \(resolved.requestIDKey) for thread \(resolved.threadID) was resolved by the server."
         self.isResolvedPendingRequestAlertPresented = true
     }
@@ -657,7 +698,7 @@ extension SessionWorkbenchView {
                 }
 
                 self.loadThread(forkedThreadID)
-                self.refreshThreads()
+                self.scheduleSessionRefresh([.threads])
                 self.showComposerInfo("Forked thread: \(forkedThreadID)")
             } catch {
                 self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
@@ -722,7 +763,7 @@ extension SessionWorkbenchView {
                 }
 
                 self.loadThread(reviewThreadID)
-                self.refreshThreads()
+                self.scheduleSessionRefresh([.threads])
                 self.showComposerInfo(successMessage)
             } catch {
                 self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
@@ -916,20 +957,26 @@ extension SessionWorkbenchView {
 
     func interruptActiveTurn() {
         if self.isSSHTransport {
-            self.localErrorMessage = "Interrupt is only available in App Server mode."
             return
         }
 
         guard let threadID = self.selectedThreadID,
               let turnID = self.appState.appServerClient.activeTurnID(for: threadID) else {
-            self.localErrorMessage = "No active turn to interrupt."
             return
         }
+
+        self.suppressResolvedPendingRequestAlertThreadID = threadID
+        self.suppressResolvedPendingRequestAlertExpiresAt = Date().addingTimeInterval(5.0)
 
         Task {
             do {
                 try await self.appState.appServerClient.turnInterrupt(threadID: threadID, turnID: turnID)
+                self.localErrorMessage = "Canceled."
+                self.localStatusMessage = ""
+                self.scrollToBottomRequestCount += 1
             } catch {
+                self.suppressResolvedPendingRequestAlertThreadID = nil
+                self.suppressResolvedPendingRequestAlertExpiresAt = .distantPast
                 self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
             }
         }
@@ -959,7 +1006,7 @@ extension SessionWorkbenchView {
                     try await self.appState.appServerClient.connect(to: self.host)
                 }
                 try await self.appState.appServerClient.threadArchive(threadID: summary.threadID, archived: archived)
-                self.refreshThreads()
+                self.scheduleSessionRefresh([.threads])
             } catch {
                 self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
             }

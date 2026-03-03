@@ -15,6 +15,7 @@ struct HostDiagnosticsView: View {
             Form {
                 Section("Host") {
                     Text("State: \(self.appState.appServerClient.state.rawValue)")
+                    Text("Session state: \(self.diagnostics.connectionState)")
                     if !self.appState.appServerClient.connectedEndpoint.isEmpty {
                         Text(self.appState.appServerClient.connectedEndpoint)
                             .font(.caption)
@@ -36,6 +37,22 @@ struct HostDiagnosticsView: View {
                         Text("Ping latency: \(latency.formatted(.number.precision(.fractionLength(0)))) ms")
                     } else {
                         Text("Ping latency: unknown")
+                    }
+                    Text("Reconnect attempts: \(self.diagnostics.reconnectAttemptCount)")
+                    if let lastPingAt = self.diagnostics.lastSuccessfulPingAt {
+                        Text("Last successful ping: \(lastPingAt.formatted(date: .numeric, time: .standard))")
+                    } else {
+                        Text("Last successful ping: unknown")
+                    }
+                    if let lastRPCErrorMessage = self.diagnostics.lastRPCErrorMessage {
+                        let suffix = self.diagnostics.lastRPCErrorAt.map {
+                            " (\($0.formatted(date: .omitted, time: .shortened)))"
+                        } ?? ""
+                        Text("Last RPC error: \(lastRPCErrorMessage)\(suffix)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Last RPC error: none")
                     }
                 }
 

@@ -12,6 +12,8 @@ final class AppServerClient: ObservableObject {
         case disconnected
         case connecting
         case connected
+        case reconnecting
+        case failed
     }
 
     enum TurnStreamingPhase: String, Equatable {
@@ -87,6 +89,41 @@ final class AppServerClient: ObservableObject {
         self.session = session
     }
 
+    private func transition(
+        to newState: State,
+        endpoint: String? = nil,
+        errorMessage: String? = nil
+    ) {
+        self.state = newState
+        self.diagnostics.connectionState = newState.rawValue
+        if let endpoint {
+            self.connectedEndpoint = endpoint
+        }
+        if let errorMessage {
+            self.lastErrorMessage = errorMessage
+        }
+    }
+
+    private func resetDiagnosticsForNewConnection() {
+        self.diagnostics = AppServerDiagnostics(
+            connectionState: self.state.rawValue,
+            minimumRequiredVersion: Self.minimumSupportedCLIVersion
+        )
+    }
+
+    private func markSuccessfulPing(latencyMS: Double) {
+        let now = Date()
+        self.diagnostics.lastPingLatencyMS = latencyMS
+        self.diagnostics.lastSuccessfulPingAt = now
+        self.diagnostics.lastCheckedAt = now
+    }
+
+    private func recordRPCError(method: String, error: Error) {
+        let message = self.userFacingMessage(for: error)
+        self.diagnostics.lastRPCErrorMessage = "\(method): \(message)"
+        self.diagnostics.lastRPCErrorAt = Date()
+    }
+
     /// Request extended background execution while active turns are in progress.
     /// Call when the app transitions to background and there are pending turns.
     func beginBackgroundProcessingIfNeeded() {
@@ -140,8 +177,9 @@ final class AppServerClient: ObservableObject {
         self.rateLimits = []
         self.lastResolvedPendingRequest = nil
         self.contextUsageByThread.removeAll()
-        self.state = .disconnected
-        self.connectedEndpoint = ""
+        self.reconnectAttempts = 0
+        self.diagnostics.reconnectAttemptCount = 0
+        self.transition(to: .disconnected, endpoint: "", errorMessage: "")
         self.endBackgroundProcessing()
     }
 
@@ -171,8 +209,7 @@ final class AppServerClient: ObservableObject {
         }
 
         let latency = try await self.measurePingLatency()
-        self.diagnostics.lastPingLatencyMS = latency
-        self.diagnostics.lastCheckedAt = Date()
+        self.markSuccessfulPing(latencyMS: latency)
         return self.diagnostics
     }
 
@@ -613,11 +650,9 @@ final class AppServerClient: ObservableObject {
             self.reconnectAttempts = 0
         }
 
-        self.state = .connecting
-        self.lastErrorMessage = ""
+        self.transition(to: .connecting, endpoint: url.absoluteString, errorMessage: "")
         self.autoReconnectEnabled = true
         self.lastHost = host
-        self.connectedEndpoint = url.absoluteString
         self.availableModels = []
         self.availableCollaborationModes = []
         self.mcpServers = []
@@ -627,9 +662,8 @@ final class AppServerClient: ObservableObject {
         self.lastResolvedPendingRequest = nil
         self.turnStreamingPhaseByThread.removeAll()
         self.streamedItemPrefixKeys.removeAll()
-        self.diagnostics = AppServerDiagnostics(
-            minimumRequiredVersion: Self.minimumSupportedCLIVersion
-        )
+        self.resetDiagnosticsForNewConnection()
+        self.diagnostics.reconnectAttemptCount = self.reconnectAttempts
 
         let task = self.session.webSocketTask(with: url)
         self.webSocketTask = task
@@ -684,16 +718,20 @@ final class AppServerClient: ObservableObject {
                     minimum: Self.minimumSupportedCLIVersion
                 )
             }
-            self.state = .connected
+            self.reconnectAttempts = 0
+            self.diagnostics.reconnectAttemptCount = 0
+            self.transition(to: .connected, endpoint: url.absoluteString)
             Task { @MainActor [weak self] in
                 await self?.refreshCatalogs(primaryCWD: nil)
             }
             self.diagnostics.lastCheckedAt = Date()
             self.appendEvent("Connected: \(host.name) @ \(url.absoluteString)")
         } catch {
-            self.lastErrorMessage = self.userFacingMessage(for: error)
-            self.state = .disconnected
-            self.connectedEndpoint = ""
+            self.transition(
+                to: .failed,
+                endpoint: url.absoluteString,
+                errorMessage: self.userFacingMessage(for: error)
+            )
             self.teardownConnection(closeCode: .normalClosure)
             throw error
         }
@@ -706,6 +744,10 @@ final class AppServerClient: ObservableObject {
                 return try await self.requestOnce(method: method, params: params)
             } catch let AppServerClientError.remote(code, message) where code == -32001 {
                 guard attempt < self.overloadRetryMaxAttempts - 1 else {
+                    self.recordRPCError(
+                        method: method,
+                        error: AppServerClientError.remote(code: code, message: message)
+                    )
                     throw AppServerClientError.remote(code: code, message: message)
                 }
 
@@ -718,6 +760,10 @@ final class AppServerClient: ObservableObject {
                 attempt += 1
                 continue
             } catch {
+                if error is CancellationError {
+                    throw error
+                }
+                self.recordRPCError(method: method, error: error)
                 throw error
             }
         }
@@ -826,8 +872,7 @@ final class AppServerClient: ObservableObject {
                 do {
                     let startedAt = Date()
                     try await webSocketTask.sendPingAsync()
-                    self.diagnostics.lastPingLatencyMS = Date().timeIntervalSince(startedAt) * 1000
-                    self.diagnostics.lastCheckedAt = Date()
+                    self.markSuccessfulPing(latencyMS: Date().timeIntervalSince(startedAt) * 1000)
                 } catch {
                     await self.handleSocketFailure(error)
                     return
@@ -1163,7 +1208,7 @@ final class AppServerClient: ObservableObject {
     }
 
     func setStateForTesting(_ state: State) {
-        self.state = state
+        self.transition(to: state)
     }
 
     func resetSlashCommandCatalogRebuildCountForTesting() {
@@ -1311,10 +1356,9 @@ final class AppServerClient: ObservableObject {
 
     private func handleSocketFailure(_ error: Error) async {
         let shouldAttemptReconnect = self.shouldAttemptReconnect(after: error)
+        let failureMessage = self.userFacingMessage(for: error)
+        let endpoint = self.connectedEndpoint
 
-        self.lastErrorMessage = self.userFacingMessage(for: error)
-        self.state = .disconnected
-        self.connectedEndpoint = ""
         self.activeTurnIDByThread.removeAll()
         self.turnStreamingPhaseByThread.removeAll()
         self.streamedItemPrefixKeys.removeAll()
@@ -1325,17 +1369,21 @@ final class AppServerClient: ObservableObject {
               self.autoReconnectEnabled,
               let host = self.lastHost
         else {
+            self.transition(to: .failed, endpoint: endpoint, errorMessage: failureMessage)
             return
         }
 
         guard self.reconnectAttempts < self.maxReconnectAttempts else {
             self.appendEvent("Reconnect attempts exhausted.")
+            self.transition(to: .failed, endpoint: endpoint, errorMessage: failureMessage)
             return
         }
 
         self.reconnectAttempts += 1
+        self.diagnostics.reconnectAttemptCount = self.reconnectAttempts
         let delaySeconds = pow(2.0, Double(self.reconnectAttempts - 1))
         self.appendEvent("Reconnect in \(Int(delaySeconds))s...")
+        self.transition(to: .reconnecting, endpoint: endpoint, errorMessage: failureMessage)
 
         self.reconnectTask?.cancel()
         self.reconnectTask = Task { @MainActor [weak self] in

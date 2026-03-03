@@ -19,6 +19,12 @@ struct SessionWorkbenchView: View {
         case error
     }
 
+    enum RefreshWork: Hashable {
+        case threads
+        case catalogs
+        case selectedThreadDetail
+    }
+
     struct ComposerInfoMessage: Identifiable, Equatable {
         let id = UUID()
         let text: String
@@ -34,10 +40,15 @@ struct SessionWorkbenchView: View {
 
     struct StatusPanelSnapshot: Equatable {
         let sessionID: String
+        let connectionState: String
         let currentModel: String
         let planType: String?
         let modelUpgradeNotice: String?
         let modelAvailabilityNotice: String?
+        let reconnectAttemptCount: Int
+        let lastSuccessfulPingAt: Date?
+        let lastRPCErrorMessage: String?
+        let lastRPCErrorAt: Date?
         let contextUsedTokens: Int?
         let contextMaxTokens: Int?
         let contextRemainingPercent: Double?
@@ -82,6 +93,8 @@ struct SessionWorkbenchView: View {
     @State var lastParsedTranscript = ""
     @State var refreshThreadsTask: Task<Void, Never>?
     @State var refreshCatalogsTask: Task<Void, Never>?
+    @State var refreshCoordinatorTask: Task<Void, Never>?
+    @State var pendingRefreshWork: Set<RefreshWork> = []
     @State var isMenuOpen = false
     @State var selectedComposerModel = ""
     @State var selectedComposerReasoning = "low"
@@ -98,6 +111,8 @@ struct SessionWorkbenchView: View {
     @State var shouldPresentNextUserInputPanelAfterPlan = false
     @State var isResolvedPendingRequestAlertPresented = false
     @State var resolvedPendingRequestAlertMessage = ""
+    @State var suppressResolvedPendingRequestAlertThreadID: String?
+    @State var suppressResolvedPendingRequestAlertExpiresAt = Date.distantPast
     @State var pendingPlanUserInputThreadID: String?
     @State var pendingPlanUserInputTurnID: String?
     @State var isStatusPanelPresented = false
@@ -179,6 +194,14 @@ struct SessionWorkbenchView: View {
         !self.isPromptEmpty
             && !self.isRunningSSHAction
             && self.selectedWorkspace != nil
+    }
+
+    var canInterruptActiveTurn: Bool {
+        guard !self.isSSHTransport,
+              let selectedThreadID else {
+            return false
+        }
+        return self.appState.appServerClient.activeTurnID(for: selectedThreadID) != nil
     }
 
     var hasVisibleAssistantReplyForLatestPrompt: Bool {
@@ -460,10 +483,15 @@ struct SessionWorkbenchView: View {
 
         return StatusPanelSnapshot(
             sessionID: self.selectedThreadID ?? "-",
+            connectionState: diagnostics.connectionState,
             currentModel: currentModel,
             planType: diagnostics.planType,
             modelUpgradeNotice: modelUpgradeNotice,
             modelAvailabilityNotice: modelDescriptor?.availabilityNuxMessage,
+            reconnectAttemptCount: diagnostics.reconnectAttemptCount,
+            lastSuccessfulPingAt: diagnostics.lastSuccessfulPingAt,
+            lastRPCErrorMessage: diagnostics.lastRPCErrorMessage,
+            lastRPCErrorAt: diagnostics.lastRPCErrorAt,
             contextUsedTokens: contextUsage?.usedTokens,
             contextMaxTokens: contextUsage?.maxTokens,
             contextRemainingPercent: contextUsage?.remainingPercent,
@@ -622,16 +650,14 @@ struct SessionWorkbenchView: View {
             }
             self.syncComposerControlsWithWorkspace()
             if self.selectedWorkspace != nil {
-                self.refreshThreads()
-                self.refreshAppServerCatalogsForCurrentWorkspace()
+                self.scheduleSessionRefresh([.threads, .catalogs])
             }
             self.refreshParsedChatMessagesIfNeeded()
         }
         .onChange(of: self.selectedWorkspaceID) {
             self.syncComposerControlsWithWorkspace()
             if self.selectedWorkspace != nil {
-                self.refreshThreads(debounceNanoseconds: 250_000_000)
-                self.refreshAppServerCatalogsForCurrentWorkspace(debounceNanoseconds: 250_000_000)
+                self.scheduleSessionRefresh([.threads, .catalogs], debounceNanoseconds: 250_000_000)
             }
         }
         .onChange(of: self.selectedComposerModel) {
@@ -645,10 +671,7 @@ struct SessionWorkbenchView: View {
         }
         .onChange(of: self.scenePhase) {
             if self.scenePhase == .active, self.selectedWorkspace != nil {
-                self.refreshThreads(debounceNanoseconds: 250_000_000)
-                if let threadID = self.selectedThreadID {
-                    self.loadThread(threadID)
-                }
+                self.scheduleSessionRefresh([.threads, .selectedThreadDetail], debounceNanoseconds: 250_000_000)
             }
         }
         .onChange(of: self.appState.appServerClient.availableModels) {
@@ -723,6 +746,9 @@ struct SessionWorkbenchView: View {
                 .environmentObject(self.appState)
         }
         .onDisappear {
+            self.refreshCoordinatorTask?.cancel()
+            self.refreshCoordinatorTask = nil
+            self.pendingRefreshWork.removeAll()
             self.refreshThreadsTask?.cancel()
             self.refreshThreadsTask = nil
             self.refreshCatalogsTask?.cancel()

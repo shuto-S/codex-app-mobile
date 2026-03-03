@@ -353,7 +353,7 @@ extension SessionWorkbenchView {
             self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: nil)
         }
         self.appState.hostSessionStore.selectProject(hostID: self.host.id, projectID: workspace.id)
-        self.refreshThreads()
+        self.scheduleSessionRefresh([.threads, .catalogs], debounceNanoseconds: 250_000_000)
     }
 
     func selectThread(_ summary: CodexThreadSummary, workspaceID: UUID) {

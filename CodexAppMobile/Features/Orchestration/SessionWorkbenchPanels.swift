@@ -457,11 +457,30 @@ extension SessionWorkbenchView {
             if let snapshot = self.statusSnapshot {
                 VStack(alignment: .leading, spacing: 12) {
                     self.statusHeaderRow(label: "Session", value: snapshot.sessionID)
+                    self.statusHeaderRow(label: "State", value: snapshot.connectionState.uppercased())
                     self.statusHeaderRow(label: "Model", value: snapshot.currentModel)
                     self.statusHeaderRow(
                         label: "Plan",
                         value: snapshot.planType?.uppercased() ?? "Unknown"
                     )
+                    self.statusHeaderRow(
+                        label: "Reconnects",
+                        value: "\(snapshot.reconnectAttemptCount)"
+                    )
+                    if let lastSuccessfulPingAt = snapshot.lastSuccessfulPingAt {
+                        self.statusHeaderRow(
+                            label: "Last ping",
+                            value: lastSuccessfulPingAt.formatted(date: .omitted, time: .shortened)
+                        )
+                    }
+                    if let lastRPCErrorMessage = snapshot.lastRPCErrorMessage {
+                        let timestampSuffix = snapshot.lastRPCErrorAt.map {
+                            " (\($0.formatted(date: .omitted, time: .shortened)))"
+                        } ?? ""
+                        Text("RPC error: \(lastRPCErrorMessage)\(timestampSuffix)")
+                            .font(.caption2)
+                            .foregroundStyle(Color.orange.opacity(0.90))
+                    }
                     if let modelUpgradeNotice = snapshot.modelUpgradeNotice,
                        !modelUpgradeNotice.isEmpty {
                         Text(modelUpgradeNotice)
@@ -717,6 +736,8 @@ extension SessionWorkbenchView {
 
     var chatComposer: some View {
         let isInactive = !self.isComposerInteractive
+        let isInterruptButton = self.isPromptEmpty && self.canInterruptActiveTurn
+        let isPrimaryActionEnabled = isInterruptButton ? self.canInterruptActiveTurn : self.canSendPrompt
 
         return VStack(alignment: .leading, spacing: 8) {
             if self.isStatusPanelPresented {
@@ -815,17 +836,22 @@ extension SessionWorkbenchView {
 
                     Button {
                         self.isPromptFieldFocused = false
-                        self.sendPrompt(forceNewThread: false)
+                        if isInterruptButton {
+                            self.interruptActiveTurn()
+                        } else {
+                            self.sendPrompt(forceNewThread: false)
+                        }
                     } label: {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 15, weight: .bold))
+                        Image(systemName: isInterruptButton ? "square.fill" : "arrow.up")
+                            .font(.system(size: isInterruptButton ? 11 : 15, weight: .bold))
                             .foregroundStyle(isInactive ? Color.white.opacity(0.72) : Color.black)
                             .frame(width: 36, height: 36)
                             .background((isInactive ? Color.white.opacity(0.24) : Color.white), in: Circle())
                     }
                     .buttonStyle(.plain)
-                    .disabled(!self.canSendPrompt)
-                    .opacity(self.canSendPrompt ? 1 : 0.45)
+                    .disabled(!isPrimaryActionEnabled)
+                    .opacity(isPrimaryActionEnabled ? 1 : 0.45)
+                    .accessibilityLabel(isInterruptButton ? "Stop inference" : "Send prompt")
                 }
             }
             .padding(.horizontal, 14)

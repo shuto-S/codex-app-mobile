@@ -506,11 +506,16 @@ enum AppServerErrorCategory: String {
 }
 
 struct AppServerDiagnostics: Equatable {
+    var connectionState: String = "disconnected"
     var cliVersion: String = ""
     var authStatus: String = "unknown"
     var planType: String?
     var currentModel: String = ""
+    var reconnectAttemptCount: Int = 0
     var lastPingLatencyMS: Double?
+    var lastSuccessfulPingAt: Date?
+    var lastRPCErrorMessage: String?
+    var lastRPCErrorAt: Date?
     var lastCheckedAt: Date?
     var minimumRequiredVersion: String = "0.106.0"
 }

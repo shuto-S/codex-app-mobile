@@ -48,8 +48,10 @@ struct CodexAppMobileApp: App {
     private func installTurnCompletionNotifier() {
         guard self.appState.appServerClient.onTurnCompleted == nil else { return }
 
-        self.appState.appServerClient.onTurnCompleted = { [weak appState] threadID, _, responseSnippet in
+        self.appState.appServerClient.onTurnCompleted = { [weak appState] threadID, status, responseSnippet in
             guard let appState else { return }
+            let normalizedStatus = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard normalizedStatus == "completed" else { return }
 
             // Skip notification if this thread is currently selected (user is viewing it).
             let isCurrentlyOpen = appState.hostSessionStore.sessions.contains { $0.selectedThreadID == threadID }

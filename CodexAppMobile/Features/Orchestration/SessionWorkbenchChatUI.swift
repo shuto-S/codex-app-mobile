@@ -73,31 +73,30 @@ extension SessionWorkbenchView {
     var chatHeaderArea: some View {
         VStack(spacing: 0) {
             self.chatHeader
-
-            if let composerInfoMessage {
-                self.chatInfoBanner(text: composerInfoMessage.text, tone: composerInfoMessage.tone)
-                    .padding(.horizontal, 14)
-                    .padding(.top, 8)
-                    .padding(.bottom, 8)
-                    .background(Color.black)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
         }
         .background(Color.black)
+    }
+
+    var floatingBannerCount: Int {
+        var count = 0
+        if !self.localErrorMessage.isEmpty { count += 1 }
+        if !self.localStatusMessage.isEmpty { count += 1 }
+        if self.composerInfoMessage != nil { count += 1 }
+        return count
+    }
+
+    var floatingBannerTopInset: CGFloat {
+        guard self.floatingBannerCount > 0 else { return 16 }
+        let rows = CGFloat(self.floatingBannerCount)
+        let rowHeight: CGFloat = 44
+        let rowSpacing: CGFloat = 8
+        return 16 + (rows * rowHeight) + (max(0, rows - 1) * rowSpacing) + 10
     }
 
     var chatTimeline: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 14) {
-                    if !self.localErrorMessage.isEmpty {
-                        self.chatInfoBanner(text: self.localErrorMessage, tone: .error)
-                    }
-
-                    if !self.localStatusMessage.isEmpty {
-                        self.chatInfoBanner(text: self.localStatusMessage, tone: .status)
-                    }
-
                     if !self.isSSHTransport,
                        !self.appState.appServerClient.pendingRequests.isEmpty {
                         Button {
@@ -138,7 +137,7 @@ extension SessionWorkbenchView {
                         .id("chat-bottom")
                 }
                 .padding(.horizontal, 18)
-                .padding(.top, 16)
+                .padding(.top, self.floatingBannerTopInset)
                 .padding(.bottom, 18)
             }
             .background(Color.black)
@@ -153,6 +152,30 @@ extension SessionWorkbenchView {
                     self.scrollToBottomButton(proxy: proxy)
                         .padding(.bottom, 12)
                         .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
+            }
+            .overlay(alignment: .top) {
+                if self.floatingBannerCount > 0 {
+                    VStack(spacing: 8) {
+                        if !self.localErrorMessage.isEmpty {
+                            self.floatingChatInfoBanner(text: self.localErrorMessage, tone: .error)
+                        }
+
+                        if !self.localStatusMessage.isEmpty {
+                            self.floatingChatInfoBanner(text: self.localStatusMessage, tone: .status)
+                        }
+
+                        if let composerInfoMessage {
+                            self.floatingChatInfoBanner(
+                                text: composerInfoMessage.text,
+                                tone: composerInfoMessage.tone
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 10)
+                    .allowsHitTesting(false)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
             .animation(.easeOut(duration: 0.18), value: self.shouldShowScrollToBottomButton)
@@ -218,6 +241,43 @@ extension SessionWorkbenchView {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background(style.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    @ViewBuilder
+    func floatingChatInfoBanner(
+        text: String,
+        tone: InfoBannerTone
+    ) -> some View {
+        let style = self.infoBannerStyle(for: tone)
+
+        Label(text, systemImage: style.icon)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(style.foreground)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background {
+                self.glassCardBackground(
+                    cornerRadius: 14,
+                    tint: self.floatingBannerTint(for: tone)
+                )
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(self.glassStrokeColor.opacity(0.58), lineWidth: 0.9)
+            }
+            .shadow(color: .black.opacity(self.isDarkMode ? 0.28 : 0.16), radius: 12, x: 0, y: 4)
+    }
+
+    func floatingBannerTint(for tone: InfoBannerTone) -> Color {
+        switch tone {
+        case .status:
+            return self.glassWhiteTint(light: 0.18, dark: 0.12)
+        case .success:
+            return Color.green.opacity(self.isDarkMode ? 0.22 : 0.16)
+        case .error:
+            return Color.red.opacity(self.isDarkMode ? 0.22 : 0.16)
+        }
     }
 
     func infoBannerStyle(for tone: InfoBannerTone) -> (icon: String, foreground: Color, background: Color) {
