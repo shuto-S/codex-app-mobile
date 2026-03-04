@@ -67,13 +67,11 @@ extension SessionWorkbenchView {
 
     func refreshThreads(debounceNanoseconds: UInt64 = 0) {
         guard let selectedWorkspace else {
-            self.localErrorMessage = "Select a project first."
+            self.presentCriticalErrorDialog("Select a project first.")
             return
         }
 
         self.refreshThreadsTask?.cancel()
-        self.localErrorMessage = ""
-        self.localStatusMessage = ""
         self.isRefreshingThreads = true
 
         let workspaceSnapshot = selectedWorkspace
@@ -153,7 +151,7 @@ extension SessionWorkbenchView {
                 return
             } catch {
                 if !Task.isCancelled {
-                    self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+                    self.presentCriticalErrorDialog(self.appState.appServerClient.userFacingMessage(for: error))
                 }
             }
         }
@@ -166,12 +164,10 @@ extension SessionWorkbenchView {
         guard !trimmedPrompt.isEmpty else { return }
         let promptForRequest = self.composePromptForRequest(from: trimmedPrompt)
         guard let selectedWorkspace else {
-            self.localErrorMessage = "Select a project first."
+            self.presentCriticalErrorDialog("Select a project first.")
             return
         }
 
-        self.localErrorMessage = ""
-        self.localStatusMessage = ""
         self.scrollToBottomRequestCount += 1
 
         if self.isSSHTransport {
@@ -210,7 +206,7 @@ extension SessionWorkbenchView {
                 }
 
                 guard let threadID else {
-                    self.localErrorMessage = "Failed to resolve thread."
+                    self.presentCriticalErrorDialog("Failed to resolve thread.")
                     return
                 }
 
@@ -250,7 +246,7 @@ extension SessionWorkbenchView {
                         } else {
                             self.showComposerInfo(
                                 "Plan mode was not applied by the server. Prompt sent in default mode.",
-                                tone: .error,
+                                tone: .status,
                                 autoDismissAfter: 5.0
                             )
                         }
@@ -278,8 +274,7 @@ extension SessionWorkbenchView {
                 )
             } catch {
                 let message = self.appState.appServerClient.userFacingMessage(for: error)
-                self.localErrorMessage = message
-                self.showComposerInfo(message, tone: .error, autoDismissAfter: 4.0)
+                self.presentCriticalErrorDialog(message)
                 if self.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    self.selectedComposerTokenBadges.isEmpty {
                     self.prompt = originalPrompt
@@ -310,7 +305,7 @@ extension SessionWorkbenchView {
 
     func presentReviewModePicker() {
         guard self.isCommandPalettePresented else {
-            self.localErrorMessage = "Open commands and select /review again."
+            self.presentCriticalErrorDialog("Open commands and select /review again.")
             return
         }
         self.reviewModeSelection = .uncommittedChanges
@@ -376,8 +371,11 @@ extension SessionWorkbenchView {
             }
         }
 
-        self.resolvedPendingRequestAlertMessage = "Request \(resolved.requestIDKey) for thread \(resolved.threadID) was resolved by the server."
-        self.isResolvedPendingRequestAlertPresented = true
+        self.showComposerInfo(
+            "Request \(resolved.requestIDKey) for thread \(resolved.threadID) was resolved by the server.",
+            tone: .status,
+            autoDismissAfter: 4.0
+        )
     }
 
     func presentFirstPendingRequest() {
@@ -412,14 +410,14 @@ extension SessionWorkbenchView {
             do {
                 try await self.ensureAppServerReady(refreshCatalogs: true)
             } catch {
-                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+                self.presentCriticalErrorDialog(self.appState.appServerClient.userFacingMessage(for: error))
             }
         }
     }
 
     func presentStatusPanel() {
         guard !self.isSSHTransport else {
-            self.localErrorMessage = "Slash commands are only available in App Server mode."
+            self.presentCriticalErrorDialog("Slash commands are only available in App Server mode.")
             return
         }
         self.dismissMCPStatusSheet()
@@ -435,7 +433,7 @@ extension SessionWorkbenchView {
 
     func presentMCPStatusSheet() {
         guard !self.isSSHTransport else {
-            self.localErrorMessage = "Slash commands are only available in App Server mode."
+            self.presentCriticalErrorDialog("Slash commands are only available in App Server mode.")
             return
         }
         self.dismissStatusPanel()
@@ -481,9 +479,20 @@ extension SessionWorkbenchView {
                 _ = try await self.appState.appServerClient.refreshRateLimits()
                 self.statusSnapshot = self.makeStatusSnapshot()
             } catch {
-                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+                self.presentCriticalErrorDialog(self.appState.appServerClient.userFacingMessage(for: error))
             }
         }
+    }
+
+    func presentCriticalErrorDialog(_ message: String) {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if self.isCriticalErrorDialogPresented,
+           self.criticalErrorDialogMessage == trimmed {
+            return
+        }
+        self.criticalErrorDialogMessage = trimmed
+        self.isCriticalErrorDialogPresented = true
     }
 
     func showComposerInfo(
@@ -495,8 +504,16 @@ extension SessionWorkbenchView {
         guard !trimmed.isEmpty else { return }
 
         self.composerInfoDismissTask?.cancel()
-        let message = ComposerInfoMessage(text: trimmed, tone: tone)
-        self.composerInfoMessage = message
+        let message: ComposerInfoMessage
+        if let current = self.composerInfoMessage,
+           current.text == trimmed,
+           current.tone == tone {
+            message = current
+        } else {
+            let newMessage = ComposerInfoMessage(text: trimmed, tone: tone)
+            self.composerInfoMessage = newMessage
+            message = newMessage
+        }
 
         let nanos = UInt64(max(0, seconds) * 1_000_000_000)
         self.composerInfoDismissTask = Task {
@@ -567,21 +584,18 @@ extension SessionWorkbenchView {
 
     func executeSlashCommand(_ command: AppServerSlashCommandDescriptor) {
         guard !self.isSSHTransport else {
-            self.localErrorMessage = "Slash commands are only available in App Server mode."
+            self.presentCriticalErrorDialog("Slash commands are only available in App Server mode.")
             return
         }
         guard !self.isSlashCommandDisabled(command) else {
             if command.kind == .forkThread,
                self.selectedThreadSummary?.ephemeral == true {
-                self.localErrorMessage = "Ephemeral threads cannot be forked."
+                self.presentCriticalErrorDialog("Ephemeral threads cannot be forked.")
             } else {
-                self.localErrorMessage = "Select a thread first."
+                self.presentCriticalErrorDialog("Select a thread first.")
             }
             return
         }
-
-        self.localErrorMessage = ""
-        self.localStatusMessage = ""
 
         switch command.kind {
         case .newThread:
@@ -623,12 +637,12 @@ extension SessionWorkbenchView {
 
     func forkCurrentThread() {
         guard let sourceThreadID = self.selectedThreadID else {
-            self.localErrorMessage = "Select a thread first."
+            self.presentCriticalErrorDialog("Select a thread first.")
             return
         }
         let sourceSummary = self.selectedThreadSummary
         if sourceSummary?.ephemeral == true {
-            self.localErrorMessage = "Ephemeral threads cannot be forked."
+            self.presentCriticalErrorDialog("Ephemeral threads cannot be forked.")
             return
         }
         let selectedWorkspace = self.selectedWorkspace
@@ -660,7 +674,7 @@ extension SessionWorkbenchView {
                 self.scheduleSessionRefresh([.threads])
                 self.showComposerInfo("Forked thread: \(forkedThreadID)")
             } catch {
-                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+                self.presentCriticalErrorDialog(self.appState.appServerClient.userFacingMessage(for: error))
             }
         }
     }
@@ -668,7 +682,7 @@ extension SessionWorkbenchView {
     func startReviewAgainstBaseBranch() {
         let trimmedBaseBranch = self.reviewBaseBranch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedBaseBranch.isEmpty else {
-            self.localErrorMessage = "Enter a base branch name."
+            self.presentCriticalErrorDialog("Enter a base branch name.")
             return
         }
         self.dismissCommandPalette()
@@ -685,7 +699,7 @@ extension SessionWorkbenchView {
         successMessage: String = "Started code review in a new thread."
     ) {
         guard let sourceThreadID = self.selectedThreadID else {
-            self.localErrorMessage = "Select a thread first."
+            self.presentCriticalErrorDialog("Select a thread first.")
             return
         }
         let sourceSummary = self.selectedThreadSummary
@@ -725,7 +739,7 @@ extension SessionWorkbenchView {
                 self.scheduleSessionRefresh([.threads])
                 self.showComposerInfo(successMessage)
             } catch {
-                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+                self.presentCriticalErrorDialog(self.appState.appServerClient.userFacingMessage(for: error))
             }
         }
     }
@@ -856,12 +870,10 @@ extension SessionWorkbenchView {
 
                 self.prompt = ""
                 self.selectedComposerTokenBadges = []
-                self.localStatusMessage = "Executed via codex exec over SSH."
+                self.showComposerInfo("Executed via codex exec over SSH.", tone: .status)
             } catch {
                 let message = self.userFacingSSHError(error)
-                self.localStatusMessage = ""
-                self.localErrorMessage = message
-                self.showComposerInfo(message, tone: .error, autoDismissAfter: 4.0)
+                self.presentCriticalErrorDialog(message)
                 self.isPromptFieldFocused = true
             }
         }
@@ -913,7 +925,7 @@ extension SessionWorkbenchView {
                     reasoningEffort: resolvedReasoning
                 )
             } catch {
-                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+                self.presentCriticalErrorDialog(self.appState.appServerClient.userFacingMessage(for: error))
             }
         }
     }
@@ -934,20 +946,19 @@ extension SessionWorkbenchView {
         Task {
             do {
                 try await self.appState.appServerClient.turnInterrupt(threadID: threadID, turnID: turnID)
-                self.localErrorMessage = "Canceled."
-                self.localStatusMessage = ""
+                self.showComposerInfo("Canceled.", tone: .status)
                 self.scrollToBottomRequestCount += 1
             } catch {
                 self.suppressResolvedPendingRequestAlertThreadID = nil
                 self.suppressResolvedPendingRequestAlertExpiresAt = .distantPast
-                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+                self.presentCriticalErrorDialog(self.appState.appServerClient.userFacingMessage(for: error))
             }
         }
     }
 
     func archiveThread(summary: CodexThreadSummary, archived: Bool) {
         if summary.ephemeral {
-            self.localErrorMessage = "Ephemeral threads cannot be archived."
+            self.presentCriticalErrorDialog("Ephemeral threads cannot be archived.")
             return
         }
         if self.isSSHTransport {
@@ -971,7 +982,7 @@ extension SessionWorkbenchView {
                 try await self.appState.appServerClient.threadArchive(threadID: summary.threadID, archived: archived)
                 self.scheduleSessionRefresh([.threads])
             } catch {
-                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+                self.presentCriticalErrorDialog(self.appState.appServerClient.userFacingMessage(for: error))
             }
         }
     }

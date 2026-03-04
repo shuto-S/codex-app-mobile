@@ -412,11 +412,8 @@ extension SessionWorkbenchView {
     }
 
     func createNewThread() {
-        self.localErrorMessage = ""
-        self.localStatusMessage = ""
-
         guard let selectedWorkspace else {
-            self.localErrorMessage = "Select a project first."
+            self.presentCriticalErrorDialog("Select a project first.")
             return
         }
 
@@ -444,8 +441,7 @@ extension SessionWorkbenchView {
         }
 
         self.workspacePendingDeletion = nil
-        self.localErrorMessage = ""
-        self.localStatusMessage = "Project deleted."
+        self.showComposerInfo("Project deleted.", tone: .status)
     }
 
     func syncComposerControlsWithWorkspace() {
@@ -676,9 +672,6 @@ extension SessionWorkbenchView {
     }
 
     func connectHost() {
-        self.localErrorMessage = ""
-        self.localStatusMessage = ""
-
         if self.isSSHTransport {
             self.isRunningSSHAction = true
             let password = self.appState.remoteHostStore.password(for: self.host.id)
@@ -688,12 +681,10 @@ extension SessionWorkbenchView {
                 }
                 do {
                     let version = try await self.sshCodexExecService.checkCodexVersion(host: self.host, password: password)
-                    self.localStatusMessage = "SSH ready (\(version))."
+                    self.showComposerInfo("SSH ready (\(version)).", tone: .status)
                 } catch {
                     let message = self.userFacingSSHError(error)
-                    self.localStatusMessage = ""
-                    self.localErrorMessage = message
-                    self.showComposerInfo(message, tone: .error, autoDismissAfter: 4.0)
+                    self.presentCriticalErrorDialog(message)
                 }
             }
             return
@@ -703,9 +694,9 @@ extension SessionWorkbenchView {
             do {
                 try await self.appState.appServerClient.connect(to: self.host)
                 await self.appState.appServerClient.refreshCatalogs(primaryCWD: self.selectedWorkspace?.remotePath)
-                self.localStatusMessage = "Connected to app-server."
+                self.showComposerInfo("Connected to app-server.", tone: .status)
             } catch {
-                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+                self.presentCriticalErrorDialog(self.appState.appServerClient.userFacingMessage(for: error))
             }
         }
     }

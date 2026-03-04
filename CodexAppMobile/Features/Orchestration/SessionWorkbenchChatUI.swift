@@ -81,8 +81,6 @@ extension SessionWorkbenchView {
     var floatingBannerCount: Int {
         var count = 0
         if self.shouldShowPendingApprovalsBanner { count += 1 }
-        if !self.localErrorMessage.isEmpty { count += 1 }
-        if !self.localStatusMessage.isEmpty { count += 1 }
         if self.composerInfoMessage != nil { count += 1 }
         return count
     }
@@ -176,16 +174,6 @@ extension SessionWorkbenchView {
                                 )
                             }
                             .buttonStyle(.plain)
-                        }
-
-                        if !self.localErrorMessage.isEmpty {
-                            self.floatingChatInfoBanner(text: self.localErrorMessage, tone: .error)
-                                .allowsHitTesting(false)
-                        }
-
-                        if !self.localStatusMessage.isEmpty {
-                            self.floatingChatInfoBanner(text: self.localStatusMessage, tone: .status)
-                                .allowsHitTesting(false)
                         }
 
                         if let composerInfoMessage {

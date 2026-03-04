@@ -79,8 +79,6 @@ struct SessionWorkbenchView: View {
     @State var selectedWorkspaceID: UUID?
     @State var selectedThreadID: String?
     @State var prompt = ""
-    @State var localErrorMessage = ""
-    @State var localStatusMessage = ""
     @State var isRefreshingThreads = false
     @State var isRunningSSHAction = false
     @State var isPresentingProjectEditor = false
@@ -105,8 +103,8 @@ struct SessionWorkbenchView: View {
     @State var reviewBaseBranch = ""
     @State var composerCollaborationModeID = ""
     @State var shouldPresentNextUserInputPanelAfterPlan = false
-    @State var isResolvedPendingRequestAlertPresented = false
-    @State var resolvedPendingRequestAlertMessage = ""
+    @State var isCriticalErrorDialogPresented = false
+    @State var criticalErrorDialogMessage = ""
     @State var suppressResolvedPendingRequestAlertThreadID: String?
     @State var suppressResolvedPendingRequestAlertExpiresAt = Date.distantPast
     @State var pendingPlanUserInputThreadID: String?
@@ -744,10 +742,10 @@ struct SessionWorkbenchView: View {
         } message: { workspace in
             Text("Delete \"\(workspace.displayName)\"? This cannot be undone.")
         }
-        .alert("Approval Request Resolved", isPresented: self.$isResolvedPendingRequestAlertPresented) {
+        .alert("Error", isPresented: self.$isCriticalErrorDialogPresented) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(self.resolvedPendingRequestAlertMessage)
+            Text(self.criticalErrorDialogMessage)
         }
         .sheet(isPresented: self.$isCommandPalettePresented, onDismiss: {
             self.dismissCommandPalette()
