@@ -734,12 +734,15 @@ extension SessionWorkbenchView {
                             .padding(.horizontal, 16)
                     } else {
                         ScrollView {
-                            LazyVStack(spacing: 12) {
+                            LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
                                 ForEach(snapshot.files) { file in
-                                    self.gitDiffFileCard(file)
+                                    Section {
+                                        self.gitDiffFileSectionBody(file)
+                                    } header: {
+                                        self.gitDiffFileSectionHeader(file)
+                                    }
                                 }
                             }
-                            .padding(.horizontal, 12)
                             .padding(.vertical, 12)
                         }
                     }
@@ -788,21 +791,9 @@ extension SessionWorkbenchView {
 
     func gitDiffSummaryHeader(_ summary: GitDiffSummary) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let additions = summary.additions,
-               let deletions = summary.deletions {
-                HStack(spacing: 8) {
-                    Text("+\(self.groupedTokenCount(additions))")
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(Color.green.opacity(0.98))
-                    Text("-\(self.groupedTokenCount(deletions))")
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(Color.red.opacity(0.98))
-                }
-            } else {
-                Text("\(summary.changedFiles) files changed")
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(Color.white.opacity(0.94))
-            }
+            Text("\(summary.changedFiles) files changed")
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(Color.white.opacity(0.94))
 
             if summary.untrackedFiles > 0 {
                 Text("\(summary.untrackedFiles) untracked file\(summary.untrackedFiles == 1 ? "" : "s")")
@@ -821,39 +812,54 @@ extension SessionWorkbenchView {
         }
     }
 
-    func gitDiffFileCard(_ file: GitDiffFile) -> some View {
+    func gitDiffFileSectionHeader(_ file: GitDiffFile) -> some View {
         let totals = self.gitDiffFileLineTotals(file)
         let isExpanded = self.gitDiffExpandedFileIDs.contains(file.id)
-        return VStack(alignment: .leading, spacing: 10) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    self.toggleGitDiffFileExpansion(file.id)
-                }
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.white.opacity(0.78))
-
-                    Text(file.displayPath)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.white.opacity(0.94))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    Text("+\(self.groupedTokenCount(totals.additions))")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.green.opacity(0.98))
-
-                    Text("-\(self.groupedTokenCount(totals.deletions))")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.red.opacity(0.98))
-                }
+        return Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                self.toggleGitDiffFileExpansion(file.id)
             }
-            .buttonStyle(.plain)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.78))
 
-            if isExpanded {
+                Text(file.displayPath)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.94))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("+\(self.groupedTokenCount(totals.additions))")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.green.opacity(0.98))
+
+                Text("-\(self.groupedTokenCount(totals.deletions))")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.red.opacity(0.98))
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.10), lineWidth: 0.8)
+        )
+        .padding(.horizontal, 12)
+        .background(Color.black.opacity(0.98))
+    }
+
+    @ViewBuilder
+    func gitDiffFileSectionBody(_ file: GitDiffFile) -> some View {
+        if self.gitDiffExpandedFileIDs.contains(file.id) {
+            VStack(alignment: .leading, spacing: 10) {
                 ForEach(file.hunks) { hunk in
                     VStack(alignment: .leading, spacing: 0) {
                         Text(hunk.header)
@@ -880,17 +886,10 @@ extension SessionWorkbenchView {
                         .foregroundStyle(Color.white.opacity(0.62))
                 }
             }
+            .padding(.horizontal, 12)
+            .padding(.top, 2)
+            .padding(.bottom, 4)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(0.06))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color.white.opacity(0.10), lineWidth: 0.8)
-        )
     }
 
     func gitDiffFileLineTotals(_ file: GitDiffFile) -> (additions: Int, deletions: Int) {
