@@ -282,6 +282,11 @@ extension SessionWorkbenchView {
         let style = self.infoBannerStyle(for: tone)
 
         HStack(alignment: .center, spacing: 10) {
+            Label(text, systemImage: style.icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(style.foreground)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
             if let dismissAction {
                 Button(action: dismissAction) {
                     Image(systemName: "xmark")
@@ -291,11 +296,6 @@ extension SessionWorkbenchView {
                 }
                 .buttonStyle(.plain)
             }
-
-            Label(text, systemImage: style.icon)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(style.foreground)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
