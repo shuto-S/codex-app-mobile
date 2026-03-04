@@ -13,6 +13,7 @@ extension SessionWorkbenchView {
                 self.isPromptFieldFocused = false
                 self.isCommandPalettePresented = false
                 self.isStatusPanelPresented = false
+                self.isMCPStatusSheetPresented = false
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
                     self.isMenuOpen.toggle()
                 }
@@ -79,10 +80,15 @@ extension SessionWorkbenchView {
 
     var floatingBannerCount: Int {
         var count = 0
+        if self.shouldShowPendingApprovalsBanner { count += 1 }
         if !self.localErrorMessage.isEmpty { count += 1 }
         if !self.localStatusMessage.isEmpty { count += 1 }
         if self.composerInfoMessage != nil { count += 1 }
         return count
+    }
+
+    var shouldShowPendingApprovalsBanner: Bool {
+        !self.isSSHTransport && !self.appState.appServerClient.pendingRequests.isEmpty
     }
 
     var floatingBannerTopInset: CGFloat {
@@ -98,25 +104,6 @@ extension SessionWorkbenchView {
             let composerBottomInset = max(18, self.effectiveChatComposerOverlayHeight + 18)
             ScrollView {
                 VStack(spacing: 14) {
-                    if !self.isSSHTransport,
-                       !self.appState.appServerClient.pendingRequests.isEmpty {
-                        Button {
-                            self.presentFirstPendingRequest()
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "clock.badge.exclamationmark")
-                                Text("\(self.appState.appServerClient.pendingRequests.count) approvals pending")
-                                    .font(.subheadline.weight(.semibold))
-                                Spacer()
-                            }
-                            .foregroundStyle(Color.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .background(Color.orange.opacity(0.18), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                    }
-
                     if self.workspaces.isEmpty {
                         self.chatCreateProjectCallToAction
                     } else if self.selectedWorkspace == nil {
@@ -170,12 +157,35 @@ extension SessionWorkbenchView {
             .overlay(alignment: .top) {
                 if self.floatingBannerCount > 0 {
                     VStack(spacing: 8) {
+                        if self.shouldShowPendingApprovalsBanner {
+                            Button {
+                                self.presentFirstPendingRequest()
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "clock.badge.exclamationmark")
+                                    Text("\(self.appState.appServerClient.pendingRequests.count) approvals pending")
+                                        .font(.subheadline.weight(.semibold))
+                                    Spacer()
+                                }
+                                .foregroundStyle(Color.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                                .background(
+                                    Color.orange.opacity(0.18),
+                                    in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+
                         if !self.localErrorMessage.isEmpty {
                             self.floatingChatInfoBanner(text: self.localErrorMessage, tone: .error)
+                                .allowsHitTesting(false)
                         }
 
                         if !self.localStatusMessage.isEmpty {
                             self.floatingChatInfoBanner(text: self.localStatusMessage, tone: .status)
+                                .allowsHitTesting(false)
                         }
 
                         if let composerInfoMessage {
@@ -183,11 +193,11 @@ extension SessionWorkbenchView {
                                 text: composerInfoMessage.text,
                                 tone: composerInfoMessage.tone
                             )
+                            .allowsHitTesting(false)
                         }
                     }
                     .padding(.horizontal, 14)
                     .padding(.top, 10)
-                    .allowsHitTesting(false)
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }

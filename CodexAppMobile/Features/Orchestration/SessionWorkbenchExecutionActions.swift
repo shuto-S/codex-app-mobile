@@ -297,8 +297,8 @@ extension SessionWorkbenchView {
             return
         }
         self.dismissStatusPanel()
+        self.dismissMCPStatusSheet()
         self.dismissReviewModePicker()
-        self.dismissPendingUserInputPanel()
         self.isCommandPalettePresented = true
         self.refreshCommandPalette()
     }
@@ -306,7 +306,6 @@ extension SessionWorkbenchView {
     func dismissCommandPalette() {
         self.isCommandPalettePresented = false
         self.dismissReviewModePicker()
-        self.dismissPendingUserInputPanel()
     }
 
     func presentReviewModePicker() {
@@ -314,7 +313,6 @@ extension SessionWorkbenchView {
             self.localErrorMessage = "Open commands and select /review again."
             return
         }
-        self.dismissPendingUserInputPanel()
         self.reviewModeSelection = .uncommittedChanges
         self.reviewBaseBranch = ""
         self.isReviewModePickerPresented = true
@@ -328,34 +326,22 @@ extension SessionWorkbenchView {
     }
 
     func presentPendingUserInputPanel(_ request: AppServerPendingRequest) {
-        guard case .userInput(let questions) = request.kind else {
+        guard case .userInput = request.kind else {
             return
         }
         self.dismissStatusPanel()
+        self.dismissMCPStatusSheet()
         self.dismissReviewModePicker()
-        self.pendingUserInputRequest = request
-        self.pendingUserInputSubmitError = ""
-        self.isSubmittingPendingUserInput = false
-        self.pendingUserInputAnswers = Dictionary(uniqueKeysWithValues: questions.map { question in
-            let defaultAnswer = question.options.first?.label ?? ""
-            return (question.id, defaultAnswer)
-        })
-        self.isCommandPalettePresented = true
-    }
-
-    func dismissPendingUserInputPanel() {
-        self.pendingUserInputRequest = nil
-        self.pendingUserInputAnswers = [:]
-        self.pendingUserInputSubmitError = ""
-        self.isSubmittingPendingUserInput = false
+        self.dismissCommandPalette()
+        self.activePendingRequest = request
     }
 
     func handlePendingRequestsUpdated() {
         let pendingRequests = self.appState.appServerClient.pendingRequests
 
-        if let activeRequest = self.pendingUserInputRequest,
+        if let activeRequest = self.activePendingRequest,
            pendingRequests.contains(where: { $0.id == activeRequest.id }) == false {
-            self.dismissPendingUserInputPanel()
+            self.activePendingRequest = nil
         }
 
         if self.shouldPresentNextUserInputPanelAfterPlan,
@@ -372,13 +358,8 @@ extension SessionWorkbenchView {
             return
         }
 
-        let matchedUserInput = self.pendingUserInputRequest?.requestIDKey == resolved.requestIDKey
         let matchedSheetRequest = self.activePendingRequest?.requestIDKey == resolved.requestIDKey
 
-        if matchedUserInput {
-            self.dismissPendingUserInputPanel()
-            self.dismissCommandPalette()
-        }
         if matchedSheetRequest {
             self.activePendingRequest = nil
         }
@@ -413,52 +394,10 @@ extension SessionWorkbenchView {
         self.activePendingRequest = self.appState.appServerClient.pendingRequests.first
     }
 
-    func submitPendingUserInputAnswers() {
-        guard let request = self.pendingUserInputRequest,
-              case .userInput(let questions) = request.kind else {
-            return
-        }
-
-        self.pendingUserInputSubmitError = ""
-        self.isSubmittingPendingUserInput = true
-
-        var answers: [String: [String]] = [:]
-        for question in questions {
-            let raw = self.pendingUserInputAnswers[question.id, default: ""]
-            let values = raw
-                .split(separator: ",")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-
-            if values.isEmpty,
-               let firstOption = question.options.first?.label {
-                answers[question.id] = [firstOption]
-            } else {
-                answers[question.id] = values
-            }
-        }
-
-        Task {
-            defer {
-                self.isSubmittingPendingUserInput = false
-            }
-            do {
-                try await self.appState.appServerClient.respondUserInput(request: request, answers: answers)
-                self.dismissCommandPalette()
-                self.showComposerInfo("Submitted input.", tone: .status)
-            } catch {
-                self.pendingUserInputSubmitError = self.appState.appServerClient.userFacingMessage(for: error)
-            }
-        }
-    }
-
     func handleCommandPaletteBackAction() {
         if self.isReviewModePickerPresented {
             self.dismissReviewModePicker()
             return
-        }
-        if self.pendingUserInputRequest != nil {
-            self.dismissPendingUserInputPanel()
         }
     }
 
@@ -483,6 +422,7 @@ extension SessionWorkbenchView {
             self.localErrorMessage = "Slash commands are only available in App Server mode."
             return
         }
+        self.dismissMCPStatusSheet()
         self.dismissCommandPalette()
         self.isStatusPanelPresented = true
         self.statusSnapshot = self.makeStatusSnapshot()
@@ -491,6 +431,39 @@ extension SessionWorkbenchView {
 
     func dismissStatusPanel() {
         self.isStatusPanelPresented = false
+    }
+
+    func presentMCPStatusSheet() {
+        guard !self.isSSHTransport else {
+            self.localErrorMessage = "Slash commands are only available in App Server mode."
+            return
+        }
+        self.dismissStatusPanel()
+        self.dismissCommandPalette()
+        self.isMCPStatusSheetPresented = true
+        self.refreshMCPStatusSheet()
+    }
+
+    func dismissMCPStatusSheet() {
+        self.isMCPStatusSheetPresented = false
+    }
+
+    func refreshMCPStatusSheet() {
+        guard !self.isSSHTransport else { return }
+        self.isMCPStatusRefreshing = true
+        self.mcpStatusHeadline = "Refreshing MCP server status..."
+
+        Task {
+            defer {
+                self.isMCPStatusRefreshing = false
+            }
+            do {
+                try await self.ensureAppServerReady(refreshCatalogs: false)
+                self.mcpStatusHeadline = try await self.appState.appServerClient.mcpServerStatusHeadline()
+            } catch {
+                self.mcpStatusHeadline = self.appState.appServerClient.userFacingMessage(for: error)
+            }
+        }
     }
 
     func refreshStatusPanel() {
@@ -762,15 +735,7 @@ extension SessionWorkbenchView {
     }
 
     func showMCPStatusSlashCommand() {
-        Task {
-            do {
-                try await self.ensureAppServerReady(refreshCatalogs: false)
-                let headline = try await self.appState.appServerClient.mcpServerStatusHeadline()
-                self.localStatusMessage = headline
-            } catch {
-                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
-            }
-        }
+        self.presentMCPStatusSheet()
     }
 
     func startPlanModeSlashCommand() {

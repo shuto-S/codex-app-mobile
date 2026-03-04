@@ -134,8 +134,6 @@ extension SessionWorkbenchView {
 
             if self.isReviewModePickerPresented {
                 self.reviewModePickerPanelBody
-            } else if self.pendingUserInputRequest != nil {
-                self.pendingUserInputPanelBody
             } else if self.commandPaletteRows.isEmpty, !self.isCommandPaletteRefreshing {
                 Text("No commands or skills available")
                     .font(.subheadline)
@@ -196,6 +194,42 @@ extension SessionWorkbenchView {
                 .ignoresSafeArea()
         )
         .presentationDetents([.medium])
+        .presentationContentInteraction(.scrolls)
+        .presentationDragIndicator(.visible)
+    }
+
+    var statusSheet: some View {
+        VStack(spacing: 0) {
+            self.statusPanel
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(
+            Color.black
+                .ignoresSafeArea()
+        )
+        .presentationDetents([.medium, .large])
+        .presentationContentInteraction(.scrolls)
+        .presentationDragIndicator(.visible)
+    }
+
+    var mcpStatusSheet: some View {
+        VStack(spacing: 0) {
+            self.mcpStatusPanel
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(
+            Color.black
+                .ignoresSafeArea()
+        )
+        .presentationDetents([.medium, .large])
         .presentationContentInteraction(.scrolls)
         .presentationDragIndicator(.visible)
     }
@@ -287,114 +321,7 @@ extension SessionWorkbenchView {
         if self.isReviewModePickerPresented {
             return "Code Review"
         }
-        if self.pendingUserInputRequest != nil {
-            return "Input Required"
-        }
         return "Commands"
-    }
-
-    var pendingUserInputPanelBody: some View {
-        ScrollView {
-            VStack(spacing: 10) {
-                if self.pendingUserInputQuestions.isEmpty {
-                    Text("No input questions available.")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.white.opacity(0.72))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(Color.white.opacity(0.06))
-                        )
-                } else {
-                    ForEach(self.pendingUserInputQuestions) { question in
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text(question.prompt)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(Color.white.opacity(0.82))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-
-                            ForEach(question.options.indices, id: \.self) { index in
-                                let option = question.options[index]
-                                self.reviewModeOptionButton(
-                                    title: option.label,
-                                    subtitle: option.description.isEmpty ? "Select this answer." : option.description,
-                                    systemImage: "questionmark.circle",
-                                    isSelected: self.pendingUserInputAnswers[question.id] == option.label
-                                ) {
-                                    self.pendingUserInputAnswers[question.id] = option.label
-                                }
-                            }
-
-                            TextField("Answer", text: Binding(
-                                get: { self.pendingUserInputAnswers[question.id] ?? "" },
-                                set: { self.pendingUserInputAnswers[question.id] = $0 }
-                            ))
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled(true)
-                            .foregroundStyle(Color.white)
-                            .tint(Color.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color.white.opacity(0.07))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(Color.white.opacity(0.14), lineWidth: 0.8)
-                            )
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(Color.white.opacity(0.06))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(Color.white.opacity(0.10), lineWidth: 0.8)
-                        )
-                    }
-
-                    if !self.pendingUserInputSubmitError.isEmpty {
-                        Text(self.pendingUserInputSubmitError)
-                            .font(.caption)
-                            .foregroundStyle(Color.red.opacity(0.9))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color.red.opacity(0.14))
-                            )
-                    }
-
-                    Button(self.isSubmittingPendingUserInput ? "Submitting..." : "Submit") {
-                        self.submitPendingUserInputAnswers()
-                    }
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.black)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.white, in: Capsule())
-                    .buttonStyle(.plain)
-                    .disabled(self.pendingUserInputRequest == nil || self.isSubmittingPendingUserInput)
-                    .opacity(self.pendingUserInputRequest == nil || self.isSubmittingPendingUserInput ? 0.45 : 1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 2)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 12)
-        }
-        .frame(
-            maxWidth: .infinity,
-            maxHeight: self.commandPalettePanelMaxHeight,
-            alignment: .top
-        )
     }
 
     func reviewModeOptionButton(
@@ -546,6 +473,53 @@ extension SessionWorkbenchView {
                     .padding(.bottom, 12)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            self.glassCardBackground(cornerRadius: 20, tint: self.glassWhiteTint(light: 0.16, dark: 0.10))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(self.glassStrokeColor.opacity(0.5), lineWidth: 0.9)
+        }
+    }
+
+    var mcpStatusPanel: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                Text("MCP Status")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(Color.white)
+
+                Spacer(minLength: 8)
+
+                if self.isMCPStatusRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(Color.white.opacity(0.9))
+                }
+
+                Button("Refresh") {
+                    self.refreshMCPStatusSheet()
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.white.opacity(0.92))
+
+                Button("Close") {
+                    self.dismissMCPStatusSheet()
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.white.opacity(0.92))
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+
+            Text(self.mcpStatusHeadline)
+                .font(.subheadline)
+                .foregroundStyle(Color.white.opacity(0.88))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
@@ -748,11 +722,6 @@ extension SessionWorkbenchView {
         let isPrimaryActionEnabled = isInterruptButton ? self.canInterruptActiveTurn : self.canSendPrompt
 
         return VStack(alignment: .leading, spacing: 8) {
-            if self.isStatusPanelPresented {
-                self.statusPanel
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
-
             self.composerControlBar
 
             if let descriptor = self.selectedComposerModelDescriptor {

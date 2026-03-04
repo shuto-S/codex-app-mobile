@@ -104,10 +104,6 @@ struct SessionWorkbenchView: View {
     @State var reviewModeSelection: ReviewModeSelection = .uncommittedChanges
     @State var reviewBaseBranch = ""
     @State var composerCollaborationModeID = ""
-    @State var pendingUserInputRequest: AppServerPendingRequest?
-    @State var pendingUserInputAnswers: [String: String] = [:]
-    @State var pendingUserInputSubmitError = ""
-    @State var isSubmittingPendingUserInput = false
     @State var shouldPresentNextUserInputPanelAfterPlan = false
     @State var isResolvedPendingRequestAlertPresented = false
     @State var resolvedPendingRequestAlertMessage = ""
@@ -118,6 +114,9 @@ struct SessionWorkbenchView: View {
     @State var isStatusPanelPresented = false
     @State var isStatusRefreshing = false
     @State var statusSnapshot: StatusPanelSnapshot?
+    @State var isMCPStatusSheetPresented = false
+    @State var isMCPStatusRefreshing = false
+    @State var mcpStatusHeadline = "No MCP status available"
     @State var composerInfoMessage: ComposerInfoMessage?
     @State var composerInfoDismissTask: Task<Void, Never>?
     @State var selectedComposerTokenBadges: [ComposerTokenBadge] = []
@@ -438,15 +437,7 @@ struct SessionWorkbenchView: View {
     }
 
     var isCommandPaletteSubpanelPresented: Bool {
-        self.isReviewModePickerPresented || self.pendingUserInputRequest != nil
-    }
-
-    var pendingUserInputQuestions: [AppServerUserInputQuestion] {
-        guard let request = self.pendingUserInputRequest,
-              case .userInput(let questions) = request.kind else {
-            return []
-        }
-        return questions
+        self.isReviewModePickerPresented
     }
 
     var isCommandPaletteAvailable: Bool {
@@ -763,6 +754,16 @@ struct SessionWorkbenchView: View {
         }) {
             self.commandPaletteSheet
         }
+        .sheet(isPresented: self.$isStatusPanelPresented, onDismiss: {
+            self.dismissStatusPanel()
+        }) {
+            self.statusSheet
+        }
+        .sheet(isPresented: self.$isMCPStatusSheetPresented, onDismiss: {
+            self.dismissMCPStatusSheet()
+        }) {
+            self.mcpStatusSheet
+        }
         .sheet(isPresented: self.$isPresentingProjectEditor) {
             ProjectEditorView(
                 workspace: self.editingWorkspace,
@@ -775,6 +776,8 @@ struct SessionWorkbenchView: View {
         .sheet(item: self.$activePendingRequest) { request in
             PendingRequestSheet(request: request)
                 .environmentObject(self.appState)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .onDisappear {
             self.refreshCoordinatorTask?.cancel()
