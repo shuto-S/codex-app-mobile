@@ -801,6 +801,7 @@ extension SessionWorkbenchView {
                 } else {
                     self.showComposerInfo(self.gitOperationFeedback, tone: .success)
                 }
+                self.activeGitOperationSheet = nil
                 gitUILogger.debug(
                     "Git action[\(operationID, privacy: .public)] completed action=\(selectedAction.rawValue, privacy: .public) totalDurationMs=\(elapsedMilliseconds(since: operationStartedAt), privacy: .public)"
                 )
