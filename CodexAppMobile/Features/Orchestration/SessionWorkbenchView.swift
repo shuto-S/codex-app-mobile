@@ -69,6 +69,22 @@ struct SessionWorkbenchView: View {
         let contentHeight: CGFloat
     }
 
+    struct GitDiffNavigationContext: Identifiable, Hashable {
+        let id = UUID()
+        let workspaceTitle: String
+    }
+
+    struct GitOperationSheetContext: Identifiable, Equatable {
+        let id = UUID()
+    }
+
+    enum GitDiffLoadState: Equatable {
+        case idle
+        case loading
+        case loaded(GitDiffSnapshot)
+        case failed(String)
+    }
+
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) var dismiss
     @Environment(\.colorScheme) var colorScheme
@@ -81,6 +97,7 @@ struct SessionWorkbenchView: View {
     @State var prompt = ""
     @State var isRefreshingThreads = false
     @State var isRunningSSHAction = false
+    @State var isRunningGitAction = false
     @State var isPresentingProjectEditor = false
     @State var editingWorkspace: ProjectWorkspace?
     @State var workspacePendingDeletion: ProjectWorkspace?
@@ -125,10 +142,22 @@ struct SessionWorkbenchView: View {
     @State var scrollToBottomRequestCount = 0
     @State var shouldForceScrollToBottomOnNextTranscriptUpdate = false
     @State var chatComposerOverlayHeight: CGFloat = 0
+    @State var gitDiffNavigationContext: GitDiffNavigationContext?
+    @State var gitDiffLoadState: GitDiffLoadState = .idle
+    @State var gitDiffLoadRequestID = 0
+    @State var gitDiffLoadTask: Task<Void, Never>?
+    @State var gitDiffExpandedFileIDs: Set<String> = []
+    @State var gitDiffShouldExpandAllOnNextLoad = false
+    @State var activeGitOperationSheet: GitOperationSheetContext?
+    @State var gitModalActionSelection: GitModalAction = .commit
+    @State var gitCommitMessageDraft = ""
+    @State var gitOperationFeedback = ""
+    @State var gitOperationErrorMessage = ""
     @FocusState var isPromptFieldFocused: Bool
     @FocusState var isReviewBaseBranchFieldFocused: Bool
 
     let sshCodexExecService = SSHCodexExecService()
+    let sshGitService = SSHGitService()
 
     var isSSHTransport: Bool {
         self.host.preferredTransport == .ssh
@@ -211,6 +240,7 @@ struct SessionWorkbenchView: View {
     var canSendPrompt: Bool {
         !self.isPromptEmpty
             && !self.isRunningSSHAction
+            && !self.isRunningGitAction
             && self.selectedWorkspace != nil
     }
 
@@ -299,7 +329,7 @@ struct SessionWorkbenchView: View {
     }
 
     var isComposerInteractive: Bool {
-        !self.isRunningSSHAction && self.selectedWorkspace != nil
+        !self.isRunningSSHAction && !self.isRunningGitAction && self.selectedWorkspace != nil
     }
 
     var fallbackReasoningEffortOptions: [CodexReasoningEffortOption] {
@@ -796,6 +826,12 @@ struct SessionWorkbenchView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(item: self.$activeGitOperationSheet) { _ in
+            self.gitOperationSheet
+        }
+        .navigationDestination(item: self.$gitDiffNavigationContext) { _ in
+            self.gitDiffPage
+        }
         .onDisappear {
             self.refreshCoordinatorTask?.cancel()
             self.refreshCoordinatorTask = nil
@@ -804,6 +840,10 @@ struct SessionWorkbenchView: View {
             self.refreshThreadsTask = nil
             self.refreshCatalogsTask?.cancel()
             self.refreshCatalogsTask = nil
+            if self.gitDiffNavigationContext == nil {
+                self.gitDiffLoadTask?.cancel()
+                self.gitDiffLoadTask = nil
+            }
             self.clearComposerInfo()
         }
     }

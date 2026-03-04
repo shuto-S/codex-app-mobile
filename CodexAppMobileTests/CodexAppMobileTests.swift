@@ -1591,4 +1591,164 @@ final class CodexAppMobileTests: XCTestCase {
         )
         XCTAssertTrue(rows.isEmpty)
     }
+
+    func testSSHGitServiceParseNumstatComputesLineTotals() {
+        let numstat = """
+        10\t2\tSources/A.swift
+        3\t1\tSources/B.swift
+        """
+
+        let summary = SSHGitService.parseNumstatSummary(numstat)
+        XCTAssertEqual(summary.fileCount, 2)
+        XCTAssertEqual(summary.additions, 13)
+        XCTAssertEqual(summary.deletions, 3)
+    }
+
+    func testSSHGitServiceParseNumstatWithBinaryEntriesUsesFallback() {
+        let numstat = """
+        -\t-\tAssets/icon.png
+        4\t1\tSources/A.swift
+        """
+
+        let summary = SSHGitService.parseNumstatSummary(numstat)
+        XCTAssertEqual(summary.fileCount, 2)
+        XCTAssertNil(summary.additions)
+        XCTAssertNil(summary.deletions)
+    }
+
+    func testSSHGitServicePatchLineTotalsFallbackFromParsedPatch() throws {
+        let patch = """
+        diff --git a/Sources/A.swift b/Sources/A.swift
+        index aaaaaaa..bbbbbbb 100644
+        --- a/Sources/A.swift
+        +++ b/Sources/A.swift
+        @@ -1,2 +1,3 @@
+        -let old = 1
+        +let old = 2
+        +let added = 3
+         let keep = true
+        """
+
+        let files = try SSHGitService.parseDiffFiles(patch)
+        let totals = SSHGitService.patchLineTotals(from: files)
+
+        XCTAssertEqual(files.count, 1)
+        XCTAssertEqual(totals.additions, 2)
+        XCTAssertEqual(totals.deletions, 1)
+        XCTAssertTrue(totals.available)
+    }
+
+    func testSSHGitServicePatchLineTotalsUnavailableForBinaryOnlyDiff() throws {
+        let patch = """
+        diff --git a/Assets/icon.png b/Assets/icon.png
+        index 1234567..89abcde 100644
+        Binary files a/Assets/icon.png and b/Assets/icon.png differ
+        """
+
+        let files = try SSHGitService.parseDiffFiles(patch)
+        let totals = SSHGitService.patchLineTotals(from: files)
+
+        XCTAssertEqual(files.count, 1)
+        XCTAssertEqual(totals.additions, 0)
+        XCTAssertEqual(totals.deletions, 0)
+        XCTAssertFalse(totals.available)
+    }
+
+    func testSSHGitServiceParseWrappedCommandResultHandlesShellEchoNoise() throws {
+        let startMarker = "__CODEX_GIT_START__"
+        let endMarker = "__CODEX_GIT_END__"
+        let exitMarker = "__CODEX_GIT_EXIT__:"
+        let output = """
+        + printf '\(startMarker)\\n'; printf '\\n\(exitMarker)%s\\n' "$__codex_status"; printf '\(endMarker)\\n'
+        \(startMarker)
+        + git --no-pager diff --numstat --find-renames HEAD -- .
+        1\t0\tSources/A.swift
+        \(exitMarker)0
+        + printf '\(endMarker)\\n'
+        \(endMarker)
+        """
+
+        let parsed = try SSHGitService.parseWrappedCommandResult(
+            output,
+            startMarker: startMarker,
+            endMarker: endMarker,
+            exitMarker: exitMarker
+        )
+
+        XCTAssertEqual(parsed.exitCode, 0)
+        XCTAssertTrue(parsed.output.contains("1\t0\tSources/A.swift"))
+    }
+
+    func testSSHGitServiceParseWrappedCommandResultRejectsPlaceholderExitMarker() {
+        let startMarker = "__CODEX_GIT_START__"
+        let endMarker = "__CODEX_GIT_END__"
+        let exitMarker = "__CODEX_GIT_EXIT__:"
+        let output = """
+        \(startMarker)
+        + printf '\\n\(exitMarker)%s\\n'
+        + printf '\(endMarker)\\n'
+        \(endMarker)
+        """
+
+        XCTAssertThrowsError(
+            try SSHGitService.parseWrappedCommandResult(
+                output,
+                startMarker: startMarker,
+                endMarker: endMarker,
+                exitMarker: exitMarker
+            )
+        )
+    }
+
+    func testSSHGitServiceDetectsUpstreamMissingErrors() {
+        XCTAssertTrue(
+            SSHGitService.isUpstreamNotSetError(
+                "fatal: The current branch feature has no upstream branch.\nUse --set-upstream."
+            )
+        )
+        XCTAssertTrue(
+            SSHGitService.isUpstreamNotSetError(
+                "To push the current branch and set the remote as upstream, use git push --set-upstream origin feature"
+            )
+        )
+        XCTAssertFalse(SSHGitService.isUpstreamNotSetError("fatal: repository not found"))
+    }
+
+    func testSSHGitServiceDetectsMissingHeadReferenceErrors() {
+        XCTAssertTrue(
+            SSHGitService.isMissingHeadReferenceError(
+                "fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree."
+            )
+        )
+        XCTAssertTrue(
+            SSHGitService.isMissingHeadReferenceError(
+                "fatal: bad revision 'HEAD'"
+            )
+        )
+        XCTAssertFalse(
+            SSHGitService.isMissingHeadReferenceError(
+                "fatal: not a git repository (or any of the parent directories): .git"
+            )
+        )
+    }
+
+    func testGitDiffSummaryHasLineTotalsOnlyWhenCountsExist() {
+        let withTotals = GitDiffSummary(
+            branchName: "main",
+            changedFiles: 3,
+            untrackedFiles: 0,
+            additions: 10,
+            deletions: 4
+        )
+        XCTAssertTrue(withTotals.hasLineTotals)
+
+        let withoutTotals = GitDiffSummary(
+            branchName: "feature/test",
+            changedFiles: 3,
+            untrackedFiles: 1,
+            additions: nil,
+            deletions: nil
+        )
+        XCTAssertFalse(withoutTotals.hasLineTotals)
+    }
 }
