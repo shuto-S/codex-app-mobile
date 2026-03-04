@@ -1654,6 +1654,41 @@ final class CodexAppMobileTests: XCTestCase {
         XCTAssertFalse(totals.available)
     }
 
+    func testSSHGitServiceParseDiffFilesKeepsSpaceSeparatedPaths() throws {
+        let patch = """
+        diff --git a/dir one/file a.txt b/dir one/file a.txt
+        index 7898192..422c2b7 100644
+        --- a/dir one/file a.txt
+        +++ b/dir one/file a.txt
+        @@ -1 +1,2 @@
+         a
+        +b
+        """
+
+        let files = try SSHGitService.parseDiffFiles(patch)
+
+        XCTAssertEqual(files.count, 1)
+        XCTAssertEqual(files[0].displayPath, "dir one/file a.txt")
+        XCTAssertEqual(files[0].oldPath, "dir one/file a.txt")
+        XCTAssertEqual(files[0].newPath, "dir one/file a.txt")
+        XCTAssertEqual(files[0].id, "dir one/file a.txt")
+    }
+
+    func testSSHGitServiceParseDiffFilesBinaryPathWithSpacesUsesHeaderPaths() throws {
+        let patch = """
+        diff --git a/dir one/icon test.png b/dir one/icon test.png
+        index 1234567..89abcde 100644
+        Binary files a/dir one/icon test.png and b/dir one/icon test.png differ
+        """
+
+        let files = try SSHGitService.parseDiffFiles(patch)
+
+        XCTAssertEqual(files.count, 1)
+        XCTAssertEqual(files[0].displayPath, "dir one/icon test.png")
+        XCTAssertEqual(files[0].id, "dir one/icon test.png")
+        XCTAssertTrue(files[0].isBinary)
+    }
+
     func testSSHGitServiceParseWrappedCommandResultHandlesShellEchoNoise() throws {
         let startMarker = "__CODEX_GIT_START__"
         let endMarker = "__CODEX_GIT_END__"
@@ -1712,6 +1747,25 @@ final class CodexAppMobileTests: XCTestCase {
             )
         )
         XCTAssertFalse(SSHGitService.isUpstreamNotSetError("fatal: repository not found"))
+    }
+
+    func testSSHGitServiceParseSuggestedUpstreamRemoteFromHint() {
+        let output = """
+        fatal: The current branch feature/test has no upstream branch.
+        To push the current branch and set the remote as upstream, use
+
+            git push --set-upstream github feature/test
+        """
+
+        XCTAssertEqual(SSHGitService.parseSuggestedUpstreamRemote(output), "github")
+    }
+
+    func testSSHGitServiceParseSuggestedUpstreamRemoteIgnoresIncompleteHint() {
+        XCTAssertNil(
+            SSHGitService.parseSuggestedUpstreamRemote(
+                "fatal: The current branch has no upstream branch.\nUse --set-upstream."
+            )
+        )
     }
 
     func testSSHGitServiceDetectsMissingHeadReferenceErrors() {

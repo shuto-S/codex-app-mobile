@@ -629,11 +629,18 @@ actor SSHGitService {
             throw SSHGitServiceError.invalidCurrentBranch
         }
 
+        let remote = try await self.resolveUpstreamRemote(
+            host: host,
+            password: password,
+            workspacePath: workspacePath,
+            branch: branch,
+            initialPushOutput: initial.output
+        )
         let fallback = try await self.runWorkspaceCommand(
             host: host,
             password: password,
             workspacePath: workspacePath,
-            command: "git push --set-upstream origin '\(Self.escapeForSingleQuote(branch))'",
+            command: "git push --set-upstream '\(Self.escapeForSingleQuote(remote))' '\(Self.escapeForSingleQuote(branch))'",
             timeoutSeconds: 120
         )
         guard fallback.exitCode == 0 else {
@@ -642,6 +649,93 @@ actor SSHGitService {
             )
         }
         return GitPushResult(usedUpstreamFallback: true, output: fallback.output)
+    }
+
+    private func resolveUpstreamRemote(
+        host: RemoteHost,
+        password: String,
+        workspacePath: String,
+        branch: String,
+        initialPushOutput: String
+    ) async throws -> String {
+        if let suggestedRemote = Self.parseSuggestedUpstreamRemote(initialPushOutput) {
+            return suggestedRemote
+        }
+
+        let branchPushRemoteKey = "branch.\(branch).pushRemote"
+        if let pushRemote = try await self.readGitConfigValue(
+            host: host,
+            password: password,
+            workspacePath: workspacePath,
+            key: branchPushRemoteKey
+        ) {
+            return pushRemote
+        }
+
+        let branchRemoteKey = "branch.\(branch).remote"
+        if let branchRemote = try await self.readGitConfigValue(
+            host: host,
+            password: password,
+            workspacePath: workspacePath,
+            key: branchRemoteKey
+        ) {
+            return branchRemote
+        }
+
+        if let defaultPushRemote = try await self.readGitConfigValue(
+            host: host,
+            password: password,
+            workspacePath: workspacePath,
+            key: "remote.pushDefault"
+        ) {
+            return defaultPushRemote
+        }
+
+        let remoteListResult = try await self.runWorkspaceCommand(
+            host: host,
+            password: password,
+            workspacePath: workspacePath,
+            command: "git remote",
+            timeoutSeconds: 20
+        )
+        guard remoteListResult.exitCode == 0 else {
+            throw SSHGitServiceError.commandFailed(
+                Self.bestFailureMessage(output: remoteListResult.output, exitCode: remoteListResult.exitCode)
+            )
+        }
+
+        let remotes = Self.parseRemoteNames(remoteListResult.output)
+        if let origin = remotes.first(where: { $0 == "origin" }) {
+            return origin
+        }
+        if let firstRemote = remotes.first {
+            return firstRemote
+        }
+
+        throw SSHGitServiceError.commandFailed(
+            "No Git remote is configured. Add a remote before pushing."
+        )
+    }
+
+    private func readGitConfigValue(
+        host: RemoteHost,
+        password: String,
+        workspacePath: String,
+        key: String
+    ) async throws -> String? {
+        let escapedKey = Self.escapeForSingleQuote(key)
+        let result = try await self.runWorkspaceCommand(
+            host: host,
+            password: password,
+            workspacePath: workspacePath,
+            command: "git config --get '\(escapedKey)'",
+            timeoutSeconds: 20
+        )
+        guard result.exitCode == 0 else {
+            return nil
+        }
+        return Self.firstNonEmptyOutputLine(result.output)
+            .flatMap { Self.normalizeRemoteNameCandidate($0) }
     }
 
     func generateCommitMessage(
@@ -1207,6 +1301,20 @@ actor SSHGitService {
             || lowered.contains("set-upstream")
     }
 
+    static func parseSuggestedUpstreamRemote(_ output: String) -> String? {
+        let normalized = output.replacingOccurrences(of: "\r\n", with: "\n")
+        let lines = normalized
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+
+        for line in lines {
+            if let remote = self.remoteToken(fromGitPushHintLine: line, marker: "--set-upstream") {
+                return remote
+            }
+        }
+        return nil
+    }
+
     static func isMissingHeadReferenceError(_ output: String) -> Bool {
         let lowered = output.lowercased()
         return lowered.contains("ambiguous argument 'head'")
@@ -1390,19 +1498,27 @@ actor SSHGitService {
         var isBinary = false
 
         init(diffHeader: String) {
-            let parts = diffHeader.split(separator: " ")
-            let oldPath = parts.count > 2 ? SSHGitService.normalizePatchPath(String(parts[2])) : nil
-            let newPath = parts.count > 3 ? SSHGitService.normalizePatchPath(String(parts[3])) : nil
+            let parsedPaths = SSHGitService.parseDiffHeaderPaths(diffHeader)
+            let oldPath = parsedPaths.oldPath
+            let newPath = parsedPaths.newPath
             self.oldPath = oldPath
             self.newPath = newPath
-            let identifierBase = newPath ?? oldPath ?? UUID().uuidString
-            self.id = identifierBase.replacingOccurrences(of: " ", with: "_")
+            self.id = SSHGitService.makeStableDiffFileID(
+                oldPath: oldPath,
+                newPath: newPath,
+                diffHeader: diffHeader
+            )
             self.metadata = [diffHeader]
         }
 
         func build() -> GitDiffFile {
             let resolvedOldPath = self.renameFrom ?? self.oldPath
             let resolvedNewPath = self.renameTo ?? self.newPath
+            let fileID = SSHGitService.makeStableDiffFileID(
+                oldPath: resolvedOldPath,
+                newPath: resolvedNewPath,
+                diffHeader: self.metadata.first ?? ""
+            )
             let displayPath: String
             if let resolvedOldPath,
                let resolvedNewPath,
@@ -1412,7 +1528,7 @@ actor SSHGitService {
                 displayPath = resolvedNewPath ?? resolvedOldPath ?? "(unknown path)"
             }
             return GitDiffFile(
-                id: self.id,
+                id: fileID,
                 displayPath: displayPath,
                 oldPath: resolvedOldPath,
                 newPath: resolvedNewPath,
@@ -1452,10 +1568,124 @@ actor SSHGitService {
         guard !trimmed.isEmpty, trimmed != "/dev/null" else {
             return nil
         }
+        if trimmed.hasPrefix("\""), trimmed.hasSuffix("\""), trimmed.count >= 2 {
+            let start = trimmed.index(after: trimmed.startIndex)
+            let end = trimmed.index(before: trimmed.endIndex)
+            let unquoted = String(trimmed[start..<end])
+            return self.normalizePatchPath(unquoted)
+        }
         if trimmed.hasPrefix("a/") || trimmed.hasPrefix("b/") {
             return String(trimmed.dropFirst(2))
         }
         return trimmed
+    }
+
+    private static func parseDiffHeaderPaths(_ diffHeader: String) -> (oldPath: String?, newPath: String?) {
+        let prefix = "diff --git "
+        guard diffHeader.hasPrefix(prefix) else {
+            return (nil, nil)
+        }
+
+        let body = String(diffHeader.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else {
+            return (nil, nil)
+        }
+
+        guard let separator = body.range(of: " b/", options: .backwards) else {
+            return (self.normalizePatchPath(body), nil)
+        }
+
+        let oldRaw = String(body[..<separator.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let newSuffix = String(body[separator.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let newRaw = "b/" + newSuffix
+        return (self.normalizePatchPath(oldRaw), self.normalizePatchPath(newRaw))
+    }
+
+    private static func makeStableDiffFileID(
+        oldPath: String?,
+        newPath: String?,
+        diffHeader: String
+    ) -> String {
+        let old = oldPath?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let new = newPath?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedHeader = diffHeader.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let base: String
+        if let old, let new, old != new {
+            base = "\(old)->\(new)"
+        } else if let new {
+            base = new
+        } else if let old {
+            base = old
+        } else if !normalizedHeader.isEmpty {
+            base = normalizedHeader
+        } else {
+            base = UUID().uuidString
+        }
+
+        return base
+            .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: "\n", with: " ")
+    }
+
+    private static func remoteToken(fromGitPushHintLine line: String, marker: String) -> String? {
+        guard let markerRange = line.range(of: marker) else {
+            return nil
+        }
+
+        let suffix = line[markerRange.upperBound...]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !suffix.isEmpty else {
+            return nil
+        }
+
+        guard let token = suffix.split(whereSeparator: \.isWhitespace).first else {
+            return nil
+        }
+        return self.normalizeRemoteNameCandidate(String(token))
+    }
+
+    private static func parseRemoteNames(_ output: String) -> [String] {
+        let candidates = output
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+            .compactMap { self.normalizeRemoteNameCandidate($0) }
+
+        var unique: [String] = []
+        var seen = Set<String>()
+        for remote in candidates where !seen.contains(remote) {
+            unique.append(remote)
+            seen.insert(remote)
+        }
+        return unique
+    }
+
+    private static func normalizeRemoteNameCandidate(_ raw: String) -> String? {
+        var candidate = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidate.isEmpty else {
+            return nil
+        }
+
+        if candidate.hasPrefix("\""), candidate.hasSuffix("\""), candidate.count >= 2 {
+            let start = candidate.index(after: candidate.startIndex)
+            let end = candidate.index(before: candidate.endIndex)
+            candidate = String(candidate[start..<end])
+        } else if candidate.hasPrefix("'"), candidate.hasSuffix("'"), candidate.count >= 2 {
+            let start = candidate.index(after: candidate.startIndex)
+            let end = candidate.index(before: candidate.endIndex)
+            candidate = String(candidate[start..<end])
+        }
+
+        while let last = candidate.last, ".,:;".contains(last) {
+            candidate.removeLast()
+        }
+
+        guard !candidate.isEmpty,
+              !candidate.contains(where: \.isWhitespace),
+              !candidate.hasPrefix("-") else {
+            return nil
+        }
+        return candidate
     }
 
     private static func bestFailureMessage(output: String, exitCode: Int) -> String {
