@@ -176,6 +176,12 @@ extension SessionWorkbenchView {
                                     }
                                     .buttonStyle(.plain)
                                     .contextMenu {
+                                        Button {
+                                            self.reloadThread(summary: summary)
+                                        } label: {
+                                            Label("Reload", systemImage: "arrow.clockwise")
+                                        }
+
                                         Button(role: .destructive) {
                                             self.archiveThread(summary: summary, archived: true)
                                         } label: {

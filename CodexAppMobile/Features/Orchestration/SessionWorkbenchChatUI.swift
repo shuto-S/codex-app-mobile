@@ -39,6 +39,12 @@ extension SessionWorkbenchView {
 
             Menu {
                 if let selectedThreadSummary {
+                    Button {
+                        self.reloadThread(summary: selectedThreadSummary)
+                    } label: {
+                        Label("Reload", systemImage: "arrow.clockwise")
+                    }
+
                     Button(role: .destructive) {
                         self.archiveThread(summary: selectedThreadSummary, archived: true)
                     } label: {

@@ -955,6 +955,54 @@ extension SessionWorkbenchView {
         return SSHConnectionErrorFormatter.message(for: error, endpoint: endpoint)
     }
 
+    func reloadThread(summary: CodexThreadSummary) {
+        self.reloadThread(threadID: summary.threadID, workspaceID: summary.workspaceID)
+    }
+
+    func reloadThread(threadID: String, workspaceID: UUID) {
+        self.isPromptFieldFocused = false
+        self.selectedWorkspaceID = workspaceID
+        self.selectedThreadID = threadID
+        self.appState.hostSessionStore.selectProject(hostID: self.host.id, projectID: workspaceID)
+        self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: threadID)
+        self.forceChatRedrawForReload()
+
+        if self.isSSHTransport {
+            self.showComposerInfo("Reloaded local thread state.", tone: .status)
+            return
+        }
+
+        Task {
+            do {
+                try await self.ensureReloadConnectionReady()
+                self.scheduleSessionRefresh([.threads, .catalogs, .selectedThreadDetail])
+                self.showComposerInfo("Thread reload requested.", tone: .status)
+            } catch {
+                self.presentCriticalErrorDialog(self.appState.appServerClient.userFacingMessage(for: error))
+            }
+        }
+    }
+
+    func ensureReloadConnectionReady() async throws {
+        if self.appState.appServerClient.state != .connected {
+            try await self.appState.appServerClient.connect(to: self.host)
+            return
+        }
+
+        do {
+            _ = try await self.appState.appServerClient.runDiagnostics()
+        } catch {
+            try await self.appState.appServerClient.connect(to: self.host)
+        }
+    }
+
+    func forceChatRedrawForReload() {
+        self.lastParsedThreadID = nil
+        self.lastParsedTranscript = ""
+        self.refreshParsedChatMessagesIfNeeded()
+        self.scrollToBottomRequestCount += 1
+    }
+
     func loadThread(_ threadID: String) {
         if self.isSSHTransport {
             return
