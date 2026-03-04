@@ -857,18 +857,17 @@ extension SessionWorkbenchView {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background {
-                if isInactive {
-                    self.glassCardBackground(cornerRadius: 24, tint: self.glassWhiteTint(light: 0.20, dark: 0.12))
-                } else {
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .fill(Color(red: 0.14, green: 0.14, blue: 0.16))
-                }
+                self.glassCardBackground(
+                    cornerRadius: 24,
+                    tint: self.glassWhiteTint(
+                        light: isInactive ? 0.20 : 0.16,
+                        dark: isInactive ? 0.12 : 0.08
+                    )
+                )
             }
             .overlay {
-                if isInactive {
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .stroke(self.glassStrokeColor.opacity(0.62), lineWidth: 1)
-                }
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(self.glassStrokeColor.opacity(isInactive ? 0.62 : 0.46), lineWidth: 1)
             }
             .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
             .onTapGesture {
@@ -879,7 +878,7 @@ extension SessionWorkbenchView {
         .padding(.horizontal, 12)
         .padding(.top, 6)
         .padding(.bottom, 12)
-        .background(Color.black)
+        .background(Color.clear)
     }
     func composerTokenBadgeChip(_ badge: ComposerTokenBadge) -> some View {
         let icon = badge.kind == .mcp ? "shippingbox" : "sparkles"

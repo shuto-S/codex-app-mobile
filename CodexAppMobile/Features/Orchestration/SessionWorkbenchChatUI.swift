@@ -95,6 +95,7 @@ extension SessionWorkbenchView {
 
     var chatTimeline: some View {
         ScrollViewReader { proxy in
+            let composerBottomInset = max(18, self.effectiveChatComposerOverlayHeight + 18)
             ScrollView {
                 VStack(spacing: 14) {
                     if !self.isSSHTransport,
@@ -133,12 +134,11 @@ extension SessionWorkbenchView {
                     }
 
                     Color.clear
-                        .frame(height: 1)
+                        .frame(height: composerBottomInset)
                         .id("chat-bottom")
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, self.floatingBannerTopInset)
-                .padding(.bottom, 18)
             }
             .background(Color.black)
             .scrollDismissesKeyboard(.interactively)
@@ -163,7 +163,7 @@ extension SessionWorkbenchView {
             .overlay(alignment: .bottom) {
                 if self.shouldShowScrollToBottomButton {
                     self.scrollToBottomButton(proxy: proxy)
-                        .padding(.bottom, 12)
+                        .padding(.bottom, max(12, self.effectiveChatComposerOverlayHeight + 12))
                         .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
             }

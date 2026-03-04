@@ -349,8 +349,10 @@ extension SessionWorkbenchView {
 
     func distanceToChatBottom(from geometry: ScrollGeometry) -> CGFloat {
         let visibleBottomY = geometry.contentOffset.y + geometry.containerSize.height
-        let distance = geometry.contentSize.height - visibleBottomY
-        return max(0, distance)
+        let rawDistance = geometry.contentSize.height - visibleBottomY
+        // Exclude the composer overlay spacer so "bottom" reflects chat content end.
+        let composerSpacer = max(18, self.effectiveChatComposerOverlayHeight + 18)
+        return max(0, rawDistance - composerSpacer)
     }
 
     static func nextAutoFollowState(

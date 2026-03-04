@@ -133,6 +133,7 @@ struct SessionWorkbenchView: View {
     @State var isChatAutoFollowEnabled = true
     @State var scrollToBottomRequestCount = 0
     @State var shouldForceScrollToBottomOnNextTranscriptUpdate = false
+    @State var chatComposerOverlayHeight: CGFloat = 0
     @FocusState var isPromptFieldFocused: Bool
     @FocusState var isReviewBaseBranchFieldFocused: Bool
 
@@ -272,12 +273,20 @@ struct SessionWorkbenchView: View {
         return baseText + dots
     }
 
-    var shouldShowScrollToBottomButton: Bool {
-        self.selectedThreadID != nil && self.chatDistanceFromBottom > 220
-    }
-
     var shouldAutoFollowChatUpdates: Bool {
         self.selectedThreadID != nil && self.isChatAutoFollowEnabled
+    }
+
+    var effectiveChatComposerOverlayHeight: CGFloat {
+        max(self.chatComposerOverlayHeight, 120)
+    }
+
+    var scrollToBottomButtonThreshold: CGFloat {
+        max(120, self.effectiveChatComposerOverlayHeight * 0.7)
+    }
+
+    var shouldShowScrollToBottomButton: Bool {
+        self.selectedThreadID != nil && self.chatDistanceFromBottom > self.scrollToBottomButtonThreshold
     }
 
     var isComposerInteractive: Bool {
@@ -604,7 +613,18 @@ struct SessionWorkbenchView: View {
 
             VStack(spacing: 0) {
                 self.chatTimeline
+            }
+            .overlay(alignment: .bottom) {
                 self.chatComposer
+                    .background {
+                        GeometryReader { proxy in
+                            Color.clear
+                                .preference(
+                                    key: ChatComposerOverlayHeightPreferenceKey.self,
+                                    value: proxy.size.height
+                                )
+                        }
+                    }
             }
 
             if self.isMenuOpen {
@@ -638,6 +658,15 @@ struct SessionWorkbenchView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.9), value: self.isCommandPalettePresented)
         .animation(.spring(response: 0.3, dampingFraction: 0.9), value: self.isStatusPanelPresented)
         .animation(.easeOut(duration: 0.18), value: self.composerInfoMessage?.id)
+        .onPreferenceChange(ChatComposerOverlayHeightPreferenceKey.self) { height in
+            let normalizedHeight = max(0, height)
+            guard abs(self.chatComposerOverlayHeight - normalizedHeight) > 0.5 else { return }
+            let wasNearBottom = self.chatDistanceFromBottom < 80
+            self.chatComposerOverlayHeight = normalizedHeight
+            if wasNearBottom || self.shouldAutoFollowChatUpdates {
+                self.scrollToBottomRequestCount += 1
+            }
+        }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
     }
@@ -772,4 +801,12 @@ struct SessionWorkbenchView: View {
         )
     }
 
+}
+
+private struct ChatComposerOverlayHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
 }
