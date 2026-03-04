@@ -34,7 +34,7 @@ extension SessionWorkbenchView {
 
                 ScrollView {
                     VStack(spacing: 10) {
-                        Text("Project")
+                        Text(L10n.text("Project"))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -42,7 +42,7 @@ extension SessionWorkbenchView {
                             .padding(.top, 2)
 
                         if self.workspaces.isEmpty {
-                            Text("No projects.")
+                            Text(L10n.text("No projects."))
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -73,7 +73,7 @@ extension SessionWorkbenchView {
                                     self.isPresentingProjectEditor = true
                                     self.isMenuOpen = false
                                 } label: {
-                                    Label("Add Project", systemImage: "plus")
+                                    Label(L10n.text("Add Project"), systemImage: "plus")
                                 }
 
                                 if let selectedWorkspace {
@@ -81,12 +81,12 @@ extension SessionWorkbenchView {
                                         self.workspacePendingDeletion = selectedWorkspace
                                         self.isMenuOpen = false
                                     } label: {
-                                        Label("Delete Project", systemImage: "trash")
+                                        Label(L10n.text("Delete Project"), systemImage: "trash")
                                     }
                                 }
                             } label: {
                                 HStack(spacing: 8) {
-                                    Text(self.selectedWorkspace?.displayName ?? "Select project")
+                                    Text(self.selectedWorkspace?.displayName ?? L10n.text("Select project"))
                                         .font(.subheadline.weight(.semibold))
                                         .lineLimit(1)
                                     Spacer(minLength: 8)
@@ -106,7 +106,7 @@ extension SessionWorkbenchView {
                             .buttonStyle(.plain)
                         }
 
-                        Text("Threads")
+                        Text(L10n.text("Threads"))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -118,7 +118,7 @@ extension SessionWorkbenchView {
                             self.createNewThread()
                             self.isMenuOpen = false
                         } label: {
-                            Label("New Thread", systemImage: "plus.bubble")
+                            Label(L10n.text("New Thread"), systemImage: "plus.bubble")
                                 .font(.subheadline.weight(.semibold))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 12)
@@ -132,14 +132,14 @@ extension SessionWorkbenchView {
                         .opacity(self.selectedWorkspace == nil ? 0.5 : 1)
 
                         if self.selectedWorkspace == nil {
-                            Text("Select a project.")
+                            Text(L10n.text("Select a project."))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 9)
                         } else if self.selectedWorkspaceThreads.isEmpty {
-                            Text("No threads")
+                            Text(L10n.text("No threads"))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -154,7 +154,7 @@ extension SessionWorkbenchView {
                                         }
                                     } label: {
                                         HStack(spacing: 8) {
-                                            Text(summary.preview.isEmpty ? "New Thread" : summary.preview)
+                                            Text(summary.preview.isEmpty ? L10n.text("New Thread") : summary.preview)
                                                 .font(.subheadline.weight(self.selectedThreadID == summary.threadID ? .semibold : .regular))
                                                 .lineLimit(1)
                                             Spacer(minLength: 8)
@@ -179,17 +179,17 @@ extension SessionWorkbenchView {
                                         Button {
                                             self.reloadThread(summary: summary)
                                         } label: {
-                                            Label("Reload", systemImage: "arrow.clockwise")
+                                            Label(L10n.text("Reload"), systemImage: "arrow.clockwise")
                                         }
 
                                         Button(role: .destructive) {
                                             self.archiveThread(summary: summary, archived: true)
                                         } label: {
-                                            Label("Archive", systemImage: "archivebox")
+                                            Label(L10n.text("Archive"), systemImage: "archivebox")
                                         }
                                         .disabled(summary.ephemeral)
                                         if summary.ephemeral {
-                                            Text("Ephemeral threads cannot be archived")
+                                            Text(L10n.text("Ephemeral threads cannot be archived"))
                                         }
                                     }
                                 }
@@ -204,7 +204,7 @@ extension SessionWorkbenchView {
                         self.isMenuOpen = false
                         self.openInTerminal()
                     } label: {
-                        Label("Terminal", systemImage: "terminal")
+                        Label(L10n.text("Terminal"), systemImage: "terminal")
                             .font(.caption.weight(.semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
@@ -220,7 +220,7 @@ extension SessionWorkbenchView {
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "chevron.left")
-                            Text("Back to hosts")
+                            Text(L10n.text("Back to hosts"))
                                 .fontWeight(.semibold)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -419,14 +419,14 @@ extension SessionWorkbenchView {
 
     func createNewThread() {
         guard let selectedWorkspace else {
-            self.presentCriticalErrorDialog("Select a project first.")
+            self.presentCriticalErrorDialog(L10n.text("Select a project first."))
             return
         }
 
         self.appState.hostSessionStore.selectProject(hostID: self.host.id, projectID: selectedWorkspace.id)
         self.selectedThreadID = nil
         self.appState.hostSessionStore.selectThread(hostID: self.host.id, threadID: nil)
-        self.showComposerInfo("Ready for a new thread. Send a prompt to start.")
+        self.showComposerInfo(L10n.text("Ready for a new thread. Send a prompt to start."))
     }
 
     func deleteWorkspace(_ workspace: ProjectWorkspace) {
@@ -447,7 +447,7 @@ extension SessionWorkbenchView {
         }
 
         self.workspacePendingDeletion = nil
-        self.showComposerInfo("Project deleted.", tone: .status)
+        self.showComposerInfo(L10n.text("Project deleted."), tone: .status)
     }
 
     func syncComposerControlsWithWorkspace() {
@@ -687,7 +687,7 @@ extension SessionWorkbenchView {
                 }
                 do {
                     let version = try await self.sshCodexExecService.checkCodexVersion(host: self.host, password: password)
-                    self.showComposerInfo("SSH ready (\(version)).", tone: .status)
+                    self.showComposerInfo(L10n.format("SSH ready (%@).", version), tone: .status)
                 } catch {
                     let message = self.userFacingSSHError(error)
                     self.presentCriticalErrorDialog(message)
@@ -700,7 +700,7 @@ extension SessionWorkbenchView {
             do {
                 try await self.appState.appServerClient.connect(to: self.host)
                 await self.appState.appServerClient.refreshCatalogs(primaryCWD: self.selectedWorkspace?.remotePath)
-                self.showComposerInfo("Connected to app-server.", tone: .status)
+                self.showComposerInfo(L10n.text("Connected to app-server."), tone: .status)
             } catch {
                 self.presentCriticalErrorDialog(self.appState.appServerClient.userFacingMessage(for: error))
             }

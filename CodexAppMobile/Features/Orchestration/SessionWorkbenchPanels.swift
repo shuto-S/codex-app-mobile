@@ -85,7 +85,7 @@ extension SessionWorkbenchView {
                 self.composerPickerChip("/", minWidth: 48)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Slash Commands")
+            .accessibilityLabel(L10n.text("Slash Commands"))
             .disabled(!self.isCommandPaletteAvailable)
             .opacity(self.isCommandPaletteAvailable ? 1 : 0.68)
 
@@ -104,7 +104,7 @@ extension SessionWorkbenchView {
                     Button {
                         self.handleCommandPaletteBackAction()
                     } label: {
-                        Label("Back", systemImage: "chevron.left")
+                        Label(L10n.text("Back"), systemImage: "chevron.left")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Color.white.opacity(0.92))
                     }
@@ -123,7 +123,7 @@ extension SessionWorkbenchView {
                         .tint(Color.white.opacity(0.9))
                 }
 
-                Button("Close") {
+                Button(L10n.text("Close")) {
                     self.dismissCommandPalette()
                 }
                 .font(.subheadline.weight(.semibold))
@@ -135,7 +135,7 @@ extension SessionWorkbenchView {
             if self.isReviewModePickerPresented {
                 self.reviewModePickerPanelBody
             } else if self.commandPaletteRows.isEmpty, !self.isCommandPaletteRefreshing {
-                Text("No commands or skills available")
+                Text(L10n.text("No commands or skills available"))
                     .font(.subheadline)
                     .foregroundStyle(Color.white.opacity(0.72))
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -238,8 +238,8 @@ extension SessionWorkbenchView {
         ScrollView {
             VStack(spacing: 10) {
                 self.reviewModeOptionButton(
-                    title: "Review uncommitted changes",
-                    subtitle: "Start review in a new thread.",
+                    title: L10n.text("Review uncommitted changes"),
+                    subtitle: L10n.text("Start review in a new thread."),
                     systemImage: "doc.badge.magnifyingglass",
                     isSelected: self.reviewModeSelection == .uncommittedChanges
                 ) {
@@ -248,8 +248,8 @@ extension SessionWorkbenchView {
                 }
 
                 self.reviewModeOptionButton(
-                    title: "Review against a base branch",
-                    subtitle: "Diff against the branch you specify.",
+                    title: L10n.text("Review against a base branch"),
+                    subtitle: L10n.text("Diff against the branch you specify."),
                     systemImage: "arrow.triangle.branch",
                     isSelected: self.reviewModeSelection == .baseBranch
                 ) {
@@ -259,11 +259,11 @@ extension SessionWorkbenchView {
 
                 if self.reviewModeSelection == .baseBranch {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Base branch")
+                        Text(L10n.text("Base branch"))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(Color.white.opacity(0.8))
 
-                        TextField("main", text: self.$reviewBaseBranch)
+                        TextField(L10n.text("main"), text: self.$reviewBaseBranch)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled(true)
                             .focused(self.$isReviewBaseBranchFieldFocused)
@@ -280,7 +280,7 @@ extension SessionWorkbenchView {
                                     .stroke(Color.white.opacity(0.14), lineWidth: 0.8)
                             )
 
-                        Button("Start review") {
+                        Button(L10n.text("Start review")) {
                             self.startReviewAgainstBaseBranch()
                         }
                         .font(.subheadline.weight(.semibold))
@@ -319,9 +319,9 @@ extension SessionWorkbenchView {
 
     var commandPaletteTitle: String {
         if self.isReviewModePickerPresented {
-            return "Code Review"
+            return L10n.text("Code Review")
         }
-        return "Commands"
+        return L10n.text("Commands")
     }
 
     func reviewModeOptionButton(
@@ -369,7 +369,7 @@ extension SessionWorkbenchView {
     var statusPanel: some View {
         VStack(spacing: 10) {
             HStack(spacing: 12) {
-                Text("Status")
+                Text(L10n.text("Status"))
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(Color.white)
 
@@ -381,13 +381,13 @@ extension SessionWorkbenchView {
                         .tint(Color.white.opacity(0.9))
                 }
 
-                Button("Refresh") {
+                Button(L10n.text("Refresh")) {
                     self.refreshStatusPanel()
                 }
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Color.white.opacity(0.92))
 
-                Button("Close") {
+                Button(L10n.text("Close")) {
                     self.dismissStatusPanel()
                 }
                 .font(.subheadline.weight(.semibold))
@@ -398,20 +398,20 @@ extension SessionWorkbenchView {
 
             if let snapshot = self.statusSnapshot {
                 VStack(alignment: .leading, spacing: 12) {
-                    self.statusHeaderRow(label: "Session", value: snapshot.sessionID)
-                    self.statusHeaderRow(label: "State", value: snapshot.connectionState.uppercased())
-                    self.statusHeaderRow(label: "Model", value: snapshot.currentModel)
+                    self.statusHeaderRow(label: L10n.text("Session"), value: snapshot.sessionID)
+                    self.statusHeaderRow(label: L10n.text("State"), value: snapshot.connectionState.uppercased())
+                    self.statusHeaderRow(label: L10n.text("Model"), value: snapshot.currentModel)
                     self.statusHeaderRow(
-                        label: "Plan",
-                        value: snapshot.planType?.uppercased() ?? "Unknown"
+                        label: L10n.text("Plan"),
+                        value: snapshot.planType?.uppercased() ?? L10n.text("Unknown")
                     )
                     self.statusHeaderRow(
-                        label: "Reconnects",
+                        label: L10n.text("Reconnects"),
                         value: "\(snapshot.reconnectAttemptCount)"
                     )
                     if let lastSuccessfulPingAt = snapshot.lastSuccessfulPingAt {
                         self.statusHeaderRow(
-                            label: "Last ping",
+                            label: L10n.text("Last ping"),
                             value: lastSuccessfulPingAt.formatted(date: .omitted, time: .shortened)
                         )
                     }
@@ -419,7 +419,7 @@ extension SessionWorkbenchView {
                         let timestampSuffix = snapshot.lastRPCErrorAt.map {
                             " (\($0.formatted(date: .omitted, time: .shortened)))"
                         } ?? ""
-                        Text("RPC error: \(lastRPCErrorMessage)\(timestampSuffix)")
+                        Text(L10n.format("RPC error: %@%@", lastRPCErrorMessage, timestampSuffix))
                             .font(.caption2)
                             .foregroundStyle(Color.orange.opacity(0.90))
                     }
@@ -435,10 +435,10 @@ extension SessionWorkbenchView {
                             .font(.caption)
                             .foregroundStyle(Color.orange.opacity(0.90))
                     }
-                    self.statusHeaderRow(label: "Context", value: self.statusContextSummary(snapshot))
+                    self.statusHeaderRow(label: L10n.text("Context"), value: self.statusContextSummary(snapshot))
 
                     if snapshot.limits.isEmpty {
-                        Text("No rate-limit data available")
+                        Text(L10n.text("No rate-limit data available"))
                             .font(.caption)
                             .foregroundStyle(Color.white.opacity(0.66))
                     } else {
@@ -448,7 +448,10 @@ extension SessionWorkbenchView {
                     }
 
                     HStack(spacing: 8) {
-                        Text("Updated: \(snapshot.updatedAt.formatted(date: .omitted, time: .shortened))")
+                        Text(L10n.format(
+                            "Updated: %@",
+                            snapshot.updatedAt.formatted(date: .omitted, time: .shortened)
+                        ))
                         Spacer(minLength: 8)
                         Text(snapshot.fallbackStatus.uppercased())
                     }
@@ -459,7 +462,7 @@ extension SessionWorkbenchView {
                 .padding(.bottom, 14)
                 .frame(maxWidth: .infinity, alignment: .top)
             } else {
-                Text(self.isStatusRefreshing ? "Refreshing status..." : "No status available")
+                Text(self.isStatusRefreshing ? L10n.text("Refreshing status...") : L10n.text("No status available"))
                     .font(.subheadline)
                     .foregroundStyle(Color.white.opacity(0.72))
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -487,7 +490,7 @@ extension SessionWorkbenchView {
     var mcpStatusPanel: some View {
         VStack(spacing: 10) {
             HStack(spacing: 12) {
-                Text("MCP Status")
+                Text(L10n.text("MCP Status"))
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(Color.white)
 
@@ -499,13 +502,13 @@ extension SessionWorkbenchView {
                         .tint(Color.white.opacity(0.9))
                 }
 
-                Button("Refresh") {
+                Button(L10n.text("Refresh")) {
                     self.refreshMCPStatusSheet()
                 }
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Color.white.opacity(0.92))
 
-                Button("Close") {
+                Button(L10n.text("Close")) {
                     self.dismissMCPStatusSheet()
                 }
                 .font(.subheadline.weight(.semibold))
@@ -565,7 +568,7 @@ extension SessionWorkbenchView {
                     .foregroundStyle(Color.white.opacity(0.94))
 
                 if let resetText = self.statusLimitResetText(limit.resetAt) {
-                    Text("(resets \(resetText))")
+                    Text(L10n.format("(resets %@)", resetText))
                         .font(.caption2)
                         .foregroundStyle(Color.white.opacity(0.58))
                 }
@@ -591,21 +594,21 @@ extension SessionWorkbenchView {
         guard let used = snapshot.contextUsedTokens,
               let max = snapshot.contextMaxTokens,
               max > 0 else {
-            return "Unavailable"
+            return L10n.text("Unavailable")
         }
         let usedText = self.groupedTokenCount(used)
         let maxText = self.compactTokenCount(max)
         if let remainingPercent = snapshot.contextRemainingPercent {
-            return "\(Int(remainingPercent.rounded()))% left (\(usedText) used / \(maxText))"
+            return L10n.format("%@%% left (%@ used / %@)", "\(Int(remainingPercent.rounded()))", usedText, maxText)
         }
-        return "\(usedText) used / \(maxText)"
+        return L10n.format("%@ used / %@", usedText, maxText)
     }
 
     func statusLimitRemainingText(_ limit: StatusLimitBarSnapshot) -> String {
         guard let remainingPercent = limit.remainingPercent else {
-            return "unknown"
+            return L10n.text("unknown")
         }
-        return "\(Int(remainingPercent.rounded()))% left"
+        return L10n.format("%@%% left", "\(Int(remainingPercent.rounded()))")
     }
 
     func statusLimitResetText(_ resetAt: Date?) -> String? {
@@ -690,11 +693,40 @@ extension SessionWorkbenchView {
             return (command.title, command.description, command.systemImage)
         case .skill(let skill):
             let description = skill.description?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let localizedTitle = self.localizedSkillTitle(skill.name)
+            let localizedDescription = self.localizedSkillDescription(
+                for: skill.name,
+                fallback: description
+            )
             return (
-                skill.name,
-                (description?.isEmpty == false) ? description : "Skill",
+                localizedTitle,
+                (localizedDescription?.isEmpty == false) ? localizedDescription : L10n.text("Skill"),
                 "sparkles"
             )
+        }
+    }
+
+    func localizedSkillTitle(_ rawName: String) -> String {
+        let normalized = rawName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized {
+        case "skill-creator":
+            return L10n.text("Skill Creator")
+        case "skill-installer":
+            return L10n.text("Skill Installer")
+        default:
+            return rawName
+        }
+    }
+
+    func localizedSkillDescription(for rawName: String, fallback: String?) -> String? {
+        let normalized = rawName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch normalized {
+        case "skill-creator":
+            return L10n.text("Create or update a skill")
+        case "skill-installer":
+            return L10n.text("Install curated skills from openai/skills or other repositories")
+        default:
+            return fallback
         }
     }
 
@@ -726,7 +758,7 @@ extension SessionWorkbenchView {
 
             if let descriptor = self.selectedComposerModelDescriptor {
                 if let upgradeInfo = descriptor.upgradeInfo {
-                    Text(upgradeInfo.upgradeCopy ?? "Upgrade available: \(upgradeInfo.model)")
+                    Text(upgradeInfo.upgradeCopy ?? L10n.format("Upgrade available: %@", upgradeInfo.model))
                         .font(.caption2)
                         .foregroundStyle(Color.yellow.opacity(0.92))
                         .padding(.horizontal, 4)
@@ -746,7 +778,7 @@ extension SessionWorkbenchView {
                         self.disablePlanMode()
                     } label: {
                         HStack(spacing: 6) {
-                            Text("Plan")
+                            Text(L10n.text("Plan"))
                                 .font(.caption2.weight(.semibold))
                             Image(systemName: "xmark")
                                 .font(.system(size: 10, weight: .bold))
@@ -764,7 +796,7 @@ extension SessionWorkbenchView {
                         )
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Disable Plan Mode")
+                    .accessibilityLabel(L10n.text("Disable Plan Mode"))
                 }
 
                 if !self.composerTokenBadges.isEmpty {
@@ -823,7 +855,7 @@ extension SessionWorkbenchView {
                     .buttonStyle(.plain)
                     .disabled(!isPrimaryActionEnabled)
                     .opacity(isPrimaryActionEnabled ? 1 : 0.45)
-                    .accessibilityLabel(isInterruptButton ? "Stop inference" : "Send prompt")
+                    .accessibilityLabel(isInterruptButton ? L10n.text("Stop inference") : L10n.text("Send prompt"))
                 }
             }
             .padding(.horizontal, 14)
@@ -879,7 +911,7 @@ extension SessionWorkbenchView {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Remove composer token \(badge.token)")
+        .accessibilityLabel(L10n.format("Remove composer token %@", badge.token))
     }
 
     func removeComposerTokenBadge(_ badge: ComposerTokenBadge) {
