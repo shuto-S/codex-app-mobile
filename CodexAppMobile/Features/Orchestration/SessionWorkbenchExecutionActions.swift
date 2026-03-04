@@ -703,12 +703,21 @@ extension SessionWorkbenchView {
         let selectedAction = self.gitModalActionSelection
         let manualCommitMessage = self.gitCommitMessageDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         let password = self.appState.remoteHostStore.password(for: self.host.id)
+        let operationID = String(UUID().uuidString.prefix(8))
+
+        gitUILogger.debug(
+            "Git action[\(operationID, privacy: .public)] started action=\(selectedAction.rawValue, privacy: .public) autoMessage=\(manualCommitMessage.isEmpty, privacy: .public)"
+        )
 
         self.isRunningGitAction = true
         self.gitOperationFeedback = ""
         self.gitOperationErrorMessage = ""
 
         Task {
+            let operationStartedAt = Date()
+            func elapsedMilliseconds(since start: Date) -> Int {
+                Int(Date().timeIntervalSince(start) * 1_000)
+            }
             defer {
                 self.isRunningGitAction = false
             }
@@ -717,46 +726,58 @@ extension SessionWorkbenchView {
                 var committedMessage: String?
 
                 if selectedAction.requiresCommitMessage {
+                    let stageStartedAt = Date()
                     try await self.sshGitService.stageAll(
                         host: self.host,
                         password: password,
                         workspacePath: selectedWorkspace.remotePath
                     )
-
-                    let stagedDiff = try await self.sshGitService.readCachedDiff(
-                        host: self.host,
-                        password: password,
-                        workspacePath: selectedWorkspace.remotePath
+                    gitUILogger.debug(
+                        "Git action[\(operationID, privacy: .public)] stage-all completed durationMs=\(elapsedMilliseconds(since: stageStartedAt), privacy: .public)"
                     )
 
                     let commitMessage: String
                     if manualCommitMessage.isEmpty {
+                        let generationStartedAt = Date()
                         commitMessage = try await self.sshGitService.generateCommitMessage(
                             host: self.host,
                             password: password,
                             workspacePath: selectedWorkspace.remotePath,
-                            stagedDiff: stagedDiff,
                             model: self.composerModelForRequest
+                        )
+                        gitUILogger.debug(
+                            "Git action[\(operationID, privacy: .public)] commit-message generated durationMs=\(elapsedMilliseconds(since: generationStartedAt), privacy: .public) messageChars=\(commitMessage.count, privacy: .public)"
                         )
                         self.gitCommitMessageDraft = commitMessage
                     } else {
                         commitMessage = manualCommitMessage
+                        gitUILogger.debug(
+                            "Git action[\(operationID, privacy: .public)] using manual commit message messageChars=\(commitMessage.count, privacy: .public)"
+                        )
                     }
 
+                    let commitStartedAt = Date()
                     try await self.sshGitService.commit(
                         host: self.host,
                         password: password,
                         workspacePath: selectedWorkspace.remotePath,
                         message: commitMessage
                     )
+                    gitUILogger.debug(
+                        "Git action[\(operationID, privacy: .public)] commit completed durationMs=\(elapsedMilliseconds(since: commitStartedAt), privacy: .public)"
+                    )
                     committedMessage = commitMessage
                 }
 
                 if selectedAction == .push || selectedAction == .commitAndPush {
+                    let pushStartedAt = Date()
                     let pushResult = try await self.sshGitService.pushWithUpstreamFallback(
                         host: self.host,
                         password: password,
                         workspacePath: selectedWorkspace.remotePath
+                    )
+                    gitUILogger.debug(
+                        "Git action[\(operationID, privacy: .public)] push completed durationMs=\(elapsedMilliseconds(since: pushStartedAt), privacy: .public) usedUpstreamFallback=\(pushResult.usedUpstreamFallback, privacy: .public)"
                     )
                     if selectedAction == .commitAndPush {
                         self.gitOperationFeedback = pushResult.usedUpstreamFallback
@@ -780,7 +801,13 @@ extension SessionWorkbenchView {
                 } else {
                     self.showComposerInfo(self.gitOperationFeedback, tone: .success)
                 }
+                gitUILogger.debug(
+                    "Git action[\(operationID, privacy: .public)] completed action=\(selectedAction.rawValue, privacy: .public) totalDurationMs=\(elapsedMilliseconds(since: operationStartedAt), privacy: .public)"
+                )
             } catch {
+                gitUILogger.error(
+                    "Git action[\(operationID, privacy: .public)] failed action=\(selectedAction.rawValue, privacy: .public) totalDurationMs=\(elapsedMilliseconds(since: operationStartedAt), privacy: .public) error=\(String(describing: error), privacy: .public)"
+                )
                 self.gitOperationErrorMessage = self.userFacingGitError(error)
             }
         }

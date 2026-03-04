@@ -565,26 +565,6 @@ actor SSHGitService {
         }
     }
 
-    func readCachedDiff(
-        host: RemoteHost,
-        password: String,
-        workspacePath: String
-    ) async throws -> String {
-        let result = try await self.runWorkspaceCommand(
-            host: host,
-            password: password,
-            workspacePath: workspacePath,
-            command: Self.gitNoPagerCommand("diff --cached --no-color --find-renames -- ."),
-            timeoutSeconds: 80
-        )
-        guard result.exitCode == 0 else {
-            throw SSHGitServiceError.commandFailed(
-                Self.bestFailureMessage(output: result.output, exitCode: result.exitCode)
-            )
-        }
-        return result.output
-    }
-
     func commit(
         host: RemoteHost,
         password: String,
@@ -668,14 +648,8 @@ actor SSHGitService {
         host: RemoteHost,
         password: String,
         workspacePath: String,
-        stagedDiff: String,
         model: String?
     ) async throws -> String {
-        let trimmedDiff = stagedDiff.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedDiff.isEmpty else {
-            throw SSHGitServiceError.noDiffAvailable
-        }
-
         let modelArg: String
         let trimmedModel = model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if trimmedModel.isEmpty {
@@ -684,7 +658,7 @@ actor SSHGitService {
             modelArg = " --model '\(Self.escapeForSingleQuote(trimmedModel))'"
         }
 
-        let promptBody = """
+        let promptPreamble = """
         Write a concise Git commit message for the staged changes.
         Rules:
         - Output exactly one line.
@@ -693,16 +667,28 @@ actor SSHGitService {
         - Prefer 72 chars or fewer.
 
         Staged diff:
-        \(Self.truncateForPrompt(trimmedDiff, maxCharacters: 12_000))
         """
 
+        let maxPromptDiffCharacters = 12_000
+        let noDiffMarker = "__CODEX_NO_STAGED_DIFF__"
         let heredocTag = "__CODEX_COMMIT_PROMPT_\(UUID().uuidString.replacingOccurrences(of: "-", with: "_"))__"
         let command = """
-        cat <<'\(heredocTag)' | codex exec --json --ephemeral --skip-git-repo-check\(modelArg) -
-        \(promptBody)
+        if GIT_PAGER=cat git --no-pager diff --cached --quiet -- .; then
+          echo "\(noDiffMarker)"
+          exit 3
+        fi
+        {
+        cat <<'\(heredocTag)'
+        \(promptPreamble)
         \(heredocTag)
+        GIT_PAGER=cat git --no-pager diff --cached --no-color --find-renames --unified=0 -- . | head -c \(maxPromptDiffCharacters)
+        } | codex exec --json --ephemeral --skip-git-repo-check\(modelArg) -
         """
 
+        let generationStartedAt = Date()
+        Self.logger.debug(
+            "SSHGit commit-message generation started maxPromptDiffChars=\(maxPromptDiffCharacters, privacy: .public)"
+        )
         let result = try await self.runWorkspaceCommand(
             host: host,
             password: password,
@@ -711,6 +697,9 @@ actor SSHGitService {
             timeoutSeconds: 240
         )
         guard result.exitCode == 0 else {
+            if result.output.contains(noDiffMarker) {
+                throw SSHGitServiceError.noDiffAvailable
+            }
             throw SSHGitServiceError.codexExecFailed(
                 Self.bestFailureMessage(output: result.output, exitCode: result.exitCode)
             )
@@ -724,6 +713,10 @@ actor SSHGitService {
         guard !oneLine.isEmpty else {
             throw SSHGitServiceError.codexExecNoMessage
         }
+        let generationDurationMs = Int(Date().timeIntervalSince(generationStartedAt) * 1_000)
+        Self.logger.debug(
+            "SSHGit commit-message generation completed durationMs=\(generationDurationMs, privacy: .public) messageChars=\(oneLine.count, privacy: .public)"
+        )
         return oneLine
     }
 
@@ -1576,12 +1569,6 @@ actor SSHGitService {
             throw SSHGitServiceError.codexExecNoMessage
         }
         return fallback
-    }
-
-    private static func truncateForPrompt(_ value: String, maxCharacters: Int) -> String {
-        guard value.count > maxCharacters else { return value }
-        let prefix = value.prefix(maxCharacters)
-        return String(prefix) + "\n\n[diff truncated]"
     }
 
     private static func nonEmptyLines(from text: String) -> [String] {
