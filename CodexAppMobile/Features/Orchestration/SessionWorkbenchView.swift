@@ -469,10 +469,6 @@ struct SessionWorkbenchView: View {
         #endif
     }
 
-    var commandPalettePanelMinHeight: CGFloat {
-        min(380, self.commandPalettePanelMaxHeight * 0.75)
-    }
-
     func makeStatusSnapshot() -> StatusPanelSnapshot {
         let contextUsage = self.appState.appServerClient.contextUsage(for: self.selectedThreadID)
         let diagnostics = self.appState.appServerClient.diagnostics

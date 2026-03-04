@@ -151,7 +151,6 @@ extension SessionWorkbenchView {
                     .padding(.bottom, 12)
                     .frame(
                         maxWidth: .infinity,
-                        minHeight: self.commandPalettePanelMinHeight,
                         maxHeight: .infinity,
                         alignment: .topLeading
                     )
@@ -167,7 +166,6 @@ extension SessionWorkbenchView {
                 }
                 .frame(
                     maxWidth: .infinity,
-                    minHeight: self.commandPalettePanelMinHeight,
                     maxHeight: self.commandPalettePanelMaxHeight,
                     alignment: .top
                 )
@@ -181,6 +179,7 @@ extension SessionWorkbenchView {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(self.glassStrokeColor.opacity(0.5), lineWidth: 0.9)
         }
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 
     var commandPaletteSheet: some View {
@@ -196,7 +195,8 @@ extension SessionWorkbenchView {
             Color.black
                 .ignoresSafeArea()
         )
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium])
+        .presentationContentInteraction(.scrolls)
         .presentationDragIndicator(.visible)
     }
 
@@ -278,7 +278,6 @@ extension SessionWorkbenchView {
         }
         .frame(
             maxWidth: .infinity,
-            minHeight: self.commandPalettePanelMinHeight,
             maxHeight: self.commandPalettePanelMaxHeight,
             alignment: .top
         )
@@ -393,7 +392,6 @@ extension SessionWorkbenchView {
         }
         .frame(
             maxWidth: .infinity,
-            minHeight: self.commandPalettePanelMinHeight,
             maxHeight: self.commandPalettePanelMaxHeight,
             alignment: .top
         )
