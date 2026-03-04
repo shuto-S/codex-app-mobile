@@ -218,6 +218,16 @@ extension SessionWorkbenchView {
                 guard self.shouldAutoFollowChatUpdates else { return }
                 self.scrollToBottom(proxy: proxy)
             }
+            .onChange(of: self.parsedChatMessages.count) {
+                if self.shouldForceScrollToBottomOnNextTranscriptUpdate {
+                    self.isChatAutoFollowEnabled = true
+                    self.shouldForceScrollToBottomOnNextTranscriptUpdate = false
+                    self.scrollToBottom(proxy: proxy)
+                    return
+                }
+                guard self.shouldAutoFollowChatUpdates else { return }
+                self.scrollToBottom(proxy: proxy)
+            }
             .onChange(of: self.assistantStreamingPhase) {
                 guard self.shouldAutoFollowChatUpdates else { return }
                 self.scrollToBottom(proxy: proxy)
