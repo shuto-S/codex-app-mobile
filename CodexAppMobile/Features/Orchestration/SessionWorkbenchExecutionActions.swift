@@ -498,39 +498,20 @@ extension SessionWorkbenchView {
     func showComposerInfo(
         _ text: String,
         tone: InfoBannerTone = .success,
-        autoDismissAfter seconds: TimeInterval = 2.5
+        autoDismissAfter _: TimeInterval = 0
     ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        self.composerInfoDismissTask?.cancel()
-        let message: ComposerInfoMessage
         if let current = self.composerInfoMessage,
            current.text == trimmed,
            current.tone == tone {
-            message = current
-        } else {
-            let newMessage = ComposerInfoMessage(text: trimmed, tone: tone)
-            self.composerInfoMessage = newMessage
-            message = newMessage
+            return
         }
-
-        let nanos = UInt64(max(0, seconds) * 1_000_000_000)
-        self.composerInfoDismissTask = Task {
-            if nanos > 0 {
-                try? await Task.sleep(nanoseconds: nanos)
-            }
-            guard !Task.isCancelled else { return }
-            if self.composerInfoMessage?.id == message.id {
-                self.composerInfoMessage = nil
-            }
-            self.composerInfoDismissTask = nil
-        }
+        self.composerInfoMessage = ComposerInfoMessage(text: trimmed, tone: tone)
     }
 
     func clearComposerInfo() {
-        self.composerInfoDismissTask?.cancel()
-        self.composerInfoDismissTask = nil
         self.composerInfoMessage = nil
     }
 

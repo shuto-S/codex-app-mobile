@@ -179,9 +179,11 @@ extension SessionWorkbenchView {
                         if let composerInfoMessage {
                             self.floatingChatInfoBanner(
                                 text: composerInfoMessage.text,
-                                tone: composerInfoMessage.tone
+                                tone: composerInfoMessage.tone,
+                                dismissAction: {
+                                    self.clearComposerInfo()
+                                }
                             )
-                            .allowsHitTesting(false)
                         }
                     }
                     .padding(.horizontal, 14)
@@ -274,14 +276,27 @@ extension SessionWorkbenchView {
     @ViewBuilder
     func floatingChatInfoBanner(
         text: String,
-        tone: InfoBannerTone
+        tone: InfoBannerTone,
+        dismissAction: (() -> Void)? = nil
     ) -> some View {
         let style = self.infoBannerStyle(for: tone)
 
-        Label(text, systemImage: style.icon)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(style.foreground)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(alignment: .center, spacing: 10) {
+            if let dismissAction {
+                Button(action: dismissAction) {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(style.foreground.opacity(0.9))
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Label(text, systemImage: style.icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(style.foreground)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background {

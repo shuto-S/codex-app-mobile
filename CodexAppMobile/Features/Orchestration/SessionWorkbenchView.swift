@@ -116,7 +116,6 @@ struct SessionWorkbenchView: View {
     @State var isMCPStatusRefreshing = false
     @State var mcpStatusHeadline = "No MCP status available"
     @State var composerInfoMessage: ComposerInfoMessage?
-    @State var composerInfoDismissTask: Task<Void, Never>?
     @State var selectedComposerTokenBadges: [ComposerTokenBadge] = []
     @State var pendingPromptDispatchCount = 0
     @State var chatDistanceFromBottom: CGFloat = 0
