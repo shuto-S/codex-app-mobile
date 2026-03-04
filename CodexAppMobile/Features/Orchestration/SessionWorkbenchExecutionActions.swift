@@ -36,6 +36,32 @@ extension SessionWorkbenchView {
         return normalizedThreadPath == normalizedWorkspacePath
     }
 
+    static func normalizedThreadIDForPendingScope(_ rawThreadID: String?) -> String {
+        rawThreadID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    static func isPendingRequest(
+        _ request: AppServerPendingRequest,
+        scopedToThreadID threadID: String?
+    ) -> Bool {
+        let normalizedScopeThreadID = Self.normalizedThreadIDForPendingScope(threadID)
+        guard !normalizedScopeThreadID.isEmpty else { return false }
+
+        let normalizedRequestThreadID = Self.normalizedThreadIDForPendingScope(request.threadID)
+        guard !normalizedRequestThreadID.isEmpty else { return false }
+
+        return normalizedRequestThreadID == normalizedScopeThreadID
+    }
+
+    static func pendingUserInputScopeKey(threadID: String, requestIDKey: String) -> String? {
+        let normalizedThreadID = Self.normalizedThreadIDForPendingScope(threadID)
+        let normalizedRequestIDKey = requestIDKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedThreadID.isEmpty, !normalizedRequestIDKey.isEmpty else {
+            return nil
+        }
+        return "\(normalizedThreadID)|\(normalizedRequestIDKey)"
+    }
+
     func scheduleSessionRefresh(_ work: Set<RefreshWork>, debounceNanoseconds: UInt64 = 0) {
         guard !work.isEmpty else { return }
         self.pendingRefreshWork.formUnion(work)
@@ -256,6 +282,7 @@ extension SessionWorkbenchView {
                     selectedReasoningForThread = self.selectedComposerReasoning
                 }
 
+                self.dismissPendingUserInputForPrompt(on: threadID)
                 self.appState.appServerClient.appendLocalEcho(promptForRequest, to: threadID)
 
                 self.appState.threadBookmarkStore.upsert(
@@ -324,6 +351,9 @@ extension SessionWorkbenchView {
         guard case .userInput = request.kind else {
             return
         }
+        guard Self.isPendingRequest(request, scopedToThreadID: self.selectedThreadID) else {
+            return
+        }
         self.dismissStatusPanel()
         self.dismissMCPStatusSheet()
         self.dismissReviewModePicker()
@@ -331,8 +361,18 @@ extension SessionWorkbenchView {
         self.activePendingRequest = request
     }
 
+    func handleSelectedThreadChanged() {
+        guard let activeRequest = self.activePendingRequest else {
+            return
+        }
+        if Self.isPendingRequest(activeRequest, scopedToThreadID: self.selectedThreadID) == false {
+            self.activePendingRequest = nil
+        }
+    }
+
     func handlePendingRequestsUpdated() {
-        let pendingRequests = self.appState.appServerClient.pendingRequests
+        self.pruneDismissedPendingUserInputScopeKeys()
+        let pendingRequests = self.selectedThreadPendingRequests
 
         if let activeRequest = self.activePendingRequest,
            pendingRequests.contains(where: { $0.id == activeRequest.id }) == false {
@@ -359,12 +399,17 @@ extension SessionWorkbenchView {
             self.activePendingRequest = nil
         }
 
+        let resolvedThreadID = Self.normalizedThreadIDForPendingScope(resolved.threadID)
+        if resolvedThreadID != Self.normalizedThreadIDForPendingScope(self.selectedThreadID) {
+            return
+        }
+
         let now = Date()
         if let suppressedThreadID = self.suppressResolvedPendingRequestAlertThreadID {
             if now > self.suppressResolvedPendingRequestAlertExpiresAt {
                 self.suppressResolvedPendingRequestAlertThreadID = nil
                 self.suppressResolvedPendingRequestAlertExpiresAt = .distantPast
-            } else if suppressedThreadID == resolved.threadID {
+            } else if Self.normalizedThreadIDForPendingScope(suppressedThreadID) == resolvedThreadID {
                 self.suppressResolvedPendingRequestAlertThreadID = nil
                 self.suppressResolvedPendingRequestAlertExpiresAt = .distantPast
                 return
@@ -379,17 +424,48 @@ extension SessionWorkbenchView {
     }
 
     func presentFirstPendingRequest() {
-        if let userInputRequest = self.appState.appServerClient.pendingRequests.first(where: { request in
-            if case .userInput = request.kind {
-                return true
-            }
-            return false
-        }) {
+        if let userInputRequest = self.selectedThreadPendingUserInputRequests.first {
             self.presentPendingUserInputPanel(userInputRequest)
             return
         }
 
-        self.activePendingRequest = self.appState.appServerClient.pendingRequests.first
+        self.activePendingRequest = self.selectedThreadPendingRequests.first
+    }
+
+    func pendingUserInputScopeKey(for request: AppServerPendingRequest) -> String? {
+        Self.pendingUserInputScopeKey(threadID: request.threadID, requestIDKey: request.requestIDKey)
+    }
+
+    func isPendingUserInputSuppressed(_ request: AppServerPendingRequest) -> Bool {
+        guard case .userInput = request.kind,
+              let scopeKey = self.pendingUserInputScopeKey(for: request) else {
+            return false
+        }
+        return self.dismissedPendingUserInputScopeKeys.contains(scopeKey)
+    }
+
+    func dismissPendingUserInputForPrompt(on threadID: String) {
+        let scopeKeys = self.appState.appServerClient.pendingRequests.compactMap { request -> String? in
+            guard Self.isPendingRequest(request, scopedToThreadID: threadID),
+                  case .userInput = request.kind else {
+                return nil
+            }
+            return self.pendingUserInputScopeKey(for: request)
+        }
+        guard !scopeKeys.isEmpty else { return }
+        self.dismissedPendingUserInputScopeKeys.formUnion(scopeKeys)
+    }
+
+    func pruneDismissedPendingUserInputScopeKeys() {
+        guard !self.dismissedPendingUserInputScopeKeys.isEmpty else { return }
+        let activeScopeKeys = Set(self.appState.appServerClient.pendingRequests.compactMap { request -> String? in
+            guard case .userInput = request.kind else {
+                return nil
+            }
+            return self.pendingUserInputScopeKey(for: request)
+        })
+        self.dismissedPendingUserInputScopeKeys = self.dismissedPendingUserInputScopeKeys
+            .intersection(activeScopeKeys)
     }
 
     func handleCommandPaletteBackAction() {

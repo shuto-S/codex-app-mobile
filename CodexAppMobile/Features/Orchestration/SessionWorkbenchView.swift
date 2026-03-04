@@ -117,6 +117,7 @@ struct SessionWorkbenchView: View {
     @State var mcpStatusHeadline = "No MCP status available"
     @State var composerInfoMessage: ComposerInfoMessage?
     @State var selectedComposerTokenBadges: [ComposerTokenBadge] = []
+    @State var dismissedPendingUserInputScopeKeys: Set<String> = []
     @State var pendingPromptDispatchCount = 0
     @State var chatDistanceFromBottom: CGFloat = 0
     @State var lastChatScrollSnapshot: ChatScrollSnapshot?
@@ -179,6 +180,24 @@ struct SessionWorkbenchView: View {
             return self.sshTranscriptByThread[selectedThreadID] ?? ""
         }
         return self.appState.appServerClient.transcriptByThread[selectedThreadID] ?? ""
+    }
+
+    var selectedThreadPendingRequests: [AppServerPendingRequest] {
+        guard !self.isSSHTransport else { return [] }
+        return self.appState.appServerClient.pendingRequests.filter { request in
+            Self.isPendingRequest(request, scopedToThreadID: self.selectedThreadID)
+        }
+    }
+
+    var selectedThreadPendingUserInputRequests: [AppServerPendingRequest] {
+        self.selectedThreadPendingRequests.filter { request in
+            guard case .userInput = request.kind else { return false }
+            return !self.isPendingUserInputSuppressed(request)
+        }
+    }
+
+    var visibleSelectedThreadPendingUserInputCount: Int {
+        self.selectedThreadPendingUserInputRequests.count
     }
 
     var isPromptEmpty: Bool {
@@ -679,6 +698,7 @@ struct SessionWorkbenchView: View {
         }
         .onChange(of: self.selectedThreadID) {
             self.refreshParsedChatMessagesIfNeeded()
+            self.handleSelectedThreadChanged()
         }
         .onChange(of: self.selectedThreadTranscript) {
             self.refreshParsedChatMessagesIfNeeded()

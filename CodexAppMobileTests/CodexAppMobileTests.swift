@@ -938,6 +938,87 @@ final class CodexAppMobileTests: XCTestCase {
         )
     }
 
+    func testSessionWorkbenchPendingRequestScopeMatchesSelectedThread() {
+        let request = AppServerPendingRequest(
+            requestIDKey: "req-1",
+            rpcID: .number(1),
+            method: "tool/request_user_input",
+            threadID: " thread-1 ",
+            turnID: "turn-1",
+            itemID: "",
+            kind: .userInput(questions: [])
+        )
+
+        XCTAssertTrue(
+            SessionWorkbenchView.isPendingRequest(
+                request,
+                scopedToThreadID: "thread-1"
+            )
+        )
+    }
+
+    func testSessionWorkbenchPendingRequestScopeRejectsEmptyOrDifferentThread() {
+        let scopedRequest = AppServerPendingRequest(
+            requestIDKey: "req-2",
+            rpcID: .number(2),
+            method: "tool/request_user_input",
+            threadID: "thread-2",
+            turnID: "turn-2",
+            itemID: "",
+            kind: .userInput(questions: [])
+        )
+        XCTAssertFalse(
+            SessionWorkbenchView.isPendingRequest(
+                scopedRequest,
+                scopedToThreadID: "thread-3"
+            )
+        )
+        XCTAssertFalse(
+            SessionWorkbenchView.isPendingRequest(
+                scopedRequest,
+                scopedToThreadID: nil
+            )
+        )
+
+        let emptyThreadRequest = AppServerPendingRequest(
+            requestIDKey: "req-3",
+            rpcID: .number(3),
+            method: "tool/request_user_input",
+            threadID: "",
+            turnID: "turn-3",
+            itemID: "",
+            kind: .userInput(questions: [])
+        )
+        XCTAssertFalse(
+            SessionWorkbenchView.isPendingRequest(
+                emptyThreadRequest,
+                scopedToThreadID: "thread-3"
+            )
+        )
+    }
+
+    func testSessionWorkbenchPendingUserInputScopeKeyRequiresThreadAndRequestID() {
+        XCTAssertEqual(
+            SessionWorkbenchView.pendingUserInputScopeKey(
+                threadID: " thread-9 ",
+                requestIDKey: " 77 "
+            ),
+            "thread-9|77"
+        )
+        XCTAssertNil(
+            SessionWorkbenchView.pendingUserInputScopeKey(
+                threadID: "",
+                requestIDKey: "77"
+            )
+        )
+        XCTAssertNil(
+            SessionWorkbenchView.pendingUserInputScopeKey(
+                threadID: "thread-9",
+                requestIDKey: "  "
+            )
+        )
+    }
+
     func testNextAutoFollowStateEnablesWhenNearBottom() {
         let current = SessionWorkbenchView.ChatScrollSnapshot(
             distanceFromBottom: 32,

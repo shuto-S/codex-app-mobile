@@ -86,7 +86,9 @@ extension SessionWorkbenchView {
     }
 
     var shouldShowPendingApprovalsBanner: Bool {
-        !self.isSSHTransport && !self.appState.appServerClient.pendingRequests.isEmpty
+        !self.isSSHTransport
+            && !self.isAwaitingPromptDispatch
+            && self.visibleSelectedThreadPendingUserInputCount > 0
     }
 
     var floatingBannerTopInset: CGFloat {
@@ -156,12 +158,13 @@ extension SessionWorkbenchView {
                 if self.floatingBannerCount > 0 {
                     VStack(spacing: 8) {
                         if self.shouldShowPendingApprovalsBanner {
+                            let pendingUserInputCount = self.visibleSelectedThreadPendingUserInputCount
                             Button {
                                 self.presentFirstPendingRequest()
                             } label: {
                                 HStack(spacing: 8) {
                                     Image(systemName: "clock.badge.exclamationmark")
-                                    Text("\(self.appState.appServerClient.pendingRequests.count) approvals pending")
+                                    Text("\(pendingUserInputCount) question\(pendingUserInputCount == 1 ? "" : "s") waiting for answer")
                                         .font(.subheadline.weight(.semibold))
                                     Spacer()
                                 }
