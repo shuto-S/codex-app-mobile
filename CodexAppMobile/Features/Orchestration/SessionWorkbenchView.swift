@@ -769,6 +769,11 @@ struct SessionWorkbenchView: View {
         } message: {
             Text(self.resolvedPendingRequestAlertMessage)
         }
+        .sheet(isPresented: self.$isCommandPalettePresented, onDismiss: {
+            self.dismissCommandPalette()
+        }) {
+            self.commandPaletteSheet
+        }
         .sheet(isPresented: self.$isPresentingProjectEditor) {
             ProjectEditorView(
                 workspace: self.editingWorkspace,

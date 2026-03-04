@@ -183,6 +183,23 @@ extension SessionWorkbenchView {
         }
     }
 
+    var commandPaletteSheet: some View {
+        VStack(spacing: 0) {
+            self.commandPalettePanel
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(
+            Color.black
+                .ignoresSafeArea()
+        )
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
     var reviewModePickerPanelBody: some View {
         ScrollView {
             VStack(spacing: 10) {
@@ -742,11 +759,6 @@ extension SessionWorkbenchView {
         return VStack(alignment: .leading, spacing: 8) {
             if self.isStatusPanelPresented {
                 self.statusPanel
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
-
-            if self.isCommandPalettePresented {
-                self.commandPalettePanel
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
