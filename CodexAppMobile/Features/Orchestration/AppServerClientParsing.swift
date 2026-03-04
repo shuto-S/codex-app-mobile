@@ -177,58 +177,6 @@ extension AppServerClient {
         }
     }
 
-    static func parseMCPServerCatalog(_ rows: [JSONValue]) -> [AppServerMCPServerSummary] {
-        var catalog: [AppServerMCPServerSummary] = []
-        var seenNames: Set<String> = []
-
-        for row in rows {
-            guard let object = row.objectValue else { continue }
-
-            let name = Self.findString(
-                in: object,
-                paths: [
-                    ["name"],
-                    ["id"],
-                    ["server", "name"],
-                    ["serverName"],
-                    ["displayName"],
-                ]
-            ) ?? "Unnamed MCP Server"
-
-            guard !seenNames.contains(name) else { continue }
-            seenNames.insert(name)
-
-            let toolCount = object["toolCount"]?.intValue
-                ?? object["toolsCount"]?.intValue
-                ?? object["tools"]?.arrayValue?.count
-                ?? 0
-            let resourceCount = object["resourceCount"]?.intValue
-                ?? object["resourcesCount"]?.intValue
-                ?? object["resources"]?.arrayValue?.count
-                ?? 0
-            let authStatus = Self.findString(
-                in: object,
-                paths: [
-                    ["authStatus"],
-                    ["oauth", "status"],
-                    ["status"],
-                    ["auth", "status"],
-                ]
-            )
-
-            catalog.append(
-                AppServerMCPServerSummary(
-                    name: name,
-                    toolCount: toolCount,
-                    resourceCount: resourceCount,
-                    authStatus: authStatus
-                )
-            )
-        }
-
-        return catalog
-    }
-
     static func parseSkillCatalog(_ entries: [JSONValue]) -> [AppServerSkillSummary] {
         var catalog: [AppServerSkillSummary] = []
         var seenIDs: Set<String> = []

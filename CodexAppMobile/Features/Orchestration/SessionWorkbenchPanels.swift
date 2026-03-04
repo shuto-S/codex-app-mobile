@@ -137,7 +137,7 @@ extension SessionWorkbenchView {
             } else if self.pendingUserInputRequest != nil {
                 self.pendingUserInputPanelBody
             } else if self.commandPaletteRows.isEmpty, !self.isCommandPaletteRefreshing {
-                Text("No commands, MCP servers, or skills available")
+                Text("No commands or skills available")
                     .font(.subheadline)
                     .foregroundStyle(Color.white.opacity(0.72))
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -714,13 +714,6 @@ extension SessionWorkbenchView {
         switch row {
         case .command(let command):
             return (command.title, command.description, command.systemImage)
-        case .mcp(let server):
-            let status = server.authStatus ?? "unknown"
-            return (
-                server.name,
-                "MCP server • tools \(server.toolCount) • resources \(server.resourceCount) • auth \(status)",
-                "shippingbox"
-            )
         case .skill(let skill):
             let description = skill.description?.trimmingCharacters(in: .whitespacesAndNewlines)
             return (
@@ -735,7 +728,7 @@ extension SessionWorkbenchView {
         switch row {
         case .skill:
             return 1
-        case .command, .mcp:
+        case .command:
             return nil
         }
     }
@@ -744,7 +737,7 @@ extension SessionWorkbenchView {
         switch row {
         case .command(let command):
             return self.isSlashCommandDisabled(command)
-        case .mcp, .skill:
+        case .skill:
             return false
         }
     }
@@ -891,9 +884,9 @@ extension SessionWorkbenchView {
         .background(Color.clear)
     }
     func composerTokenBadgeChip(_ badge: ComposerTokenBadge) -> some View {
-        let icon = badge.kind == .mcp ? "shippingbox" : "sparkles"
-        let background = badge.kind == .mcp ? Color.cyan.opacity(0.20) : Color.green.opacity(0.20)
-        let border = badge.kind == .mcp ? Color.cyan.opacity(0.45) : Color.green.opacity(0.45)
+        let icon = "sparkles"
+        let background = Color.green.opacity(0.20)
+        let border = Color.green.opacity(0.45)
         return Button {
             self.removeComposerTokenBadge(badge)
         } label: {

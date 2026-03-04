@@ -431,6 +431,7 @@ enum AppServerSlashCommandKind: String {
     case startReview
     case startPlanMode
     case showStatus
+    case showMCPStatus
 }
 
 struct AppServerSlashCommandDescriptor: Equatable, Identifiable {
@@ -442,15 +443,6 @@ struct AppServerSlashCommandDescriptor: Equatable, Identifiable {
     let requiresThread: Bool
 
     var id: String { self.command }
-}
-
-struct AppServerMCPServerSummary: Equatable, Identifiable {
-    let name: String
-    let toolCount: Int
-    let resourceCount: Int
-    let authStatus: String?
-
-    var id: String { self.name }
 }
 
 struct AppServerSkillSummary: Equatable, Identifiable {

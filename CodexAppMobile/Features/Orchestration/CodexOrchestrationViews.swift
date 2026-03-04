@@ -873,15 +873,12 @@ struct ProjectEditorView: View {
 
 enum CommandPaletteRow: Identifiable, Equatable {
     case command(AppServerSlashCommandDescriptor)
-    case mcp(AppServerMCPServerSummary)
     case skill(AppServerSkillSummary)
 
     var id: String {
         switch self {
         case .command(let command):
             return "command:\(command.id)"
-        case .mcp(let server):
-            return "mcp:\(server.id)"
         case .skill(let skill):
             return "skill:\(skill.id)"
         }
@@ -890,7 +887,6 @@ enum CommandPaletteRow: Identifiable, Equatable {
 
 func buildCommandPaletteRows(
     commands: [AppServerSlashCommandDescriptor],
-    mcpServers: [AppServerMCPServerSummary],
     skills: [AppServerSkillSummary]
 ) -> [CommandPaletteRow] {
     var rows: [CommandPaletteRow] = []
@@ -899,12 +895,6 @@ func buildCommandPaletteRows(
     for command in commands {
         guard seenCommandIDs.insert(command.id).inserted else { continue }
         rows.append(.command(command))
-    }
-
-    var seenMCPNames: Set<String> = []
-    for server in mcpServers {
-        guard seenMCPNames.insert(server.name).inserted else { continue }
-        rows.append(.mcp(server))
     }
 
     var seenSkillIDs: Set<String> = []

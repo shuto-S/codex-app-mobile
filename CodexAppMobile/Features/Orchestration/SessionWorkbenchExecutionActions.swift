@@ -551,9 +551,6 @@ extension SessionWorkbenchView {
                 self.dismissCommandPalette()
             }
             self.executeSlashCommand(command)
-        case .mcp(let server):
-            self.insertComposerToken("/mcp \(server.name)")
-            self.dismissCommandPalette()
         case .skill(let skill):
             self.insertComposerToken("$\(skill.name)")
             self.dismissCommandPalette()
@@ -583,23 +580,10 @@ extension SessionWorkbenchView {
         let normalized = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return nil }
 
-        if normalized.lowercased().hasPrefix("/mcp") {
-            let title = normalized
-                .replacingOccurrences(of: "/mcp", with: "MCP", options: [.caseInsensitive])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return ComposerTokenBadge(
-                id: "mcp-\(normalized.lowercased())",
-                kind: .mcp,
-                token: normalized,
-                title: title.isEmpty ? "MCP" : title
-            )
-        }
-
         if normalized.hasPrefix("$") {
             let skillName = String(normalized.dropFirst())
             return ComposerTokenBadge(
                 id: "skill-\(normalized.lowercased())",
-                kind: .skill,
                 token: normalized,
                 title: skillName.isEmpty ? "Skill" : "Skill \(skillName)"
             )
@@ -637,6 +621,8 @@ extension SessionWorkbenchView {
             self.startPlanModeSlashCommand()
         case .showStatus:
             self.showStatusSlashCommand()
+        case .showMCPStatus:
+            self.showMCPStatusSlashCommand()
         }
     }
 
@@ -773,6 +759,18 @@ extension SessionWorkbenchView {
 
     func showStatusSlashCommand() {
         self.presentStatusPanel()
+    }
+
+    func showMCPStatusSlashCommand() {
+        Task {
+            do {
+                try await self.ensureAppServerReady(refreshCatalogs: false)
+                let headline = try await self.appState.appServerClient.mcpServerStatusHeadline()
+                self.localStatusMessage = headline
+            } catch {
+                self.localErrorMessage = self.appState.appServerClient.userFacingMessage(for: error)
+            }
+        }
     }
 
     func startPlanModeSlashCommand() {

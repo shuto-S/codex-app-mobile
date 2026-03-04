@@ -58,13 +58,7 @@ struct SessionWorkbenchView: View {
     }
 
     struct ComposerTokenBadge: Identifiable, Equatable {
-        enum Kind: Equatable {
-            case mcp
-            case skill
-        }
-
         let id: String
-        let kind: Kind
         let token: String
         let title: String
     }
@@ -404,7 +398,6 @@ struct SessionWorkbenchView: View {
     var commandPaletteRows: [CommandPaletteRow] {
         buildCommandPaletteRows(
             commands: self.slashCommandDescriptors,
-            mcpServers: self.appState.appServerClient.mcpServers,
             skills: self.appState.appServerClient.availableSkills
         )
     }

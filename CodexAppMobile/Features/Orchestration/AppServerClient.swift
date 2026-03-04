@@ -40,7 +40,6 @@ final class AppServerClient: ObservableObject {
     @Published private(set) var turnStreamingPhaseByThread: [String: TurnStreamingPhase] = [:]
     @Published private(set) var availableModels: [AppServerModelDescriptor] = []
     @Published private(set) var availableCollaborationModes: [AppServerCollaborationModeDescriptor] = []
-    @Published private(set) var mcpServers: [AppServerMCPServerSummary] = []
     @Published private(set) var availableSkills: [AppServerSkillSummary] = []
     @Published private(set) var availableApps: [AppServerAppSummary] = []
     @Published private(set) var availableSlashCommands: [AppServerSlashCommandDescriptor] = []
@@ -72,7 +71,6 @@ final class AppServerClient: ObservableObject {
     struct CatalogRefreshOverrides {
         var modelCatalog: [AppServerModelDescriptor]?
         var collaborationModes: [AppServerCollaborationModeDescriptor]
-        var mcpServers: [AppServerMCPServerSummary]
         var skills: [AppServerSkillSummary]
         var apps: [AppServerAppSummary]
     }
@@ -170,7 +168,6 @@ final class AppServerClient: ObservableObject {
         self.streamedItemPrefixKeys.removeAll()
         self.availableModels = []
         self.availableCollaborationModes = []
-        self.mcpServers = []
         self.availableSkills = []
         self.availableApps = []
         self.availableSlashCommands = []
@@ -239,6 +236,96 @@ final class AppServerClient: ObservableObject {
     func contextUsage(for threadID: String?) -> AppServerContextUsageSummary? {
         guard let threadID else { return nil }
         return self.contextUsageByThread[threadID]
+    }
+
+    func mcpServerStatusHeadline(limit: Int = 100) async throws -> String {
+        guard self.state == .connected else {
+            throw AppServerClientError.notConnected
+        }
+
+        let clampedLimit = max(1, min(100, limit))
+        let params: JSONValue = .object([
+            "limit": .number(Double(clampedLimit))
+        ])
+
+        do {
+            let result = try await self.request(method: "mcpServerStatus/list", params: params)
+            let rows = Self.dataArray(from: result, fallbackKeys: ["servers", "mcpServers"])
+            guard !rows.isEmpty else {
+                return "MCP servers: none reported."
+            }
+
+            var items: [String] = []
+            var seenNames: Set<String> = []
+
+            for row in rows {
+                guard let object = row.objectValue else { continue }
+                let name = Self.findString(
+                    in: object,
+                    paths: [
+                        ["name"],
+                        ["id"],
+                        ["server", "name"],
+                        ["displayName"],
+                    ]
+                ) ?? "unnamed"
+                guard seenNames.insert(name).inserted else { continue }
+
+                let enabled = Self.findBool(
+                    in: object,
+                    paths: [
+                        ["enabled"],
+                        ["isEnabled"],
+                        ["active"],
+                        ["isActive"],
+                    ]
+                )
+                let status = Self.findString(
+                    in: object,
+                    paths: [
+                        ["authStatus"],
+                        ["status"],
+                        ["oauth", "status"],
+                        ["auth", "status"],
+                    ]
+                )
+
+                let normalizedStatus = status?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased() ?? ""
+                let runningState: String
+                if let enabled {
+                    runningState = enabled ? "running" : "stopped"
+                } else if normalizedStatus.contains("connected")
+                    || normalizedStatus.contains("ready")
+                    || normalizedStatus.contains("running")
+                    || normalizedStatus == "ok" {
+                    runningState = "running"
+                } else if normalizedStatus.contains("disconnected")
+                    || normalizedStatus.contains("stopped")
+                    || normalizedStatus.contains("error")
+                    || normalizedStatus.contains("failed") {
+                    runningState = "stopped"
+                } else {
+                    runningState = "unknown"
+                }
+
+                items.append("\(name)(\(runningState))")
+            }
+
+            guard !items.isEmpty else {
+                return "MCP servers: none reported."
+            }
+
+            let displayLimit = 6
+            let shown = Array(items.prefix(displayLimit))
+            let hiddenCount = max(0, items.count - shown.count)
+            let suffix = hiddenCount > 0 ? ", ... (+\(hiddenCount))" : ""
+            return "MCP servers: " + shown.joined(separator: ", ") + suffix
+        } catch let AppServerClientError.remote(code, message) where code == -32601 {
+            self.appendEvent("mcpServerStatus/list unavailable: \(message)")
+            return "MCP status is unavailable on this server."
+        }
     }
 
 
@@ -655,7 +742,6 @@ final class AppServerClient: ObservableObject {
         self.lastHost = host
         self.availableModels = []
         self.availableCollaborationModes = []
-        self.mcpServers = []
         self.availableSkills = []
         self.availableApps = []
         self.availableSlashCommands = []
@@ -1489,7 +1575,6 @@ final class AppServerClient: ObservableObject {
                 }
             }
             self.availableCollaborationModes = overrides.collaborationModes
-            self.mcpServers = overrides.mcpServers
             self.availableSkills = overrides.skills
             self.availableApps = overrides.apps
             self.rebuildSlashCommandCatalog()
@@ -1498,14 +1583,12 @@ final class AppServerClient: ObservableObject {
 
         async let fetchedModels = self.fetchModelCatalog()
         async let fetchedCollaborationModes = self.fetchCollaborationModeCatalog()
-        async let fetchedMCPServers = self.fetchMCPServerCatalog()
         async let fetchedSkills = self.fetchSkillCatalog(primaryCWD: primaryCWD)
         async let fetchedApps = self.fetchAppCatalog()
 
-        let (modelCatalog, collaborationModes, mcpServers, skills, apps) = await (
+        let (modelCatalog, collaborationModes, skills, apps) = await (
             fetchedModels,
             fetchedCollaborationModes,
-            fetchedMCPServers,
             fetchedSkills,
             fetchedApps
         )
@@ -1518,7 +1601,6 @@ final class AppServerClient: ObservableObject {
             }
         }
         self.availableCollaborationModes = collaborationModes
-        self.mcpServers = mcpServers
         self.availableSkills = skills
         self.availableApps = apps
 
@@ -1572,46 +1654,6 @@ final class AppServerClient: ObservableObject {
         } catch {
             self.appendEvent("collaborationMode/list unavailable: \(error.localizedDescription)")
             return []
-        }
-    }
-
-    private func fetchMCPServerCatalog() async -> [AppServerMCPServerSummary] {
-        var rows: [JSONValue] = []
-        var cursor: String?
-        var seenCursors: Set<String> = []
-
-        do {
-            while true {
-                var params: [String: JSONValue] = [
-                    "limit": .number(100)
-                ]
-                if let cursor {
-                    params["cursor"] = .string(cursor)
-                }
-
-                let result = try await self.request(method: "mcpServerStatus/list", params: .object(params))
-                let pageRows = Self.dataArray(from: result, fallbackKeys: ["servers", "mcpServers"])
-                rows.append(contentsOf: pageRows)
-
-                guard let nextCursor = Self.nextCursor(from: result),
-                      !nextCursor.isEmpty,
-                      !seenCursors.contains(nextCursor),
-                      rows.count < 300
-                else {
-                    break
-                }
-
-                seenCursors.insert(nextCursor)
-                cursor = nextCursor
-            }
-        } catch {
-            self.appendEvent("mcpServerStatus/list unavailable: \(error.localizedDescription)")
-            return []
-        }
-
-        let parsed = Self.parseMCPServerCatalog(rows)
-        return parsed.sorted {
-            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }
     }
 
@@ -1728,6 +1770,14 @@ final class AppServerClient: ObservableObject {
                 title: "Status",
                 description: "Show connection, model, and catalog status.",
                 systemImage: "info.circle",
+                requiresThread: false
+            ),
+            AppServerSlashCommandDescriptor(
+                kind: .showMCPStatus,
+                command: "/mcp-status",
+                title: "MCP status",
+                description: "Show MCP server availability.",
+                systemImage: "shippingbox",
                 requiresThread: false
             ),
         ]
