@@ -49,11 +49,38 @@ struct CodexReasoningEffortOption: Equatable, Identifiable {
     var id: String { self.value }
 
     var displayName: String {
-        let trimmed = self.value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let first = trimmed.first else {
-            return "Reasoning"
+        let normalized = self.value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty else {
+            return L10n.text("Reasoning")
         }
-        return first.uppercased() + trimmed.dropFirst()
+
+        switch normalized {
+        case "minimal", "min":
+            return L10n.text("Minimal")
+        case "low":
+            return L10n.text("Low")
+        case "medium", "med":
+            return L10n.text("Medium")
+        case "high":
+            return L10n.text("High")
+        case "xhigh", "x-high", "very-high", "very_high", "maximum", "max":
+            return L10n.text("XHigh")
+        case "auto", "default":
+            return L10n.text("Auto")
+        default:
+            let words = normalized
+                .replacingOccurrences(of: "_", with: " ")
+                .replacingOccurrences(of: "-", with: " ")
+                .split(separator: " ")
+            let titleCased = words.map { word in
+                guard let first = word.first else { return "" }
+                return first.uppercased() + word.dropFirst()
+            }
+            .joined(separator: " ")
+            return titleCased.isEmpty ? self.value : titleCased
+        }
     }
 }
 

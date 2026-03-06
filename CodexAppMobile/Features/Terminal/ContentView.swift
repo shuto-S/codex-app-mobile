@@ -97,7 +97,7 @@ struct KnownHostRecord: Identifiable, Equatable {
     var id: String { self.endpoint }
 
     var algorithm: String {
-        self.hostKey.split(separator: " ").first.map(String.init) ?? "unknown"
+        self.hostKey.split(separator: " ").first.map(String.init) ?? L10n.text("unknown")
     }
 
     var keyPreview: String {
@@ -123,9 +123,9 @@ struct TerminalView: View {
             Group {
                 if self.appState.remoteHostStore.hosts.isEmpty {
                     ContentUnavailableView(
-                        "No Hosts",
+                        L10n.text("No Hosts"),
                         systemImage: "terminal",
-                        description: Text("Add a host from Hosts first.")
+                        description: Text(L10n.text("Add a host from Hosts first."))
                     )
                 } else {
                     List {
@@ -151,15 +151,15 @@ struct TerminalView: View {
                         initialCommand: self.initialCommand(for: hostID)
                     )
                 } else {
-                    Text("Host not found.")
+                    Text(L10n.text("Host not found."))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Color(.systemBackground))
-            .navigationTitle("Terminal")
+            .navigationTitle(L10n.text("Terminal"))
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Known Hosts") {
+                    Button(L10n.text("Known Hosts")) {
                         self.isPresentingKnownHosts = true
                     }
                     .codexActionButtonStyle()
@@ -210,9 +210,9 @@ struct KnownHostsView: View {
             Group {
                 if self.knownHosts.isEmpty {
                     ContentUnavailableView(
-                        "No Known Hosts",
+                        L10n.text("No Known Hosts"),
                         systemImage: "lock.shield",
-                        description: Text("Host keys are saved after the first successful connection.")
+                        description: Text(L10n.text("Host keys are saved after the first successful connection."))
                     )
                 } else {
                     List {
@@ -230,7 +230,7 @@ struct KnownHostsView: View {
                                     .textSelection(.enabled)
                             }
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button("Delete", role: .destructive) {
+                                Button(L10n.text("Delete"), role: .destructive) {
                                     HostKeyStore.remove(for: record.endpoint)
                                     self.reload()
                                 }
@@ -239,7 +239,7 @@ struct KnownHostsView: View {
                     }
                 }
             }
-            .navigationTitle("Known Hosts")
+            .navigationTitle(L10n.text("Known Hosts"))
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -247,12 +247,12 @@ struct KnownHostsView: View {
                     } label: {
                         Image(systemName: "xmark")
                     }
-                    .accessibilityLabel("Close")
+                    .accessibilityLabel(L10n.text("Close"))
                     .codexActionButtonStyle()
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Delete All", role: .destructive) {
+                    Button(L10n.text("Delete All"), role: .destructive) {
                         self.isShowingDeleteAllConfirmation = true
                     }
                     .disabled(self.knownHosts.isEmpty)
@@ -260,15 +260,15 @@ struct KnownHostsView: View {
                 }
             }
             .confirmationDialog(
-                "Delete all stored host keys?",
+                L10n.text("Delete all stored host keys?"),
                 isPresented: self.$isShowingDeleteAllConfirmation
             ) {
-                Button("Delete All", role: .destructive) {
+                Button(L10n.text("Delete All"), role: .destructive) {
                     self.knownHosts.forEach { HostKeyStore.remove(for: $0.endpoint) }
                     self.reload()
-                    self.statusMessage = "All known hosts were removed."
+                    self.statusMessage = L10n.text("All known hosts were removed.")
                 }
-                Button("Cancel", role: .cancel) {}
+                Button(L10n.text("Cancel"), role: .cancel) {}
             }
             .safeAreaInset(edge: .bottom) {
                 if !self.statusMessage.isEmpty {
@@ -336,15 +336,15 @@ struct TerminalSessionView: View {
         .onDisappear {
             self.viewModel.disconnect()
         }
-        .alert("Connection Error", isPresented: self.$viewModel.isShowingError) {
-            Button("OK", role: .cancel) {}
+        .alert(L10n.text("Connection Error"), isPresented: self.$viewModel.isShowingError) {
+            Button(L10n.text("OK"), role: .cancel) {}
         } message: {
             Text(self.viewModel.errorMessage)
         }
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if self.viewModel.state == .connected {
-                    Button("Disconnect", role: .destructive) {
+                    Button(L10n.text("Disconnect"), role: .destructive) {
                         self.viewModel.disconnect()
                     }
                     .codexActionButtonStyle()
@@ -370,7 +370,7 @@ struct TerminalSessionView: View {
                     .padding(16)
                     .textSelection(.enabled)
             } else {
-                Text("No terminal output yet.")
+                Text(L10n.text("No terminal output yet."))
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(Color(red: 0.82, green: 0.95, blue: 0.88))
                     .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -395,7 +395,7 @@ struct TerminalSessionView: View {
                     .font(.system(.body, design: .monospaced).weight(.semibold))
                     .foregroundStyle(Color(red: 0.37, green: 0.88, blue: 0.72))
 
-                TextField("Command", text: self.$commandInput)
+                TextField(L10n.text("Command"), text: self.$commandInput)
                     .font(.system(.body, design: .monospaced))
                     .keyboardType(.default)
                     .textInputAutocapitalization(.never)
@@ -429,7 +429,7 @@ struct TerminalSessionView: View {
                 )
             }
             .codexActionButtonStyle()
-            .accessibilityLabel(self.isCommandFieldFocused ? "Hide Keyboard" : "Show Keyboard")
+            .accessibilityLabel(self.isCommandFieldFocused ? L10n.text("Hide Keyboard") : L10n.text("Show Keyboard"))
             .disabled(self.viewModel.state != .connected)
             .frame(width: 52, alignment: .trailing)
         }
@@ -592,7 +592,7 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
                 try self.engine.send(command: command)
             } catch {
                 self.dispatchMain {
-                    self.errorMessage = "Failed to send command: \(error.localizedDescription)"
+                    self.errorMessage = L10n.format("Failed to send command: %@", error.localizedDescription)
                     self.isShowingError = true
                 }
             }
