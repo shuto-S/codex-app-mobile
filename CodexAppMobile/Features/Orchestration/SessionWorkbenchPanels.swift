@@ -627,7 +627,7 @@ extension SessionWorkbenchView {
                         .disabled(self.isRunningGitAction)
                     }
                 } else {
-                    Text("Push current branch. If upstream is not configured, it will be set to origin automatically.")
+                    Text("Push current branch. If no upstream is configured, it will be set automatically.")
                         .font(.caption)
                         .foregroundStyle(Color.white.opacity(0.72))
                         .frame(maxWidth: .infinity, alignment: .leading)

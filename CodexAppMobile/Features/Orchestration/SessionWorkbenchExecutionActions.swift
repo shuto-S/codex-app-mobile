@@ -781,11 +781,11 @@ extension SessionWorkbenchView {
                     )
                     if selectedAction == .commitAndPush {
                         self.gitOperationFeedback = pushResult.usedUpstreamFallback
-                            ? "Committed and pushed (configured upstream on origin)."
+                            ? "Committed and pushed (configured upstream remote)."
                             : "Committed and pushed."
                     } else {
                         self.gitOperationFeedback = pushResult.usedUpstreamFallback
-                            ? "Pushed (configured upstream on origin)."
+                            ? "Pushed (configured upstream remote)."
                             : "Pushed."
                     }
                 } else {
