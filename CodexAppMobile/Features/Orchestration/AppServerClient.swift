@@ -321,7 +321,8 @@ final class AppServerClient: ObservableObject {
             let shown = Array(items.prefix(displayLimit))
             let hiddenCount = max(0, items.count - shown.count)
             let suffix = hiddenCount > 0 ? L10n.format(", ... (+%@)", "\(hiddenCount)") : ""
-            return L10n.text("MCP servers: ") + shown.joined(separator: ", ") + suffix
+            let listWithSuffix = shown.joined(separator: ", ") + suffix
+            return L10n.format("MCP servers: %@", listWithSuffix)
         } catch let AppServerClientError.remote(code, message) where code == -32601 {
             self.appendEvent("mcpServerStatus/list unavailable: \(message)")
             return L10n.text("MCP status is unavailable on this server.")

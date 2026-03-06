@@ -3473,30 +3473,30 @@
         }
       }
     },
-    "MCP servers: ": {
+    "MCP servers: %@": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "MCP servers: "
+            "value": "MCP servers: %@"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "MCP サーバー: "
+            "value": "MCP サーバー: %@"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "MCP 服务器："
+            "value": "MCP 服务器：%@"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "MCP 伺服器："
+            "value": "MCP 伺服器：%@"
           }
         }
       }

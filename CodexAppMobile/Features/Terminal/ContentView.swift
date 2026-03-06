@@ -488,7 +488,7 @@ final class TerminalSessionViewModel: ObservableObject, @unchecked Sendable {
 
     private let engine = SSHClientEngine()
     private let workerQueue = DispatchQueue(label: "com.example.CodexAppMobile.ssh-session")
-    private var activeEndpoint = L10n.text("unknown host")
+    private var activeEndpoint = "unknown host"
     private var ansiRenderer = ANSIRenderer()
     private var suppressErrorsUntilNextConnect = false
     private var pendingOutputBuffer = ""
