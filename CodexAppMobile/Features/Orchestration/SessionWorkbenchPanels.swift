@@ -1,6 +1,9 @@
 import Foundation
 import SwiftUI
 import Textual
+#if canImport(UIKit)
+import UIKit
+#endif
 
 extension SessionWorkbenchView {
     func composerPickerChip(_ title: String, minWidth: CGFloat? = nil) -> some View {
@@ -18,6 +21,45 @@ extension SessionWorkbenchView {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .stroke(self.glassStrokeColor.opacity(0.56), lineWidth: 0.9)
         }
+    }
+
+    func composerIconChip(_ systemImage: String, minWidth: CGFloat = 48) -> some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(Color.white.opacity(0.92))
+            .frame(minWidth: minWidth, minHeight: 44, maxHeight: 44)
+            .background {
+                self.glassCardBackground(cornerRadius: 22, tint: self.glassWhiteTint(light: 0.20, dark: 0.14))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(self.glassStrokeColor.opacity(0.56), lineWidth: 0.9)
+            }
+    }
+
+    @ViewBuilder
+    func composerGitIconChip(minWidth: CGFloat = 48) -> some View {
+        #if canImport(UIKit)
+        if let gitMark = UIImage(named: "GitMark") {
+            Image(uiImage: gitMark)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: 18, height: 18)
+                .frame(minWidth: minWidth, minHeight: 44, maxHeight: 44)
+                .background {
+                    self.glassCardBackground(cornerRadius: 22, tint: self.glassWhiteTint(light: 0.20, dark: 0.14))
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(self.glassStrokeColor.opacity(0.56), lineWidth: 0.9)
+                }
+        } else {
+            self.composerIconChip("arrow.triangle.branch", minWidth: minWidth)
+        }
+        #else
+        self.composerIconChip("arrow.triangle.branch", minWidth: minWidth)
+        #endif
     }
 
     @ViewBuilder
@@ -40,7 +82,8 @@ extension SessionWorkbenchView {
     }
 
     var composerControlBar: some View {
-        HStack(spacing: 8) {
+        let isGitMenuAvailable = self.selectedWorkspace != nil && !self.isRunningSSHAction && !self.isRunningGitAction
+        return HStack(spacing: 8) {
             Menu {
                 ForEach(self.composerModelDescriptors) { model in
                     Button {
@@ -78,6 +121,22 @@ extension SessionWorkbenchView {
             .buttonStyle(.plain)
             .disabled(!self.isComposerInteractive)
             .opacity(self.isComposerInteractive ? 1 : 0.68)
+
+            Menu {
+                ForEach(GitMenuAction.allCases) { action in
+                    Button {
+                        self.handleGitMenuAction(action)
+                    } label: {
+                        Label(action.title, systemImage: action.systemImage)
+                    }
+                }
+            } label: {
+                self.composerGitIconChip(minWidth: 48)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Git Actions")
+            .disabled(!isGitMenuAvailable)
+            .opacity(isGitMenuAvailable ? 1 : 0.68)
 
             Button {
                 self.presentCommandPalette()
@@ -528,6 +587,387 @@ extension SessionWorkbenchView {
         .overlay {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(self.glassStrokeColor.opacity(0.5), lineWidth: 0.9)
+        }
+    }
+
+    var gitOperationSheet: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 14) {
+                Text(self.gitModalActionSelection.title)
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.94))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if self.gitModalActionSelection.requiresCommitMessage {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Commit message (optional)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.white.opacity(0.72))
+
+                        TextField(
+                            "Leave empty to generate with AI",
+                            text: self.$gitCommitMessageDraft,
+                            axis: .vertical
+                        )
+                        .lineLimit(1...3)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled(true)
+                        .foregroundStyle(Color.white)
+                        .tint(Color.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.white.opacity(0.08))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(Color.white.opacity(0.14), lineWidth: 0.8)
+                        )
+                        .disabled(self.isRunningGitAction)
+                    }
+                } else {
+                    Text("Push current branch. If no upstream is configured, it will be set automatically.")
+                        .font(.caption)
+                        .foregroundStyle(Color.white.opacity(0.72))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if !self.gitOperationFeedback.isEmpty {
+                    Label(self.gitOperationFeedback, systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.green.opacity(0.92))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if !self.gitOperationErrorMessage.isEmpty {
+                    Text(self.gitOperationErrorMessage)
+                        .font(.caption)
+                        .foregroundStyle(Color.red.opacity(0.92))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+
+                Spacer(minLength: 0)
+
+                Button {
+                    self.executeGitModalAction()
+                } label: {
+                    HStack(spacing: 8) {
+                        if self.isRunningGitAction {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Text(self.gitModalActionSelection.actionButtonTitle)
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .foregroundStyle(Color.black)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(self.isRunningGitAction)
+                .opacity(self.isRunningGitAction ? 0.68 : 1)
+            }
+            .padding(16)
+            .navigationTitle(self.gitModalActionSelection.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") {
+                        if !self.isRunningGitAction {
+                            self.activeGitOperationSheet = nil
+                        }
+                    }
+                    .disabled(self.isRunningGitAction)
+                }
+            }
+            .background(Color.black.ignoresSafeArea())
+        }
+        .presentationDetents([.medium])
+        .presentationDragIndicator(.visible)
+    }
+
+    var gitDiffPage: some View {
+        Group {
+            switch self.gitDiffLoadState {
+            case .idle, .loading:
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .controlSize(.large)
+                        .tint(Color.white.opacity(0.92))
+                    Text("Loading diff...")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.white.opacity(0.78))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .failed(let message):
+                VStack(spacing: 14) {
+                    Text(message)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.red.opacity(0.92))
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: 360, alignment: .leading)
+
+                    Button("Retry") {
+                        self.reloadGitDiffPage()
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.black)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Color.white, in: Capsule())
+                    .buttonStyle(.plain)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.horizontal, 16)
+            case .loaded(let snapshot):
+                VStack(spacing: 0) {
+                    self.gitDiffSummaryHeader(snapshot.summary)
+
+                    if snapshot.files.isEmpty {
+                        Text("No textual diff to display.")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.white.opacity(0.72))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                            .padding(.horizontal, 16)
+                    } else {
+                        ScrollView {
+                            LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
+                                ForEach(snapshot.files) { file in
+                                    Section {
+                                        self.gitDiffFileSectionBody(file)
+                                    } header: {
+                                        self.gitDiffFileSectionHeader(file)
+                                    }
+                                }
+                            }
+                            .padding(.vertical, 12)
+                        }
+                    }
+                }
+            }
+        }
+        .background(Color.black.ignoresSafeArea())
+        .navigationTitle(self.gitDiffNavigationTitle)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
+                        self.reloadGitDiffPage()
+                    } label: {
+                        Label("Reload", systemImage: "arrow.clockwise")
+                    }
+
+                    Divider()
+
+                    Button {
+                        self.presentGitOperationSheet(initialAction: .commit)
+                    } label: {
+                        Label("Commit", systemImage: "checkmark.circle")
+                    }
+
+                    Button {
+                        self.presentGitOperationSheet(initialAction: .commitAndPush)
+                    } label: {
+                        Label("Commit+Push", systemImage: "arrow.up.doc")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .disabled(self.gitDiffLoadState == .loading || self.isRunningGitAction)
+            }
+        }
+    }
+
+    var gitDiffNavigationTitle: String {
+        if case .loaded(let snapshot) = self.gitDiffLoadState {
+            return snapshot.summary.branchName
+        }
+        return "Diff"
+    }
+
+    func gitDiffSummaryHeader(_ summary: GitDiffSummary) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(summary.changedFiles) files changed")
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(Color.white.opacity(0.94))
+
+            if summary.untrackedFiles > 0 {
+                Text("\(summary.untrackedFiles) untracked file\(summary.untrackedFiles == 1 ? "" : "s")")
+                    .font(.caption)
+                    .foregroundStyle(Color.white.opacity(0.62))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.white.opacity(0.06))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.white.opacity(0.12))
+                .frame(height: 0.7)
+        }
+    }
+
+    func gitDiffFileSectionHeader(_ file: GitDiffFile) -> some View {
+        let totals = self.gitDiffFileLineTotals(file)
+        let isExpanded = self.gitDiffExpandedFileIDs.contains(file.id)
+        return Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                self.toggleGitDiffFileExpansion(file.id)
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.78))
+
+                Text(file.displayPath)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.94))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("+\(self.groupedTokenCount(totals.additions))")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.green.opacity(0.98))
+
+                Text("-\(self.groupedTokenCount(totals.deletions))")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.red.opacity(0.98))
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.10), lineWidth: 0.8)
+        )
+        .padding(.horizontal, 12)
+        .background(Color.black.opacity(0.98))
+    }
+
+    @ViewBuilder
+    func gitDiffFileSectionBody(_ file: GitDiffFile) -> some View {
+        if self.gitDiffExpandedFileIDs.contains(file.id) {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(file.hunks) { hunk in
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(hunk.header)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(Color.white.opacity(0.72))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.white.opacity(0.06))
+
+                        ForEach(hunk.lines) { line in
+                            self.gitDiffLineRow(line)
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 0.7)
+                    )
+                }
+                if file.hunks.isEmpty {
+                    Text("No textual hunks.")
+                        .font(.caption)
+                        .foregroundStyle(Color.white.opacity(0.62))
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 2)
+            .padding(.bottom, 4)
+        }
+    }
+
+    func gitDiffFileLineTotals(_ file: GitDiffFile) -> (additions: Int, deletions: Int) {
+        var additions = 0
+        var deletions = 0
+        for hunk in file.hunks {
+            for line in hunk.lines {
+                switch line.kind {
+                case .addition:
+                    additions += 1
+                case .deletion:
+                    deletions += 1
+                case .context, .meta:
+                    break
+                }
+            }
+        }
+        return (additions, deletions)
+    }
+
+    func toggleGitDiffFileExpansion(_ fileID: String) {
+        if self.gitDiffExpandedFileIDs.contains(fileID) {
+            self.gitDiffExpandedFileIDs.remove(fileID)
+        } else {
+            self.gitDiffExpandedFileIDs.insert(fileID)
+        }
+    }
+
+    func gitDiffLineRow(_ line: GitDiffLine) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            Text(line.oldLineNumber.map(String.init) ?? "")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(Color.white.opacity(0.46))
+                .frame(width: 42, alignment: .trailing)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+
+            Text(line.newLineNumber.map(String.init) ?? "")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(Color.white.opacity(0.46))
+                .frame(width: 42, alignment: .trailing)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+
+            Text(verbatim: self.gitDiffLineBodyText(line))
+                .font(.caption.monospaced())
+                .foregroundStyle(Color.white.opacity(0.92))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .textSelection(.enabled)
+        }
+        .background(self.gitDiffLineBackground(line.kind))
+    }
+
+    func gitDiffLineBodyText(_ line: GitDiffLine) -> String {
+        switch line.kind {
+        case .addition:
+            return "+" + line.text
+        case .deletion:
+            return "-" + line.text
+        case .context:
+            return " " + line.text
+        case .meta:
+            return line.text
+        }
+    }
+
+    func gitDiffLineBackground(_ kind: GitDiffLineKind) -> Color {
+        switch kind {
+        case .addition:
+            return Color.green.opacity(0.16)
+        case .deletion:
+            return Color.red.opacity(0.16)
+        case .context:
+            return Color.clear
+        case .meta:
+            return Color.white.opacity(0.06)
         }
     }
 
