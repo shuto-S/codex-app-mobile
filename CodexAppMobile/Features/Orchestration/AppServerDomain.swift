@@ -485,17 +485,17 @@ enum AppServerErrorCategory: String {
     var title: String {
         switch self {
         case .authentication:
-            return L10n.text("Authentication")
+            return "Authentication"
         case .connection:
-            return L10n.text("Connection")
+            return "Connection"
         case .permission:
-            return L10n.text("Permission")
+            return "Permission"
         case .compatibility:
-            return L10n.text("Compatibility")
+            return "Compatibility"
         case .protocolError:
-            return L10n.text("Protocol")
+            return "Protocol"
         case .unknown:
-            return L10n.text("Unknown")
+            return "Unknown"
         }
     }
 }
