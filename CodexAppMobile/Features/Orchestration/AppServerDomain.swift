@@ -156,21 +156,24 @@ enum AppServerClientError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidURL:
-            return "Invalid app-server URL. Use ws:// or wss://."
+            return L10n.text("Invalid app-server URL. Use ws:// or wss://.")
         case .invalidEndpointHost(let host):
-            return "Invalid app-server host (\(host)). Use a reachable host or Tailscale IP, not 0.0.0.0/localhost."
+            return L10n.format(
+                "Invalid app-server host (%@). Use a reachable host or Tailscale IP, not 0.0.0.0/localhost.",
+                host
+            )
         case .notConnected:
-            return "Not connected to app-server."
+            return L10n.text("Not connected to app-server.")
         case .timeout(let method):
-            return "Request timed out: \(method)"
+            return L10n.format("Request timed out: %@", method)
         case .remote(let code, let message):
-            return "Remote error [\(code)]: \(message)"
+            return L10n.format("Remote error [%@]: %@", "\(code)", message)
         case .incompatibleVersion(let current, let minimum):
-            return "Codex CLI version \(current) is not supported. Required: \(minimum)+"
+            return L10n.format("Codex CLI version %@ is not supported. Required: %@+", current, minimum)
         case .malformedResponse:
-            return "Malformed response from app-server."
+            return L10n.text("Malformed response from app-server.")
         case .unsupportedMessage:
-            return "Unsupported message from app-server."
+            return L10n.text("Unsupported message from app-server.")
         }
     }
 }
@@ -373,13 +376,13 @@ struct AppServerPendingRequest: Identifiable, Equatable {
     var title: String {
         switch self.kind {
         case .commandApproval:
-            return "Command Approval"
+            return L10n.text("Command Approval")
         case .fileChange:
-            return "File Change Approval"
+            return L10n.text("File Change Approval")
         case .userInput:
-            return "User Input Required"
+            return L10n.text("User Input Required")
         case .unknown:
-            return "Server Request"
+            return L10n.text("Server Request")
         }
     }
 }

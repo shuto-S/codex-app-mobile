@@ -30,17 +30,17 @@ struct PendingRequestSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Method") {
+                Section(L10n.text("Method")) {
                     Text(self.request.method)
                         .font(.footnote)
                         .textSelection(.enabled)
                     if !self.request.threadID.isEmpty {
-                        Text("thread: \(self.request.threadID)")
+                        Text(L10n.format("thread: %@", self.request.threadID))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     if !self.request.turnID.isEmpty {
-                        Text("turn: \(self.request.turnID)")
+                        Text(L10n.format("turn: %@", self.request.turnID))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -57,14 +57,14 @@ struct PendingRequestSheet: View {
                     let networkApprovalContext,
                     let additionalPermissions
                 ):
-                    Section("Command") {
-                        Text(command.isEmpty ? "(empty command)" : command)
+                    Section(L10n.text("Command")) {
+                        Text(command.isEmpty ? L10n.text("(empty command)") : command)
                             .font(.system(.footnote, design: .monospaced))
                             .textSelection(.enabled)
 
                         if let cwd,
                            !cwd.isEmpty {
-                            Text("cwd: \(cwd)")
+                            Text(L10n.format("cwd: %@", cwd))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -78,15 +78,20 @@ struct PendingRequestSheet: View {
                     }
 
                     if let additionalPermissions {
-                        Section("Requested Access") {
+                        Section(L10n.text("Requested Access")) {
                             if let network = additionalPermissions.network {
-                                Text("Network: \(network ? "required" : "not required")")
+                                let networkRequirement = network ? L10n.text("required") : L10n.text("not required")
+                                Text(L10n.format("Network: %@", networkRequirement))
                                     .font(.caption)
                             }
                             if let fileSystem = additionalPermissions.fileSystem {
                                 let readable = fileSystem.read?.count ?? 0
                                 let writable = fileSystem.write?.count ?? 0
-                                Text("File system: read \(readable) path(s), write \(writable) path(s)")
+                                Text(L10n.format(
+                                    "File system: read %@ path(s), write %@ path(s)",
+                                    "\(readable)",
+                                    "\(writable)"
+                                ))
                                     .font(.caption)
                             }
                         }
@@ -94,7 +99,7 @@ struct PendingRequestSheet: View {
 
                     if let proposedExecPolicyAmendment,
                        !proposedExecPolicyAmendment.command.isEmpty {
-                        Section("Exec Policy Proposal") {
+                        Section(L10n.text("Exec Policy Proposal")) {
                             Text(proposedExecPolicyAmendment.command.joined(separator: " "))
                                 .font(.system(.caption, design: .monospaced))
                                 .textSelection(.enabled)
@@ -102,21 +107,21 @@ struct PendingRequestSheet: View {
                     }
 
                     if !proposedNetworkPolicyAmendments.isEmpty || networkApprovalContext != nil {
-                        Section("Network Policy") {
+                        Section(L10n.text("Network Policy")) {
                             if let networkApprovalContext {
                                 let protocolValue = networkApprovalContext.protocol?.uppercased() ?? "UNKNOWN"
-                                Text("Host: \(networkApprovalContext.host) (\(protocolValue))")
+                                Text(L10n.format("Host: %@ (%@)", networkApprovalContext.host, protocolValue))
                                     .font(.caption)
                             }
                             ForEach(proposedNetworkPolicyAmendments.indices, id: \.self) { index in
                                 let amendment = proposedNetworkPolicyAmendments[index]
-                                Text("\(amendment.action.rawValue.uppercased()): \(amendment.host)")
+                                Text(L10n.format("%@: %@", amendment.action.rawValue.uppercased(), amendment.host))
                                     .font(.caption)
                             }
                         }
                     }
 
-                    Section("Decision") {
+                    Section(L10n.text("Decision")) {
                         ForEach(self.commandDecisionRows(
                             availableDecisions: availableDecisions,
                             proposedExecPolicyAmendment: proposedExecPolicyAmendment,
@@ -132,19 +137,19 @@ struct PendingRequestSheet: View {
                     }
 
                 case .fileChange(let reason):
-                    Section("File Change") {
+                    Section(L10n.text("File Change")) {
                         if let reason,
                            !reason.isEmpty {
                             Text(reason)
                                 .font(.footnote)
                         } else {
-                            Text("Codex requests file-change approval.")
+                            Text(L10n.text("Codex requests file-change approval."))
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
                     }
 
-                    Section("Decision") {
+                    Section(L10n.text("Decision")) {
                         ForEach(AppServerFileApprovalDecision.allCases) { decision in
                             Button(decision.rawValue) {
                                 self.respondFileChange(decision)
@@ -173,7 +178,7 @@ struct PendingRequestSheet: View {
                                 }
                             }
 
-                            TextField("Answer", text: Binding(
+                            TextField(L10n.text("Answer"), text: Binding(
                                 get: { self.freeFormAnswers[question.id] ?? "" },
                                 set: { self.freeFormAnswers[question.id] = $0 }
                             ))
@@ -183,14 +188,14 @@ struct PendingRequestSheet: View {
                     }
 
                     Section {
-                        Button("Submit") {
+                        Button(L10n.text("Submit")) {
                             self.respondUserInput(questions: questions)
                         }
                     }
 
                 case .unknown:
                     Section {
-                        Text("This request type is not yet mapped. Reply from desktop fallback if needed.")
+                        Text(L10n.text("This request type is not yet mapped. Reply from desktop fallback if needed."))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -212,7 +217,7 @@ struct PendingRequestSheet: View {
                     } label: {
                         Image(systemName: "xmark")
                     }
-                    .accessibilityLabel("Close")
+                    .accessibilityLabel(L10n.text("Close"))
                     .codexActionButtonStyle()
                 }
             }
@@ -244,38 +249,38 @@ struct PendingRequestSheet: View {
             case .accept:
                 rows.append(CommandDecisionRow(
                     id: nextID("accept"),
-                    title: "Accept",
+                    title: L10n.text("Accept"),
                     decision: .accept
                 ))
             case .acceptForSession:
                 rows.append(CommandDecisionRow(
                     id: nextID("accept-session"),
-                    title: "Accept for Session",
+                    title: L10n.text("Accept for Session"),
                     decision: .acceptForSession
                 ))
             case .decline:
                 rows.append(CommandDecisionRow(
                     id: nextID("decline"),
-                    title: "Decline",
+                    title: L10n.text("Decline"),
                     decision: .decline
                 ))
             case .cancel:
                 rows.append(CommandDecisionRow(
                     id: nextID("cancel"),
-                    title: "Cancel Turn",
+                    title: L10n.text("Cancel Turn"),
                     decision: .cancel
                 ))
             case .acceptWithExecpolicyAmendment(let amendment):
                 if let amendment = amendment ?? proposedExecPolicyAmendment {
                     rows.append(CommandDecisionRow(
                         id: nextID("accept-execpolicy"),
-                        title: "Accept + Save Exec Policy",
+                        title: L10n.text("Accept + Save Exec Policy"),
                         decision: .acceptWithExecpolicyAmendment(amendment: amendment)
                     ))
                 } else {
                     rows.append(CommandDecisionRow(
                         id: nextID("accept-execpolicy-missing"),
-                        title: "Accept + Save Exec Policy (Unavailable)",
+                        title: L10n.text("Accept + Save Exec Policy (Unavailable)"),
                         decision: nil
                     ))
                 }
@@ -283,13 +288,17 @@ struct PendingRequestSheet: View {
                 if let amendment = amendment ?? proposedNetworkPolicyAmendments.first {
                     rows.append(CommandDecisionRow(
                         id: nextID("network-policy"),
-                        title: "Apply Network Policy: \(amendment.action.rawValue.uppercased()) \(amendment.host)",
+                        title: L10n.format(
+                            "Apply Network Policy: %@ %@",
+                            amendment.action.rawValue.uppercased(),
+                            amendment.host
+                        ),
                         decision: .applyNetworkPolicyAmendment(amendment: amendment)
                     ))
                 } else if let networkApprovalContext {
                     rows.append(CommandDecisionRow(
                         id: nextID("network-allow"),
-                        title: "Allow host \(networkApprovalContext.host)",
+                        title: L10n.format("Allow host %@", networkApprovalContext.host),
                         decision: .applyNetworkPolicyAmendment(
                             amendment: AppServerNetworkPolicyAmendment(
                                 host: networkApprovalContext.host,
@@ -299,7 +308,7 @@ struct PendingRequestSheet: View {
                     ))
                     rows.append(CommandDecisionRow(
                         id: nextID("network-deny"),
-                        title: "Deny host \(networkApprovalContext.host)",
+                        title: L10n.format("Deny host %@", networkApprovalContext.host),
                         decision: .applyNetworkPolicyAmendment(
                             amendment: AppServerNetworkPolicyAmendment(
                                 host: networkApprovalContext.host,
@@ -310,7 +319,7 @@ struct PendingRequestSheet: View {
                 } else {
                     rows.append(CommandDecisionRow(
                         id: nextID("network-policy-missing"),
-                        title: "Apply Network Policy (Unavailable)",
+                        title: L10n.text("Apply Network Policy (Unavailable)"),
                         decision: nil
                     ))
                 }

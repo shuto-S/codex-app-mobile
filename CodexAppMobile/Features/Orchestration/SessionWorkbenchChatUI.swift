@@ -42,20 +42,20 @@ extension SessionWorkbenchView {
                     Button {
                         self.reloadThread(summary: selectedThreadSummary)
                     } label: {
-                        Label("Reload", systemImage: "arrow.clockwise")
+                        Label(L10n.text("Reload"), systemImage: "arrow.clockwise")
                     }
 
                     Button(role: .destructive) {
                         self.archiveThread(summary: selectedThreadSummary, archived: true)
                     } label: {
-                        Label("Archive", systemImage: "archivebox")
+                        Label(L10n.text("Archive"), systemImage: "archivebox")
                     }
                     .disabled(selectedThreadSummary.ephemeral)
                     if selectedThreadSummary.ephemeral {
-                        Text("Ephemeral threads cannot be archived")
+                        Text(L10n.text("Ephemeral threads cannot be archived"))
                     }
                 } else {
-                    Text("No thread to archive")
+                    Text(L10n.text("No thread to archive"))
                 }
             } label: {
                 Image(systemName: "ellipsis")
@@ -113,9 +113,9 @@ extension SessionWorkbenchView {
                     if self.workspaces.isEmpty {
                         self.chatCreateProjectCallToAction
                     } else if self.selectedWorkspace == nil {
-                        self.chatPlaceholder("Select a project.")
+                        self.chatPlaceholder(L10n.text("Select a project."))
                     } else if self.selectedThreadID != nil && self.parsedChatMessages.isEmpty {
-                        self.chatPlaceholder("No messages yet.")
+                        self.chatPlaceholder(L10n.text("No messages yet."))
                     } else if self.selectedThreadID != nil {
                         ForEach(self.parsedChatMessages) { message in
                             self.chatMessageRow(message)
@@ -170,7 +170,7 @@ extension SessionWorkbenchView {
                             } label: {
                                 HStack(spacing: 8) {
                                     Image(systemName: "clock.badge.exclamationmark")
-                                    Text("\(pendingUserInputCount) question\(pendingUserInputCount == 1 ? "" : "s") waiting for answer")
+                                    Text(L10n.format("%lld question(s) waiting for answer", pendingUserInputCount))
                                         .font(.subheadline.weight(.semibold))
                                     Spacer()
                                 }
@@ -363,7 +363,7 @@ extension SessionWorkbenchView {
 
     var chatCreateProjectCallToAction: some View {
         VStack(spacing: 14) {
-            Text("No projects yet.")
+            Text(L10n.text("No projects yet."))
                 .font(.headline)
                 .foregroundStyle(Color.white.opacity(0.88))
 
@@ -373,7 +373,7 @@ extension SessionWorkbenchView {
                 self.isPresentingProjectEditor = true
                 self.isMenuOpen = false
             } label: {
-                Label("Create Project", systemImage: "plus")
+                Label(L10n.text("Create Project"), systemImage: "plus")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.white)
                     .padding(.horizontal, 16)

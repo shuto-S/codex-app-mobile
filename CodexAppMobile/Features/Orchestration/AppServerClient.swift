@@ -252,7 +252,7 @@ final class AppServerClient: ObservableObject {
             let result = try await self.request(method: "mcpServerStatus/list", params: params)
             let rows = Self.dataArray(from: result, fallbackKeys: ["servers", "mcpServers"])
             guard !rows.isEmpty else {
-                return "MCP servers: none reported."
+                return L10n.text("MCP servers: none reported.")
             }
 
             var items: [String] = []
@@ -268,7 +268,7 @@ final class AppServerClient: ObservableObject {
                         ["server", "name"],
                         ["displayName"],
                     ]
-                ) ?? "unnamed"
+                ) ?? L10n.text("unnamed")
                 guard seenNames.insert(name).inserted else { continue }
 
                 let enabled = Self.findBool(
@@ -295,36 +295,37 @@ final class AppServerClient: ObservableObject {
                     .lowercased() ?? ""
                 let runningState: String
                 if let enabled {
-                    runningState = enabled ? "running" : "stopped"
+                    runningState = enabled ? L10n.text("running") : L10n.text("stopped")
                 } else if normalizedStatus.contains("connected")
                     || normalizedStatus.contains("ready")
                     || normalizedStatus.contains("running")
                     || normalizedStatus == "ok" {
-                    runningState = "running"
+                    runningState = L10n.text("running")
                 } else if normalizedStatus.contains("disconnected")
                     || normalizedStatus.contains("stopped")
                     || normalizedStatus.contains("error")
                     || normalizedStatus.contains("failed") {
-                    runningState = "stopped"
+                    runningState = L10n.text("stopped")
                 } else {
-                    runningState = "unknown"
+                    runningState = L10n.text("unknown")
                 }
 
                 items.append("\(name)(\(runningState))")
             }
 
             guard !items.isEmpty else {
-                return "MCP servers: none reported."
+                return L10n.text("MCP servers: none reported.")
             }
 
             let displayLimit = 6
             let shown = Array(items.prefix(displayLimit))
             let hiddenCount = max(0, items.count - shown.count)
-            let suffix = hiddenCount > 0 ? ", ... (+\(hiddenCount))" : ""
-            return "MCP servers: " + shown.joined(separator: ", ") + suffix
+            let suffix = hiddenCount > 0 ? L10n.format(", ... (+%@)", "\(hiddenCount)") : ""
+            let listWithSuffix = shown.joined(separator: ", ") + suffix
+            return L10n.format("MCP servers: %@", listWithSuffix)
         } catch let AppServerClientError.remote(code, message) where code == -32601 {
             self.appendEvent("mcpServerStatus/list unavailable: \(message)")
-            return "MCP status is unavailable on this server."
+            return L10n.text("MCP status is unavailable on this server.")
         }
     }
 
@@ -1735,48 +1736,48 @@ final class AppServerClient: ObservableObject {
             AppServerSlashCommandDescriptor(
                 kind: .newThread,
                 command: "/new",
-                title: "New thread",
-                description: "Start a new conversation.",
+                title: L10n.text("New Thread"),
+                description: L10n.text("Start a new conversation."),
                 systemImage: "plus.bubble",
                 requiresThread: false
             ),
             AppServerSlashCommandDescriptor(
                 kind: .forkThread,
                 command: "/fork",
-                title: "Fork",
-                description: "Fork the current thread.",
+                title: L10n.text("Fork"),
+                description: L10n.text("Fork the current thread."),
                 systemImage: "arrow.triangle.branch",
                 requiresThread: true
             ),
             AppServerSlashCommandDescriptor(
                 kind: .startReview,
                 command: "/review",
-                title: "Code review",
-                description: "Run reviewer on current changes.",
+                title: L10n.text("Code review"),
+                description: L10n.text("Run reviewer on current changes."),
                 systemImage: "checkmark.shield",
                 requiresThread: true
             ),
             AppServerSlashCommandDescriptor(
                 kind: .startPlanMode,
                 command: "/plan",
-                title: "Plan mode",
-                description: "Switch next turns to planning mode.",
+                title: L10n.text("Plan mode"),
+                description: L10n.text("Switch next turns to planning mode."),
                 systemImage: "checklist",
                 requiresThread: false
             ),
             AppServerSlashCommandDescriptor(
                 kind: .showStatus,
                 command: "/status",
-                title: "Status",
-                description: "Show connection, model, and catalog status.",
+                title: L10n.text("Status"),
+                description: L10n.text("Show connection, model, and catalog status."),
                 systemImage: "info.circle",
                 requiresThread: false
             ),
             AppServerSlashCommandDescriptor(
                 kind: .showMCPStatus,
                 command: "/mcp-status",
-                title: "MCP status",
-                description: "Show MCP server availability.",
+                title: L10n.text("MCP status"),
+                description: L10n.text("Show MCP server availability."),
                 systemImage: "shippingbox",
                 requiresThread: false
             ),
