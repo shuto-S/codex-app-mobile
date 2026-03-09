@@ -1,6 +1,12 @@
 import Foundation
+import OSLog
 import SwiftUI
 import Textual
+
+private let gitUILogger = Logger(
+    subsystem: "com.example.CodexAppMobile",
+    category: "SessionWorkbenchGitUI"
+)
 
 extension SessionWorkbenchView {
     static func normalizedRemotePathForThreadScope(_ rawPath: String) -> String {
@@ -562,6 +568,263 @@ extension SessionWorkbenchView {
                 self.presentCriticalErrorDialog(self.appState.appServerClient.userFacingMessage(for: error))
             }
         }
+    }
+
+    func handleGitMenuAction(_ action: GitMenuAction) {
+        self.isPromptFieldFocused = false
+        self.dismissCommandPalette()
+        self.dismissStatusPanel()
+        self.dismissMCPStatusSheet()
+
+        switch action {
+        case .commit:
+            self.presentGitOperationSheet(initialAction: .commit)
+        case .commitAndPush:
+            self.presentGitOperationSheet(initialAction: .commitAndPush)
+        case .push:
+            self.presentGitOperationSheet(initialAction: .push)
+        case .diff:
+            self.openGitDiffPage()
+        }
+    }
+
+    func openGitDiffPage() {
+        guard let selectedWorkspace else {
+            self.presentCriticalErrorDialog("Select a project first.")
+            return
+        }
+
+        if self.gitDiffNavigationContext != nil {
+            if case .loading = self.gitDiffLoadState {
+                gitUILogger.debug(
+                    "Git diff open ignored while already loading workspaceID=\(selectedWorkspace.id, privacy: .public)"
+                )
+                return
+            }
+            gitUILogger.debug(
+                "Git diff already open, triggering reload workspaceID=\(selectedWorkspace.id, privacy: .public)"
+            )
+            self.reloadGitDiffPage()
+            return
+        }
+
+        gitUILogger.debug(
+            "Git diff page open workspaceID=\(selectedWorkspace.id, privacy: .public)"
+        )
+        self.gitDiffNavigationContext = GitDiffNavigationContext(workspaceTitle: selectedWorkspace.displayName)
+        self.gitDiffShouldExpandAllOnNextLoad = true
+        self.gitDiffExpandedFileIDs.removeAll()
+        self.reloadGitDiffPage()
+    }
+
+    func reloadGitDiffPage() {
+        guard let selectedWorkspace else {
+            self.presentCriticalErrorDialog("Select a project first.")
+            return
+        }
+
+        self.gitDiffLoadRequestID += 1
+        let loadRequestID = self.gitDiffLoadRequestID
+        self.gitDiffLoadState = .loading
+        self.gitDiffLoadTask?.cancel()
+        gitUILogger.debug(
+            "Git diff loading started requestID=\(loadRequestID, privacy: .public) workspaceID=\(selectedWorkspace.id, privacy: .public)"
+        )
+
+        let password = self.appState.remoteHostStore.password(for: self.host.id)
+        self.gitDiffLoadTask = Task {
+            do {
+                let snapshot = try await self.sshGitService.loadDiff(
+                    host: self.host,
+                    password: password,
+                    workspacePath: selectedWorkspace.remotePath
+                )
+                guard loadRequestID == self.gitDiffLoadRequestID else {
+                    gitUILogger.debug(
+                        "Git diff loading ignored after completion requestID=\(loadRequestID, privacy: .public) cancelled=\(Task.isCancelled, privacy: .public)"
+                    )
+                    return
+                }
+                self.gitDiffLoadTask = nil
+                let latestFileIDs = Set(snapshot.files.map(\.id))
+                if self.gitDiffShouldExpandAllOnNextLoad {
+                    self.gitDiffExpandedFileIDs = latestFileIDs
+                    self.gitDiffShouldExpandAllOnNextLoad = false
+                } else {
+                    self.gitDiffExpandedFileIDs.formIntersection(latestFileIDs)
+                }
+                self.gitDiffLoadState = .loaded(snapshot)
+                gitUILogger.debug(
+                    "Git diff loading succeeded requestID=\(loadRequestID, privacy: .public) changedFiles=\(snapshot.summary.changedFiles, privacy: .public)"
+                )
+            } catch is CancellationError {
+                if loadRequestID == self.gitDiffLoadRequestID {
+                    self.gitDiffLoadTask = nil
+                    if case .loading = self.gitDiffLoadState {
+                        self.gitDiffLoadState = .idle
+                    }
+                }
+                gitUILogger.debug(
+                    "Git diff loading cancelled requestID=\(loadRequestID, privacy: .public)"
+                )
+                return
+            } catch {
+                guard loadRequestID == self.gitDiffLoadRequestID else {
+                    gitUILogger.debug(
+                        "Git diff loading error ignored requestID=\(loadRequestID, privacy: .public) cancelled=\(Task.isCancelled, privacy: .public)"
+                    )
+                    return
+                }
+                self.gitDiffLoadTask = nil
+                self.gitDiffLoadState = .failed(self.userFacingGitError(error))
+                gitUILogger.error(
+                    "Git diff loading failed requestID=\(loadRequestID, privacy: .public) error=\(String(describing: error), privacy: .public)"
+                )
+            }
+        }
+    }
+
+    func presentGitOperationSheet(initialAction: GitModalAction) {
+        guard self.selectedWorkspace != nil else {
+            self.presentCriticalErrorDialog("Select a project first.")
+            return
+        }
+
+        self.gitModalActionSelection = initialAction
+        self.gitCommitMessageDraft = ""
+        self.gitOperationFeedback = ""
+        self.gitOperationErrorMessage = ""
+        self.activeGitOperationSheet = GitOperationSheetContext()
+    }
+
+    func executeGitModalAction() {
+        guard !self.isRunningGitAction else { return }
+        guard let selectedWorkspace else {
+            self.presentCriticalErrorDialog("Select a project first.")
+            return
+        }
+
+        let selectedAction = self.gitModalActionSelection
+        let manualCommitMessage = self.gitCommitMessageDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let password = self.appState.remoteHostStore.password(for: self.host.id)
+        let operationID = String(UUID().uuidString.prefix(8))
+
+        gitUILogger.debug(
+            "Git action[\(operationID, privacy: .public)] started action=\(selectedAction.rawValue, privacy: .public) autoMessage=\(manualCommitMessage.isEmpty, privacy: .public)"
+        )
+
+        self.isRunningGitAction = true
+        self.gitOperationFeedback = ""
+        self.gitOperationErrorMessage = ""
+
+        Task {
+            let operationStartedAt = Date()
+            func elapsedMilliseconds(since start: Date) -> Int {
+                Int(Date().timeIntervalSince(start) * 1_000)
+            }
+            defer {
+                self.isRunningGitAction = false
+            }
+
+            do {
+                var committedMessage: String?
+
+                if selectedAction.requiresCommitMessage {
+                    let stageStartedAt = Date()
+                    try await self.sshGitService.stageAll(
+                        host: self.host,
+                        password: password,
+                        workspacePath: selectedWorkspace.remotePath
+                    )
+                    gitUILogger.debug(
+                        "Git action[\(operationID, privacy: .public)] stage-all completed durationMs=\(elapsedMilliseconds(since: stageStartedAt), privacy: .public)"
+                    )
+
+                    let commitMessage: String
+                    if manualCommitMessage.isEmpty {
+                        let generationStartedAt = Date()
+                        commitMessage = try await self.sshGitService.generateCommitMessage(
+                            host: self.host,
+                            password: password,
+                            workspacePath: selectedWorkspace.remotePath,
+                            model: self.composerModelForRequest
+                        )
+                        gitUILogger.debug(
+                            "Git action[\(operationID, privacy: .public)] commit-message generated durationMs=\(elapsedMilliseconds(since: generationStartedAt), privacy: .public) messageChars=\(commitMessage.count, privacy: .public)"
+                        )
+                        self.gitCommitMessageDraft = commitMessage
+                    } else {
+                        commitMessage = manualCommitMessage
+                        gitUILogger.debug(
+                            "Git action[\(operationID, privacy: .public)] using manual commit message messageChars=\(commitMessage.count, privacy: .public)"
+                        )
+                    }
+
+                    let commitStartedAt = Date()
+                    try await self.sshGitService.commit(
+                        host: self.host,
+                        password: password,
+                        workspacePath: selectedWorkspace.remotePath,
+                        message: commitMessage
+                    )
+                    gitUILogger.debug(
+                        "Git action[\(operationID, privacy: .public)] commit completed durationMs=\(elapsedMilliseconds(since: commitStartedAt), privacy: .public)"
+                    )
+                    committedMessage = commitMessage
+                }
+
+                if selectedAction == .push || selectedAction == .commitAndPush {
+                    let pushStartedAt = Date()
+                    let pushResult = try await self.sshGitService.pushWithUpstreamFallback(
+                        host: self.host,
+                        password: password,
+                        workspacePath: selectedWorkspace.remotePath
+                    )
+                    gitUILogger.debug(
+                        "Git action[\(operationID, privacy: .public)] push completed durationMs=\(elapsedMilliseconds(since: pushStartedAt), privacy: .public) usedUpstreamFallback=\(pushResult.usedUpstreamFallback, privacy: .public)"
+                    )
+                    if selectedAction == .commitAndPush {
+                        self.gitOperationFeedback = pushResult.usedUpstreamFallback
+                            ? "Committed and pushed (configured upstream remote)."
+                            : "Committed and pushed."
+                    } else {
+                        self.gitOperationFeedback = pushResult.usedUpstreamFallback
+                            ? "Pushed (configured upstream remote)."
+                            : "Pushed."
+                    }
+                } else {
+                    self.gitOperationFeedback = "Committed."
+                }
+
+                self.scheduleSessionRefresh([.threads], debounceNanoseconds: 150_000_000)
+                if let committedMessage {
+                    self.showComposerInfo(
+                        "\(self.gitOperationFeedback) (\(committedMessage))",
+                        tone: .success
+                    )
+                } else {
+                    self.showComposerInfo(self.gitOperationFeedback, tone: .success)
+                }
+                self.activeGitOperationSheet = nil
+                gitUILogger.debug(
+                    "Git action[\(operationID, privacy: .public)] completed action=\(selectedAction.rawValue, privacy: .public) totalDurationMs=\(elapsedMilliseconds(since: operationStartedAt), privacy: .public)"
+                )
+            } catch {
+                gitUILogger.error(
+                    "Git action[\(operationID, privacy: .public)] failed action=\(selectedAction.rawValue, privacy: .public) totalDurationMs=\(elapsedMilliseconds(since: operationStartedAt), privacy: .public) error=\(String(describing: error), privacy: .public)"
+                )
+                self.gitOperationErrorMessage = self.userFacingGitError(error)
+            }
+        }
+    }
+
+    func userFacingGitError(_ error: Error) -> String {
+        if let localizedError = error as? LocalizedError,
+           let description = localizedError.errorDescription,
+           !description.isEmpty {
+            return "[Git] \(description)"
+        }
+        return self.userFacingSSHError(error)
     }
 
     func presentCriticalErrorDialog(_ message: String) {

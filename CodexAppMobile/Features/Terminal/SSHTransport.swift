@@ -21,7 +21,7 @@ final class SSHClientEngine: @unchecked Sendable {
     private var sessionChannel: Channel?
 
     func connect(host: String, port: Int, username: String, password: String?) throws {
-        self.disconnect()
+        self.disconnect(notify: false)
 
         let group = NIOTSEventLoopGroup()
         self.eventLoopGroup = group
@@ -86,7 +86,7 @@ final class SSHClientEngine: @unchecked Sendable {
             self.sessionChannel = try sessionChannelFuture.wait()
             self.onConnected?()
         } catch {
-            self.disconnect()
+            self.disconnect(notify: false)
             throw error
         }
     }
@@ -104,6 +104,10 @@ final class SSHClientEngine: @unchecked Sendable {
     }
 
     func disconnect() {
+        self.disconnect(notify: true)
+    }
+
+    private func disconnect(notify: Bool) {
         self.sessionChannel?.close(promise: nil)
         self.sessionChannel = nil
 
@@ -115,7 +119,9 @@ final class SSHClientEngine: @unchecked Sendable {
             try? eventLoopGroup.syncShutdownGracefully()
         }
 
-        self.onDisconnected?()
+        if notify {
+            self.onDisconnected?()
+        }
     }
 }
 
