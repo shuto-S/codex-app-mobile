@@ -729,6 +729,11 @@ final class CodexAppMobileTests: XCTestCase {
         XCTAssertEqual(AppServerClient.reconnectDelaySeconds(attempt: 5, maximumDelaySeconds: 30), 16)
         XCTAssertEqual(AppServerClient.reconnectDelaySeconds(attempt: 6, maximumDelaySeconds: 30), 30)
         XCTAssertEqual(AppServerClient.reconnectDelaySeconds(attempt: 12, maximumDelaySeconds: 30), 30)
+        // Verify that a higher maximumDelaySeconds allows the delay to grow beyond 32s
+        XCTAssertEqual(AppServerClient.reconnectDelaySeconds(attempt: 7, maximumDelaySeconds: 300), 64)
+        XCTAssertEqual(AppServerClient.reconnectDelaySeconds(attempt: 9, maximumDelaySeconds: 300), 256)
+        XCTAssertEqual(AppServerClient.reconnectDelaySeconds(attempt: 10, maximumDelaySeconds: 300), 300)
+        XCTAssertEqual(AppServerClient.reconnectDelaySeconds(attempt: 20, maximumDelaySeconds: 300), 300)
     }
 
     @MainActor

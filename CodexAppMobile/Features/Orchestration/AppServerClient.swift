@@ -1492,8 +1492,7 @@ final class AppServerClient: ObservableObject {
         maximumDelaySeconds: TimeInterval = 30
     ) -> TimeInterval {
         let normalizedAttempt = max(1, attempt)
-        let exponent = min(normalizedAttempt - 1, 5)
-        return min(pow(2.0, Double(exponent)), maximumDelaySeconds)
+        return min(pow(2.0, Double(normalizedAttempt - 1)), maximumDelaySeconds)
     }
 
     private func teardownConnection(closeCode: URLSessionWebSocketTask.CloseCode) {
