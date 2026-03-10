@@ -958,6 +958,13 @@ extension AppServerClient {
     }
 
     func shouldAttemptReconnect(after error: Error) -> Bool {
+        switch Self.errorCategory(for: error) {
+        case .authentication, .permission, .compatibility, .protocolError:
+            return false
+        case .connection, .unknown:
+            break
+        }
+
         guard let urlError = error as? URLError else {
             return true
         }

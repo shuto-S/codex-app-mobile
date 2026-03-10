@@ -1272,12 +1272,29 @@ extension SessionWorkbenchView {
         }
         Task {
             do {
-                let detail: CodexThreadDetail
+                let resumedDetail: CodexThreadDetail?
                 do {
-                    detail = try await self.appState.appServerClient.threadResume(threadID: threadID)
+                    resumedDetail = try await self.appState.appServerClient.threadResume(threadID: threadID)
                 } catch {
-                    detail = try await self.appState.appServerClient.threadRead(threadID: threadID)
+                    resumedDetail = nil
                 }
+
+                let authoritativeDetail: CodexThreadDetail?
+                let authoritativeReadError: Error?
+                do {
+                    authoritativeDetail = try await self.appState.appServerClient.threadRead(threadID: threadID)
+                    authoritativeReadError = nil
+                } catch {
+                    authoritativeDetail = nil
+                    authoritativeReadError = error
+                }
+
+                // thread/read is the source of truth after reconnects; thread/resume only reattaches live updates.
+                let detail = try Self.resolveLoadedThreadDetail(
+                    resumedDetail: resumedDetail,
+                    authoritativeDetail: authoritativeDetail,
+                    authoritativeReadError: authoritativeReadError
+                )
 
                 let latestTurnModel = detail.turns.compactMap(\.model).last
                 let latestTurnReasoning = detail.turns.compactMap(\.reasoningEffort).last
@@ -1296,6 +1313,20 @@ extension SessionWorkbenchView {
                 self.presentCriticalErrorDialog(self.appState.appServerClient.userFacingMessage(for: error))
             }
         }
+    }
+
+    static func resolveLoadedThreadDetail(
+        resumedDetail: CodexThreadDetail?,
+        authoritativeDetail: CodexThreadDetail?,
+        authoritativeReadError: Error?
+    ) throws -> CodexThreadDetail {
+        if let authoritativeDetail {
+            return authoritativeDetail
+        }
+        if let resumedDetail {
+            return resumedDetail
+        }
+        throw authoritativeReadError ?? AppServerClientError.malformedResponse
     }
 
     func interruptActiveTurn() {

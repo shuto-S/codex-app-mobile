@@ -738,6 +738,17 @@ struct SessionWorkbenchView: View {
                 self.scheduleSessionRefresh([.threads, .selectedThreadDetail], debounceNanoseconds: 250_000_000)
             }
         }
+        .onChange(of: self.appState.appServerClient.state) {
+            guard !self.isSSHTransport,
+                  self.appState.appServerClient.state == .connected,
+                  self.selectedWorkspace != nil else {
+                return
+            }
+            self.scheduleSessionRefresh(
+                [.threads, .catalogs, .selectedThreadDetail],
+                debounceNanoseconds: 250_000_000
+            )
+        }
         .onChange(of: self.appState.appServerClient.availableModels) {
             self.syncComposerControlsWithWorkspace()
         }
