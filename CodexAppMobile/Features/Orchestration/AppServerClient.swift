@@ -59,7 +59,7 @@ final class AppServerClient: ObservableObject {
     private var reconnectTask: Task<Void, Never>?
 
     private var reconnectAttempts = 0
-    private let maxReconnectAttempts = 3
+    private let maxReconnectDelaySeconds: TimeInterval = 30
     private var autoReconnectEnabled = false
     private var lastHost: RemoteHost?
     var hasReceivedMessageOnCurrentConnection = false
@@ -1460,16 +1460,15 @@ final class AppServerClient: ObservableObject {
             return
         }
 
-        guard self.reconnectAttempts < self.maxReconnectAttempts else {
-            self.appendEvent("Reconnect attempts exhausted.")
-            self.transition(to: .failed, endpoint: endpoint, errorMessage: failureMessage)
-            return
-        }
-
         self.reconnectAttempts += 1
         self.diagnostics.reconnectAttemptCount = self.reconnectAttempts
-        let delaySeconds = pow(2.0, Double(self.reconnectAttempts - 1))
-        self.appendEvent("Reconnect in \(Int(delaySeconds))s...")
+        let delaySeconds = Self.reconnectDelaySeconds(
+            attempt: self.reconnectAttempts,
+            maximumDelaySeconds: self.maxReconnectDelaySeconds
+        )
+        self.appendEvent(
+            "Reconnect attempt \(self.reconnectAttempts) in \(Int(delaySeconds.rounded()))s..."
+        )
         self.transition(to: .reconnecting, endpoint: endpoint, errorMessage: failureMessage)
 
         self.reconnectTask?.cancel()
@@ -1486,6 +1485,14 @@ final class AppServerClient: ObservableObject {
                 await self.handleSocketFailure(error)
             }
         }
+    }
+
+    static func reconnectDelaySeconds(
+        attempt: Int,
+        maximumDelaySeconds: TimeInterval = 30
+    ) -> TimeInterval {
+        let normalizedAttempt = max(1, attempt)
+        return min(pow(2.0, Double(normalizedAttempt - 1)), maximumDelaySeconds)
     }
 
     private func teardownConnection(closeCode: URLSessionWebSocketTask.CloseCode) {

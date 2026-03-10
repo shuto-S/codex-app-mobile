@@ -697,6 +697,46 @@ final class CodexAppMobileTests: XCTestCase {
     }
 
     @MainActor
+    func testAppServerClientShouldAttemptReconnectForRecoverableConnectionErrors() {
+        let client = AppServerClient()
+        client.hasReceivedMessageOnCurrentConnection = true
+
+        XCTAssertTrue(client.shouldAttemptReconnect(after: URLError(.networkConnectionLost)))
+        XCTAssertTrue(client.shouldAttemptReconnect(after: AppServerClientError.timeout(method: "thread/list")))
+    }
+
+    @MainActor
+    func testAppServerClientShouldNotAttemptReconnectForNonRecoverableErrors() {
+        let client = AppServerClient()
+
+        XCTAssertFalse(
+            client.shouldAttemptReconnect(
+                after: AppServerClientError.remote(code: 401, message: "Authentication required")
+            )
+        )
+        XCTAssertFalse(
+            client.shouldAttemptReconnect(
+                after: AppServerClientError.incompatibleVersion(current: "0.1.0", minimum: "0.106.0")
+            )
+        )
+        XCTAssertFalse(client.shouldAttemptReconnect(after: AppServerClientError.malformedResponse))
+    }
+
+    @MainActor
+    func testAppServerClientReconnectDelayCapsAtMaximum() {
+        XCTAssertEqual(AppServerClient.reconnectDelaySeconds(attempt: 1, maximumDelaySeconds: 30), 1)
+        XCTAssertEqual(AppServerClient.reconnectDelaySeconds(attempt: 2, maximumDelaySeconds: 30), 2)
+        XCTAssertEqual(AppServerClient.reconnectDelaySeconds(attempt: 5, maximumDelaySeconds: 30), 16)
+        XCTAssertEqual(AppServerClient.reconnectDelaySeconds(attempt: 6, maximumDelaySeconds: 30), 30)
+        XCTAssertEqual(AppServerClient.reconnectDelaySeconds(attempt: 12, maximumDelaySeconds: 30), 30)
+        // Verify that a higher maximumDelaySeconds allows the delay to grow beyond 32s
+        XCTAssertEqual(AppServerClient.reconnectDelaySeconds(attempt: 7, maximumDelaySeconds: 300), 64)
+        XCTAssertEqual(AppServerClient.reconnectDelaySeconds(attempt: 9, maximumDelaySeconds: 300), 256)
+        XCTAssertEqual(AppServerClient.reconnectDelaySeconds(attempt: 10, maximumDelaySeconds: 300), 300)
+        XCTAssertEqual(AppServerClient.reconnectDelaySeconds(attempt: 20, maximumDelaySeconds: 300), 300)
+    }
+
+    @MainActor
     func testAppServerClientNotificationUpdatesTranscriptAndTurnState() {
         let client = AppServerClient()
 
@@ -995,6 +1035,94 @@ final class CodexAppMobileTests: XCTestCase {
                 scopedToThreadID: "thread-3"
             )
         )
+    }
+
+    @MainActor
+    func testSessionWorkbenchResolveLoadedThreadDetailPrefersAuthoritativeSnapshot() throws {
+        let resumedDetail = CodexThreadDetail(
+            threadID: "thread-1",
+            turns: [
+                CodexTurn(
+                    id: "turn-old",
+                    status: "completed",
+                    items: [.agentMessage(id: "item-old", text: "stale")],
+                    model: nil,
+                    reasoningEffort: nil
+                )
+            ],
+            ephemeral: false,
+            model: "gpt-5",
+            reasoningEffort: "low"
+        )
+        let authoritativeDetail = CodexThreadDetail(
+            threadID: "thread-1",
+            turns: [
+                CodexTurn(
+                    id: "turn-new",
+                    status: "completed",
+                    items: [.agentMessage(id: "item-new", text: "fresh")],
+                    model: nil,
+                    reasoningEffort: nil
+                )
+            ],
+            ephemeral: false,
+            model: "gpt-5",
+            reasoningEffort: "high"
+        )
+
+        let resolved = try SessionWorkbenchView.resolveLoadedThreadDetail(
+            resumedDetail: resumedDetail,
+            authoritativeDetail: authoritativeDetail,
+            authoritativeReadError: nil
+        )
+
+        XCTAssertEqual(resolved, authoritativeDetail)
+    }
+
+    @MainActor
+    func testSessionWorkbenchResolveLoadedThreadDetailFallsBackToResumedSnapshot() throws {
+        let resumedDetail = CodexThreadDetail(
+            threadID: "thread-2",
+            turns: [
+                CodexTurn(
+                    id: "turn-live",
+                    status: "in_progress",
+                    items: [.agentMessage(id: "item-live", text: "live")],
+                    model: nil,
+                    reasoningEffort: nil
+                )
+            ],
+            ephemeral: false,
+            model: "gpt-5",
+            reasoningEffort: "medium"
+        )
+        let expectedError = AppServerClientError.timeout(method: "thread/read")
+
+        let resolved = try SessionWorkbenchView.resolveLoadedThreadDetail(
+            resumedDetail: resumedDetail,
+            authoritativeDetail: nil,
+            authoritativeReadError: expectedError
+        )
+
+        XCTAssertEqual(resolved, resumedDetail)
+    }
+
+    @MainActor
+    func testSessionWorkbenchResolveLoadedThreadDetailThrowsReadErrorWithoutSnapshots() {
+        let expectedError = AppServerClientError.timeout(method: "thread/read")
+
+        XCTAssertThrowsError(
+            try SessionWorkbenchView.resolveLoadedThreadDetail(
+                resumedDetail: nil,
+                authoritativeDetail: nil,
+                authoritativeReadError: expectedError
+            )
+        ) { error in
+            guard case AppServerClientError.timeout(let method) = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertEqual(method, "thread/read")
+        }
     }
 
     func testSessionWorkbenchPendingUserInputScopeKeyRequiresThreadAndRequestID() {
