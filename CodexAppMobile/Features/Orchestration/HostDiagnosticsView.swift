@@ -13,9 +13,9 @@ struct HostDiagnosticsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Host") {
-                    Text("State: \(self.appState.appServerClient.state.rawValue)")
-                    Text("Session state: \(self.diagnostics.connectionState)")
+                Section(L10n.text("Host")) {
+                    Text(L10n.format("State: %@", self.appState.appServerClient.state.rawValue))
+                    Text(L10n.format("Session state: %@", self.diagnostics.connectionState))
                     if !self.appState.appServerClient.connectedEndpoint.isEmpty {
                         Text(self.appState.appServerClient.connectedEndpoint)
                             .font(.caption)
@@ -24,35 +24,50 @@ struct HostDiagnosticsView: View {
                     }
                 }
 
-                Section("Codex CLI") {
-                    Text("CLI version: \(self.diagnostics.cliVersion.isEmpty ? "unknown" : self.diagnostics.cliVersion)")
-                    Text("Required >= \(self.diagnostics.minimumRequiredVersion)")
-                    Text("Auth status: \(self.diagnostics.authStatus)")
-                    Text("Plan type: \(self.diagnostics.planType?.uppercased() ?? "unknown")")
-                    Text("Current model: \(self.diagnostics.currentModel.isEmpty ? "unknown" : self.diagnostics.currentModel)")
+                Section(L10n.text("Codex CLI")) {
+                    Text(L10n.format(
+                        "CLI version: %@",
+                        self.diagnostics.cliVersion.isEmpty ? L10n.text("unknown") : self.diagnostics.cliVersion
+                    ))
+                    Text(L10n.format("Required >= %@", self.diagnostics.minimumRequiredVersion))
+                    Text(L10n.format("Auth status: %@", self.diagnostics.authStatus))
+                    Text(L10n.format(
+                        "Plan type: %@",
+                        self.diagnostics.planType?.uppercased() ?? L10n.text("unknown")
+                    ))
+                    Text(L10n.format(
+                        "Current model: %@",
+                        self.diagnostics.currentModel.isEmpty ? L10n.text("unknown") : self.diagnostics.currentModel
+                    ))
                 }
 
-                Section("Health") {
+                Section(L10n.text("Health")) {
                     if let latency = self.diagnostics.lastPingLatencyMS {
-                        Text("Ping latency: \(latency.formatted(.number.precision(.fractionLength(0)))) ms")
+                        Text(L10n.format(
+                            "Ping latency: %@ ms",
+                            latency.formatted(.number.precision(.fractionLength(0)))
+                        ))
                     } else {
-                        Text("Ping latency: unknown")
+                        Text(L10n.text("Ping latency: unknown"))
                     }
-                    Text("Reconnect attempts: \(self.diagnostics.reconnectAttemptCount)")
+                    Text(L10n.format("Reconnect attempts: %@", "\(self.diagnostics.reconnectAttemptCount)"))
                     if let lastPingAt = self.diagnostics.lastSuccessfulPingAt {
-                        Text("Last successful ping: \(lastPingAt.formatted(date: .numeric, time: .standard))")
+                        Text(L10n.format(
+                            "Last successful ping: %@",
+                            lastPingAt.formatted(date: .numeric, time: .standard)
+                        ))
                     } else {
-                        Text("Last successful ping: unknown")
+                        Text(L10n.text("Last successful ping: unknown"))
                     }
                     if let lastRPCErrorMessage = self.diagnostics.lastRPCErrorMessage {
                         let suffix = self.diagnostics.lastRPCErrorAt.map {
                             " (\($0.formatted(date: .omitted, time: .shortened)))"
                         } ?? ""
-                        Text("Last RPC error: \(lastRPCErrorMessage)\(suffix)")
+                        Text(L10n.format("Last RPC error: %@%@", lastRPCErrorMessage, suffix))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
-                        Text("Last RPC error: none")
+                        Text(L10n.text("Last RPC error: none"))
                     }
                 }
 
@@ -64,7 +79,7 @@ struct HostDiagnosticsView: View {
                     }
                 }
             }
-            .navigationTitle("Diagnostics")
+            .navigationTitle(L10n.text("Diagnostics"))
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -72,11 +87,11 @@ struct HostDiagnosticsView: View {
                     } label: {
                         Image(systemName: "xmark")
                     }
-                    .accessibilityLabel("Close")
+                    .accessibilityLabel(L10n.text("Close"))
                     .codexActionButtonStyle()
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Run") {
+                    Button(L10n.text("Run")) {
                         self.runDiagnostics()
                     }
                     .disabled(self.appState.appServerClient.state != .connected)

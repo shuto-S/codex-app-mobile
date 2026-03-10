@@ -40,9 +40,9 @@ struct HostsView: View {
             Group {
                 if self.remoteHostStore.hosts.isEmpty {
                     ContentUnavailableView(
-                        "No Hosts",
+                        L10n.text("No Hosts"),
                         systemImage: "network",
-                        description: Text("Tap + to add your first host.")
+                        description: Text(L10n.text("Tap + to add your first host."))
                     )
                 } else {
                     List {
@@ -61,19 +61,19 @@ struct HostsView: View {
                                 Button {
                                     self.presentHostEditor(for: host)
                                 } label: {
-                                    Label("Edit", systemImage: "pencil")
+                                    Label(L10n.text("Edit"), systemImage: "pencil")
                                 }
 
                                 Button {
                                     self.launchTerminal(for: host)
                                 } label: {
-                                    Label("Terminal", systemImage: "terminal")
+                                    Label(L10n.text("Terminal"), systemImage: "terminal")
                                 }
 
                                 Button {
                                     self.disconnectSession(for: host)
                                 } label: {
-                                    Label("Disconnect", systemImage: "xmark.circle")
+                                    Label(L10n.text("Disconnect"), systemImage: "xmark.circle")
                                 }
                                 .disabled(self.canDisconnectSession(for: host) == false)
 
@@ -82,20 +82,20 @@ struct HostsView: View {
                                 Button(role: .destructive) {
                                     self.hostPendingDeletion = host
                                 } label: {
-                                    Label("Delete", systemImage: "trash")
+                                    Label(L10n.text("Delete"), systemImage: "trash")
                                 }
                             }
                         }
                     }
                 }
             }
-            .navigationTitle("Hosts")
+            .navigationTitle(L10n.text("Hosts"))
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         self.editorContext = HostEditorContext(host: nil, initialPassword: "")
                     } label: {
-                        Label("Add", systemImage: "plus")
+                        Label(L10n.text("Add"), systemImage: "plus")
                     }
                     .disabled(self.isPreparingHost)
                     .codexActionButtonStyle()
@@ -106,9 +106,9 @@ struct HostsView: View {
                     SessionWorkbenchView(host: host)
                 } else {
                     ContentUnavailableView(
-                        "Host Not Found",
+                        L10n.text("Host Not Found"),
                         systemImage: "network.slash",
-                        description: Text("The selected host no longer exists.")
+                        description: Text(L10n.text("The selected host no longer exists."))
                     )
                 }
             }
@@ -128,13 +128,13 @@ struct HostsView: View {
                 .zIndex(1)
             }
         }
-        .alert("Could not load", isPresented: self.$isPresentingLoadingError) {
-            Button("OK", role: .cancel) {}
+        .alert(L10n.text("Could not load"), isPresented: self.$isPresentingLoadingError) {
+            Button(L10n.text("OK"), role: .cancel) {}
         } message: {
             Text(self.loadingErrorMessage)
         }
         .alert(
-            "Delete this host?",
+            L10n.text("Delete this host?"),
             isPresented: Binding(
                 get: { self.hostPendingDeletion != nil },
                 set: { isPresented in
@@ -145,15 +145,15 @@ struct HostsView: View {
             ),
             presenting: self.hostPendingDeletion
         ) { host in
-            Button("Cancel", role: .cancel) {
+            Button(L10n.text("Cancel"), role: .cancel) {
                 self.hostPendingDeletion = nil
             }
-            Button("Delete", role: .destructive) {
+            Button(L10n.text("Delete"), role: .destructive) {
                 self.appState.removeHost(hostID: host.id)
                 self.hostPendingDeletion = nil
             }
         } message: { host in
-            Text("Delete \"\(host.name)\"? This cannot be undone.")
+            Text(L10n.format("Delete \"%@\"? This cannot be undone.", host.name))
         }
         .sheet(item: self.$editorContext) { context in
             RemoteHostEditorView(
@@ -369,31 +369,31 @@ struct RemoteHostEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Basic") {
-                    TextField("Name", text: self.$displayName)
-                    TextField("Host", text: self.$hostAddress)
+                Section(L10n.text("Basic")) {
+                    TextField(L10n.text("Name"), text: self.$displayName)
+                    TextField(L10n.text("Host"), text: self.$hostAddress)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
-                    TextField("SSH Port", text: self.$sshPortText)
+                    TextField(L10n.text("SSH Port"), text: self.$sshPortText)
                         .keyboardType(.numberPad)
-                    TextField("Username", text: self.$username)
+                    TextField(L10n.text("Username"), text: self.$username)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
                 }
 
-                Section("App Server") {
-                    TextField("Host (default: Basic Host)", text: self.$appServerHost)
+                Section(L10n.text("App Server")) {
+                    TextField(L10n.text("Host (default: Basic Host)"), text: self.$appServerHost)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
-                    TextField("Port", text: self.$appServerPortText)
+                    TextField(L10n.text("Port"), text: self.$appServerPortText)
                         .keyboardType(.numberPad)
                 }
 
-                Section("SSH") {
-                    SecureField("Password (optional)", text: self.$password)
+                Section(L10n.text("SSH")) {
+                    SecureField(L10n.text("Password (optional)"), text: self.$password)
                 }
             }
-            .navigationTitle(self.host == nil ? "New Host" : "Edit Host")
+            .navigationTitle(self.host == nil ? L10n.text("New Host") : L10n.text("Edit Host"))
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -401,12 +401,12 @@ struct RemoteHostEditorView: View {
                     } label: {
                         Image(systemName: "xmark")
                     }
-                    .accessibilityLabel("Cancel")
+                    .accessibilityLabel(L10n.text("Cancel"))
                     .codexActionButtonStyle()
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Save") {
+                    Button(L10n.text("Save")) {
                         self.onSave(self.draft)
                         self.dismiss()
                     }
@@ -431,9 +431,9 @@ private enum RemotePathBrowserError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .timeout:
-            return "Directory listing timed out."
+            return L10n.text("Directory listing timed out.")
         case .malformedOutput:
-            return "Could not parse remote directory output."
+            return L10n.text("Could not parse remote directory output.")
         }
     }
 }
@@ -599,13 +599,13 @@ struct RemotePathBrowserView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Navigate") {
+                Section(L10n.text("Navigate")) {
                     HStack(spacing: 8) {
-                        TextField("/absolute/path or ~", text: self.$inputPath)
+                        TextField(L10n.text("/absolute/path or ~"), text: self.$inputPath)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled(true)
                             .font(.footnote.monospaced())
-                        Button("Open") {
+                        Button(L10n.text("Open")) {
                             self.load(path: self.inputPath)
                         }
                         .disabled(self.isLoading)
@@ -615,7 +615,7 @@ struct RemotePathBrowserView: View {
                         Button {
                             self.load(path: "~")
                         } label: {
-                            Label("Home", systemImage: "house")
+                            Label(L10n.text("Home"), systemImage: "house")
                         }
                         .buttonStyle(.plain)
                         .disabled(self.isLoading)
@@ -623,7 +623,7 @@ struct RemotePathBrowserView: View {
                         Button {
                             self.load(path: "/")
                         } label: {
-                            Label("Root", systemImage: "internaldrive")
+                            Label(L10n.text("Root"), systemImage: "internaldrive")
                         }
                         .buttonStyle(.plain)
                         .disabled(self.isLoading)
@@ -631,7 +631,7 @@ struct RemotePathBrowserView: View {
                         Button {
                             self.load(path: self.currentPath.isEmpty ? self.initialPath : self.currentPath)
                         } label: {
-                            Label("Reload", systemImage: "arrow.clockwise")
+                            Label(L10n.text("Reload"), systemImage: "arrow.clockwise")
                         }
                         .buttonStyle(.plain)
                         .disabled(self.isLoading)
@@ -639,7 +639,7 @@ struct RemotePathBrowserView: View {
                     .font(.footnote)
                 }
 
-                Section("Current") {
+                Section(L10n.text("Current")) {
                     Text(self.currentPath.isEmpty ? self.initialPath : self.currentPath)
                         .font(.footnote)
                         .fontDesign(.monospaced)
@@ -651,19 +651,19 @@ struct RemotePathBrowserView: View {
                         Button {
                             self.load(path: parentPath)
                         } label: {
-                            Label("..", systemImage: "arrow.up.left")
+                            Label(L10n.text(".."), systemImage: "arrow.up.left")
                         }
                         .disabled(self.isLoading)
                     }
                 }
 
-                Section("Directories") {
+                Section(L10n.text("Directories")) {
                     if self.isLoading {
-                        ProgressView("Loading...")
+                        ProgressView(L10n.text("Loading..."))
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if self.entries.isEmpty {
-                        Text(self.isLoading ? "Loading..." : "No subdirectories")
+                        Text(self.isLoading ? L10n.text("Loading...") : L10n.text("No subdirectories"))
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(self.entries) { entry in
@@ -679,7 +679,7 @@ struct RemotePathBrowserView: View {
 
                 if self.hostPassword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Section {
-                        Text("SSH password is empty. If authentication fails, set the password in host settings and retry.")
+                        Text(L10n.text("SSH password is empty. If authentication fails, set the password in host settings and retry."))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -693,7 +693,7 @@ struct RemotePathBrowserView: View {
                     }
                 }
             }
-            .navigationTitle("Remote Paths")
+            .navigationTitle(L10n.text("Remote Paths"))
             .refreshable {
                 self.load(path: self.currentPath.isEmpty ? self.initialPath : self.currentPath)
             }
@@ -704,12 +704,12 @@ struct RemotePathBrowserView: View {
                     } label: {
                         Image(systemName: "xmark")
                     }
-                    .accessibilityLabel("Close")
+                    .accessibilityLabel(L10n.text("Close"))
                     .codexActionButtonStyle()
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Use This Path") {
+                    Button(L10n.text("Use This Path")) {
                         self.onSelectPath(self.currentPath.isEmpty ? self.initialPath : self.currentPath)
                         self.dismiss()
                     }
@@ -772,14 +772,14 @@ struct RemotePathBrowserView: View {
     private func userFacingErrorMessage(for error: Error) -> String {
         let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else {
-            return "Failed to load remote directories."
+            return L10n.text("Failed to load remote directories.")
         }
 
         if message.localizedCaseInsensitiveContains("authentication failed") {
-            return "Authentication failed. Check username/password in host settings."
+            return L10n.text("Authentication failed. Check username/password in host settings.")
         }
         if message.localizedCaseInsensitiveContains("host key changed") {
-            return "Host key changed. Reconnect from Terminal and trust the new key."
+            return L10n.text("Host key changed. Reconnect from Terminal and trust the new key.")
         }
         return message
     }
@@ -827,26 +827,26 @@ struct ProjectEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Basic") {
-                    TextField("Name (optional)", text: self.$name)
-                    TextField("/absolute/remote/path", text: self.$remotePath)
+                Section(L10n.text("Basic")) {
+                    TextField(L10n.text("Name (optional)"), text: self.$name)
+                    TextField(L10n.text("/absolute/remote/path"), text: self.$remotePath)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
                 }
 
-                Section("Defaults") {
-                    TextField("Model (optional)", text: self.$defaultModel)
+                Section(L10n.text("Defaults")) {
+                    TextField(L10n.text("Model (optional)"), text: self.$defaultModel)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled(true)
 
-                    Picker("Approval Policy", selection: self.$defaultApprovalPolicy) {
+                    Picker(L10n.text("Approval Policy"), selection: self.$defaultApprovalPolicy) {
                         ForEach(CodexApprovalPolicy.allCases) { policy in
                             Text(policy.displayName).tag(policy)
                         }
                     }
                 }
             }
-            .navigationTitle(self.workspace == nil ? "New Project" : "Edit Project")
+            .navigationTitle(self.workspace == nil ? L10n.text("New Project") : L10n.text("Edit Project"))
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -854,12 +854,12 @@ struct ProjectEditorView: View {
                     } label: {
                         Image(systemName: "xmark")
                     }
-                    .accessibilityLabel("Cancel")
+                    .accessibilityLabel(L10n.text("Cancel"))
                     .codexActionButtonStyle()
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Save") {
+                    Button(L10n.text("Save")) {
                         self.onSave(self.draft)
                         self.dismiss()
                     }

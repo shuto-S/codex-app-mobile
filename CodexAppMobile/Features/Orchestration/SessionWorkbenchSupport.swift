@@ -1,6 +1,17 @@
 import Foundation
 import OSLog
 
+enum L10n {
+    static func text(_ key: String) -> String {
+        NSLocalizedString(key, comment: "")
+    }
+
+    static func format(_ key: String, _ arguments: CVarArg...) -> String {
+        let format = NSLocalizedString(key, comment: "")
+        return String(format: format, locale: Locale.current, arguments: arguments)
+    }
+}
+
 struct SSHCodexExecResult {
     let threadID: String
     let assistantText: String
@@ -1719,7 +1730,7 @@ actor SSHGitService {
         let cleanOutput = self.stripANSI(output)
         let startCount = self.markerLineCount(startMarker, in: cleanOutput)
         let endCount = self.markerLineCount(endMarker, in: cleanOutput)
-        let exitCount = self.markerLineCount(exitMarker, in: cleanOutput)
+        let exitCount = self.exitCodeLineCount(exitMarker, in: cleanOutput)
         let rawTail = String(cleanOutput.suffix(220))
         let sanitizedTail = rawTail
             .replacingOccurrences(of: "\r", with: "\\r")
@@ -1737,6 +1748,18 @@ actor SSHGitService {
             .split(whereSeparator: \.isNewline)
             .map(String.init)
             .filter { $0.trimmingCharacters(in: .whitespacesAndNewlines) == marker }
+            .count
+    }
+
+    private static func exitCodeLineCount(_ exitMarker: String, in output: String) -> Int {
+        guard !exitMarker.isEmpty else { return 0 }
+        let normalized = output
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        return normalized
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+            .filter { self.parseExitCode(from: $0, exitMarker: exitMarker) != nil }
             .count
     }
 

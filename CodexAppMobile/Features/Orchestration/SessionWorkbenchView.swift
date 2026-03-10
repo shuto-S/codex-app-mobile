@@ -131,7 +131,7 @@ struct SessionWorkbenchView: View {
     @State var statusSnapshot: StatusPanelSnapshot?
     @State var isMCPStatusSheetPresented = false
     @State var isMCPStatusRefreshing = false
-    @State var mcpStatusHeadline = "No MCP status available"
+    @State var mcpStatusHeadline = L10n.text("No MCP status available")
     @State var composerInfoMessage: ComposerInfoMessage?
     @State var selectedComposerTokenBadges: [ComposerTokenBadge] = []
     @State var dismissedPendingUserInputScopeKeys: Set<String> = []
@@ -193,14 +193,14 @@ struct SessionWorkbenchView: View {
 
     var selectedThreadTitle: String {
         guard let summary = self.selectedThreadSummary else {
-            return "New Thread"
+            return L10n.text("New Thread")
         }
         let title = summary.preview.trimmingCharacters(in: .whitespacesAndNewlines)
-        return title.isEmpty ? "New Thread" : title
+        return title.isEmpty ? L10n.text("New Thread") : title
     }
 
     var selectedWorkspaceTitle: String {
-        self.selectedWorkspace?.displayName ?? "Project"
+        self.selectedWorkspace?.displayName ?? L10n.text("Project")
     }
 
     var selectedThreadTranscript: String {
@@ -300,9 +300,9 @@ struct SessionWorkbenchView: View {
     func assistantStreamingBaseText(for phase: AssistantStreamingPhase) -> String {
         switch phase {
         case .thinking:
-            return "Thinking"
+            return L10n.text("Thinking")
         case .responding:
-            return "Generating reply"
+            return L10n.text("Generating reply")
         }
     }
 
@@ -432,7 +432,7 @@ struct SessionWorkbenchView: View {
         if !selected.isEmpty {
             return CodexReasoningEffortOption(value: selected, description: nil).displayName
         }
-        return self.fallbackReasoningEffortOptions.first?.displayName ?? "Low"
+        return self.fallbackReasoningEffortOptions.first?.displayName ?? L10n.text("Low")
     }
 
     var slashCommandDescriptors: [AppServerSlashCommandDescriptor] {
@@ -511,7 +511,7 @@ struct SessionWorkbenchView: View {
         let modelUpgradeNotice: String?
         if let upgradeInfo = modelDescriptor?.upgradeInfo {
             modelUpgradeNotice = upgradeInfo.upgradeCopy
-                ?? "Upgrade available: \(upgradeInfo.model)"
+                ?? L10n.format("Upgrade available: %@", upgradeInfo.model)
         } else {
             modelUpgradeNotice = nil
         }
@@ -582,10 +582,10 @@ struct SessionWorkbenchView: View {
 
     func statusLimitLabel(for limit: AppServerRateLimitSummary) -> String {
         if let window = limit.windowMinutes {
-            if window == 300 { return "5h limit" }
-            if window == 10080 { return "7d limit" }
+            if window == 300 { return L10n.text("5h limit") }
+            if window == 10080 { return L10n.text("7d limit") }
         }
-        return "\(limit.name) limit"
+        return L10n.format("%@ limit", limit.name)
     }
 
     func isSlashCommandDisabled(_ command: AppServerSlashCommandDescriptor) -> Bool {
@@ -789,21 +789,21 @@ struct SessionWorkbenchView: View {
     func applyingPresentationHandlers<Content: View>(to content: Content) -> some View {
         content
         .alert(
-            "Delete this project?",
+            L10n.text("Delete this project?"),
             isPresented: self.isDeleteProjectAlertPresented,
             presenting: self.workspacePendingDeletion
         ) { workspace in
-            Button("Cancel", role: .cancel) {
+            Button(L10n.text("Cancel"), role: .cancel) {
                 self.workspacePendingDeletion = nil
             }
-            Button("Delete", role: .destructive) {
+            Button(L10n.text("Delete"), role: .destructive) {
                 self.deleteWorkspace(workspace)
             }
         } message: { workspace in
-            Text("Delete \"\(workspace.displayName)\"? This cannot be undone.")
+            Text(L10n.format("Delete \"%@\"? This cannot be undone.", workspace.displayName))
         }
-        .alert("Error", isPresented: self.$isCriticalErrorDialogPresented) {
-            Button("OK", role: .cancel) {}
+        .alert(L10n.text("Error"), isPresented: self.$isCriticalErrorDialogPresented) {
+            Button(L10n.text("OK"), role: .cancel) {}
         } message: {
             Text(self.criticalErrorDialogMessage)
         }

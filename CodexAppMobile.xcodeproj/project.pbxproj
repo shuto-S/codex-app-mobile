@@ -33,6 +33,7 @@
 		A1B2C3D4E5F6010000000224 /* SSHTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000123 /* SSHTransport.swift */; };
 		A1B2C3D4E5F6010000000225 /* SessionWorkbenchExecutionActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000124 /* SessionWorkbenchExecutionActions.swift */; };
 		A1B2C3D4E5F6010000000226 /* LegacySSHProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000125 /* LegacySSHProfile.swift */; };
+		A1B2C3D4E5F6010000000227 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6010000000128 /* Localizable.xcstrings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -73,6 +74,7 @@
 		A1B2C3D4E5F6010000000125 /* LegacySSHProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Orchestration/LegacySSHProfile.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6010000000126 /* Info.Debug.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.Debug.plist; sourceTree = "<group>"; };
 		A1B2C3D4E5F6010000000127 /* Info.Release.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.Release.plist; sourceTree = "<group>"; };
+		A1B2C3D4E5F6010000000128 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -140,6 +142,7 @@
 					A1B2C3D4E5F6010000000125 /* LegacySSHProfile.swift */,
 					A1B2C3D4E5F6010000000126 /* Info.Debug.plist */,
 					A1B2C3D4E5F6010000000127 /* Info.Release.plist */,
+					A1B2C3D4E5F6010000000128 /* Localizable.xcstrings */,
 				A1B2C3D4E5F6010000000108 /* Assets.xcassets */,
 			);
 			path = CodexAppMobile;
@@ -223,6 +226,9 @@
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
+				ja,
+				zh-Hans,
+				zh-Hant,
 				Base,
 			);
 			mainGroup = A1B2C3D4E5F6010000000002;
@@ -247,6 +253,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1B2C3D4E5F6010000000208 /* Assets.xcassets in Resources */,
+				A1B2C3D4E5F6010000000227 /* Localizable.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

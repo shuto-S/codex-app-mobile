@@ -954,7 +954,13 @@ extension AppServerClient {
             return nil
         }
 
-        return "[Connection] WebSocket handshake failed before app-server initialization. Verify the app-server URL is reachable and update codex-cli on the remote host if needed, or use Terminal tab."
+        return L10n.format(
+            "[%@] %@",
+            AppServerErrorCategory.connection.title,
+            L10n.text(
+                "WebSocket handshake failed before app-server initialization. Verify the app-server URL is reachable and update codex-cli on the remote host if needed, or use Terminal tab."
+            )
+        )
     }
 
     func shouldAttemptReconnect(after error: Error) -> Bool {
