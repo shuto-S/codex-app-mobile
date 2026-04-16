@@ -99,7 +99,15 @@ final class AppServerClient: ObservableObject {
         }
         if let errorMessage {
             self.lastErrorMessage = errorMessage
+        } else if newState == .connected {
+            self.lastErrorMessage = ""
         }
+    }
+
+    /// Whether the client is in a transient connection state where
+    /// operations may temporarily fail but auto-reconnect will retry.
+    var isConnectionTransient: Bool {
+        self.state == .connecting || self.state == .reconnecting
     }
 
     private func resetDiagnosticsForNewConnection() {

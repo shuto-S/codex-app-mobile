@@ -135,6 +135,11 @@ extension SessionWorkbenchView {
 
             do {
                 if self.appState.appServerClient.state != .connected {
+                    // If auto-reconnect is in progress, skip this refresh.
+                    // onChange(of: state) will re-trigger when connected.
+                    if self.appState.appServerClient.isConnectionTransient {
+                        return
+                    }
                     try await self.appState.appServerClient.connect(to: self.host)
                 }
                 guard !Task.isCancelled else { return }
@@ -182,7 +187,7 @@ extension SessionWorkbenchView {
             } catch is CancellationError {
                 return
             } catch {
-                if !Task.isCancelled {
+                if !Task.isCancelled, !self.appState.appServerClient.isConnectionTransient {
                     self.presentCriticalErrorDialog(self.appState.appServerClient.userFacingMessage(for: error))
                 }
             }
@@ -1274,6 +1279,11 @@ extension SessionWorkbenchView {
         if self.isSSHTransport {
             return
         }
+        // Skip when the connection is not ready; onChange(of: state)
+        // will re-trigger via scheduleSessionRefresh(.selectedThreadDetail).
+        guard self.appState.appServerClient.state == .connected else {
+            return
+        }
         Task {
             do {
                 let resumedDetail: CodexThreadDetail?
@@ -1314,7 +1324,11 @@ extension SessionWorkbenchView {
                     reasoningEffort: resolvedReasoning
                 )
             } catch {
-                self.presentCriticalErrorDialog(self.appState.appServerClient.userFacingMessage(for: error))
+                // Suppress error dialogs when auto-reconnect is in progress;
+                // the connection handler will retry this load on reconnect.
+                if !self.appState.appServerClient.isConnectionTransient {
+                    self.presentCriticalErrorDialog(self.appState.appServerClient.userFacingMessage(for: error))
+                }
             }
         }
     }
