@@ -681,7 +681,13 @@ final class CodexAppMobileTests: XCTestCase {
         let handshakeMessage = client.userFacingMessage(
             for: URLError(.networkConnectionLost)
         )
-        XCTAssertTrue(handshakeMessage.contains("WebSocket handshake failed"))
+        XCTAssertTrue(
+            handshakeMessage.contains(
+                L10n.text(
+                    "WebSocket handshake failed before app-server initialization. Verify the app-server URL is reachable and update codex-cli on the remote host if needed, or use Terminal tab."
+                )
+            )
+        )
     }
 
     @MainActor

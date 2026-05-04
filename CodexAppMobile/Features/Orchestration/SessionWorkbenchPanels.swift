@@ -84,69 +84,74 @@ extension SessionWorkbenchView {
     var composerControlBar: some View {
         let isGitMenuAvailable = self.selectedWorkspace != nil && !self.isRunningSSHAction && !self.isRunningGitAction
         return HStack(spacing: 8) {
-            Menu {
-                ForEach(self.composerModelDescriptors) { model in
-                    Button {
-                        self.selectedComposerModel = model.model
-                    } label: {
-                        if model.model == self.composerModelForRequest {
-                            Label(model.displayName, systemImage: "checkmark")
-                        } else {
-                            Text(model.displayName)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    Menu {
+                        ForEach(self.composerModelDescriptors) { model in
+                            Button {
+                                self.selectedComposerModel = model.model
+                            } label: {
+                                if model.model == self.composerModelForRequest {
+                                    Label(model.displayName, systemImage: "checkmark")
+                                } else {
+                                    Text(model.displayName)
+                                }
+                            }
                         }
-                    }
-                }
-            } label: {
-                self.composerPickerChip(self.composerModelDisplayName, minWidth: 140)
-            }
-            .buttonStyle(.plain)
-            .disabled(!self.isComposerInteractive)
-            .opacity(self.isComposerInteractive ? 1 : 0.68)
-
-            Menu {
-                ForEach(self.composerReasoningOptions) { effort in
-                    Button {
-                        self.selectedComposerReasoning = effort.value
                     } label: {
-                        if effort.value == self.selectedComposerReasoning {
-                            Label(effort.displayName, systemImage: "checkmark")
-                        } else {
-                            Text(effort.displayName)
+                        self.composerPickerChip(self.composerModelDisplayName, minWidth: 132)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!self.isComposerInteractive)
+                    .opacity(self.isComposerInteractive ? 1 : 0.68)
+
+                    Menu {
+                        ForEach(self.composerReasoningOptions) { effort in
+                            Button {
+                                self.selectedComposerReasoning = effort.value
+                            } label: {
+                                if effort.value == self.selectedComposerReasoning {
+                                    Label(effort.displayName, systemImage: "checkmark")
+                                } else {
+                                    Text(effort.displayName)
+                                }
+                            }
                         }
-                    }
-                }
-            } label: {
-                self.composerPickerChip(self.composerReasoningDisplayName, minWidth: 76)
-            }
-            .buttonStyle(.plain)
-            .disabled(!self.isComposerInteractive)
-            .opacity(self.isComposerInteractive ? 1 : 0.68)
-
-            Menu {
-                ForEach(GitMenuAction.allCases) { action in
-                    Button {
-                        self.handleGitMenuAction(action)
                     } label: {
-                        Label(action.title, systemImage: action.systemImage)
+                        self.composerPickerChip(self.composerReasoningDisplayName, minWidth: 76)
                     }
-                }
-            } label: {
-                self.composerGitIconChip(minWidth: 48)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Git Actions")
-            .disabled(!isGitMenuAvailable)
-            .opacity(isGitMenuAvailable ? 1 : 0.68)
+                    .buttonStyle(.plain)
+                    .disabled(!self.isComposerInteractive)
+                    .opacity(self.isComposerInteractive ? 1 : 0.68)
 
-            Button {
-                self.presentCommandPalette()
-            } label: {
-                self.composerPickerChip("/", minWidth: 48)
+                    Menu {
+                        ForEach(GitMenuAction.allCases) { action in
+                            Button {
+                                self.handleGitMenuAction(action)
+                            } label: {
+                                Label(action.title, systemImage: action.systemImage)
+                            }
+                        }
+                    } label: {
+                        self.composerGitIconChip(minWidth: 48)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Git Actions")
+                    .disabled(!isGitMenuAvailable)
+                    .opacity(isGitMenuAvailable ? 1 : 0.68)
+
+                    Button {
+                        self.presentCommandPalette()
+                    } label: {
+                        self.composerPickerChip("/", minWidth: 48)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(L10n.text("Slash Commands"))
+                    .disabled(!self.isCommandPaletteAvailable)
+                    .opacity(self.isCommandPaletteAvailable ? 1 : 0.68)
+                }
+                .padding(.horizontal, 1)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(L10n.text("Slash Commands"))
-            .disabled(!self.isCommandPaletteAvailable)
-            .opacity(self.isCommandPaletteAvailable ? 1 : 0.68)
 
             Spacer(minLength: 8)
 
@@ -1213,6 +1218,29 @@ extension SessionWorkbenchView {
             }
 
             VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Label(self.composerStateText(isInterruptButton: isInterruptButton), systemImage: self.composerStateIcon(isInterruptButton: isInterruptButton))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.58))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Spacer(minLength: 8)
+
+                    if !self.prompt.isEmpty {
+                        Button {
+                            self.prompt = ""
+                            self.isPromptFieldFocused = true
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(Color.white.opacity(0.52))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(L10n.text("Clear prompt"))
+                    }
+                }
+
                 if self.isPlanModeEnabled {
                     Button {
                         self.disablePlanMode()
@@ -1254,10 +1282,15 @@ extension SessionWorkbenchView {
                 HStack(alignment: .bottom, spacing: 10) {
                     ZStack(alignment: .leading) {
                         if self.prompt.isEmpty {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 17, weight: .medium))
-                                .foregroundStyle(Color.white.opacity(0.38))
-                                .allowsHitTesting(false)
+                            HStack(spacing: 8) {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 17, weight: .medium))
+                                Text(self.composerPlaceholderText)
+                                    .font(.body)
+                                    .lineLimit(2)
+                            }
+                            .foregroundStyle(Color.white.opacity(0.38))
+                            .allowsHitTesting(false)
                         }
 
                         TextField("", text: self.$prompt, axis: .vertical)
@@ -1269,6 +1302,7 @@ extension SessionWorkbenchView {
                             .tint(Color.white)
                             .font(.body)
                             .frame(minHeight: 36)
+                            .padding(.leading, self.prompt.isEmpty ? 26 : 0)
                             .disabled(isInactive)
                             .opacity(isInactive ? 0.72 : 1)
                             .onSubmit {
@@ -1324,6 +1358,40 @@ extension SessionWorkbenchView {
         .padding(.bottom, 12)
         .background(Color.clear)
     }
+
+    var composerPlaceholderText: String {
+        if self.selectedWorkspace == nil {
+            return L10n.text("Select a project to start")
+        }
+        if self.selectedThreadID == nil {
+            return L10n.text("Ask Codex to start a new task")
+        }
+        return L10n.text("Ask Codex, request a change, or type /")
+    }
+
+    func composerStateText(isInterruptButton: Bool) -> String {
+        if isInterruptButton {
+            return L10n.text("Codex is working")
+        }
+        if self.isAwaitingPromptDispatch {
+            return L10n.text("Sending prompt")
+        }
+        if self.selectedWorkspace == nil {
+            return L10n.text("Project required")
+        }
+        return self.selectedThreadID == nil ? L10n.text("New thread") : L10n.text("Continue thread")
+    }
+
+    func composerStateIcon(isInterruptButton: Bool) -> String {
+        if isInterruptButton || self.isAwaitingPromptDispatch {
+            return "dot.radiowaves.left.and.right"
+        }
+        if self.selectedWorkspace == nil {
+            return "folder.badge.questionmark"
+        }
+        return self.selectedThreadID == nil ? "plus.message" : "text.bubble"
+    }
+
     func composerTokenBadgeChip(_ badge: ComposerTokenBadge) -> some View {
         let icon = "sparkles"
         let background = Color.green.opacity(0.20)
