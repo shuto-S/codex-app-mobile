@@ -117,7 +117,9 @@ struct RemoteHost: Identifiable, Codable, Equatable {
         self.updatedAt = updatedAt
     }
 
-    static func defaultAppServerURL(host: String, port: Int = 8080) -> String {
+    static let defaultAppServerPort = 18081
+
+    static func defaultAppServerURL(host: String, port: Int = Self.defaultAppServerPort) -> String {
         let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
         return "ws://\(normalizedHost):\(port)"
     }
@@ -178,7 +180,7 @@ struct RemoteHostDraft {
         sshPort: 22,
         username: "",
         appServerHost: "",
-        appServerPort: 8080,
+        appServerPort: RemoteHost.defaultAppServerPort,
         preferredTransport: .ssh,
         password: ""
     )
@@ -242,10 +244,10 @@ struct RemoteHostDraft {
         if let components = URLComponents(string: host.appServerURL),
            let endpointHost = components.host {
             self.appServerHost = endpointHost == host.host ? "" : endpointHost
-            self.appServerPort = components.port ?? 8080
+            self.appServerPort = components.port ?? RemoteHost.defaultAppServerPort
         } else {
             self.appServerHost = ""
-            self.appServerPort = 8080
+            self.appServerPort = RemoteHost.defaultAppServerPort
         }
         self.preferredTransport = host.preferredTransport
         self.password = password

@@ -900,8 +900,14 @@ extension AppServerClient {
 
     static func isUnroutableEndpointHost(_ host: String) -> Bool {
         switch host.lowercased() {
-        case "0.0.0.0", "::", "::1", "localhost", "127.0.0.1":
+        case "0.0.0.0", "::":
             return true
+        case "::1", "localhost", "127.0.0.1":
+#if targetEnvironment(simulator)
+            return false
+#else
+            return true
+#endif
         default:
             return false
         }

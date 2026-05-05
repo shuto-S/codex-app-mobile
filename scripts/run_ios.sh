@@ -110,8 +110,51 @@ if [[ "${booted_count}" -ne 1 ]]; then
   exit 1
 fi
 
+print_xcodebuild_destination_help() {
+  local output="$1"
+  if [[ "${output}" == *"Unable to find a destination matching the provided destination specifier"* ]] ||
+     [[ "${output}" == *"Unable to find a device matching the provided destination specifier"* ]] ||
+     [[ "${output}" == *"Found no destinations for the scheme"* ]]; then
+    cat >&2 <<EOF
+
+xcodebuild could not resolve the booted Simulator destination.
+Booted simulator: ${device_name} (${device_udid})
+
+Useful checks:
+  xcodebuild -showdestinations -project "${project_path}" -scheme "${scheme}"
+  xcrun simctl list devices
+
+If simctl shows the device but xcodebuild does not, restart Xcode/Simulator services or reinstall the iOS platform runtime:
+  killall -9 com.apple.CoreSimulator.CoreSimulatorService Simulator 2>/dev/null || true
+  make setup-ios-runtime
+EOF
+  fi
+}
+
+run_xcodebuild() {
+  local log_file
+  log_file="$(mktemp "${TMPDIR:-/tmp}/codexappmobile-xcodebuild.XXXXXX")"
+
+  set +e
+  xcodebuild "$@" 2>&1 | tee "${log_file}"
+  local -a command_status=("${pipestatus[@]}")
+  local xcodebuild_status="${command_status[1]}"
+  set -e
+
+  if [[ "${xcodebuild_status}" -eq 0 ]]; then
+    rm -f "${log_file}"
+    return 0
+  fi
+
+  local output
+  output="$(cat "${log_file}")"
+  rm -f "${log_file}"
+  print_xcodebuild_destination_help "${output}"
+  return "${xcodebuild_status}"
+}
+
 if [[ "${action}" == "test" ]]; then
-  xcodebuild \
+  run_xcodebuild \
     -project "${project_path}" \
     -scheme "${scheme}" \
     -configuration Debug \
@@ -121,7 +164,7 @@ if [[ "${action}" == "test" ]]; then
   exit 0
 fi
 
-xcodebuild \
+run_xcodebuild \
   -project "${project_path}" \
   -scheme "${scheme}" \
   -configuration Debug \

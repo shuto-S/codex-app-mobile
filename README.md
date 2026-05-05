@@ -39,6 +39,7 @@ It primarily communicates through `codex app-server` over WebSocket, with an SSH
 
 ```bash
 make setup-ios-runtime
+make run-app-server
 make run-ios
 make test-ios
 ```
@@ -52,14 +53,14 @@ Notes:
 ### 1. Start app-server on your remote machine
 
 ```bash
-codex app-server --listen ws://127.0.0.1:18081
+make run-app-server
 ```
 
 Default setup:
 - app-server: `ws://127.0.0.1:18081`
 
-In the iOS app, do not use `localhost`. Use a reachable address instead, for example:  
-`ws://<tailnet-ip>:18081`
+In the iOS Simulator, `localhost` / `127.0.0.1` can reach the Mac host.
+On a physical iPhone, use a reachable address instead, for example: `ws://<tailnet-ip>:18081`
 
 ### 2. Launch the app and register a host
 
@@ -90,6 +91,7 @@ Use the host row context menu and open `Terminal` to operate directly over SSH.
 | Command | Description |
 | --- | --- |
 | `make setup-ios-runtime` | Install iOS Simulator runtime |
+| `make run-app-server` | Start `codex app-server` on `ws://127.0.0.1:18081` |
 | `make run-ios` | Build and launch on Simulator |
 | `make test-ios` | Run iOS tests |
 | `make clean` | Remove `.build` |
@@ -116,6 +118,10 @@ scripts/                   # simulator/runtime/app-server helper scripts
 - `IOS_DEVICE_NAME` (default: `CodexAppMobile iPhone 17`)
 - `IOS_DEVICE_TYPE_IDENTIFIER` (default: `com.apple.CoreSimulator.SimDeviceType.iPhone-17`)
 
+### `make run-app-server`
+
+- `CODEX_APP_SERVER_URL` (default: `ws://127.0.0.1:18081`)
+
 ## Data Storage and Security
 
 - Host credentials (passwords) are stored in iOS Keychain
@@ -130,7 +136,8 @@ scripts/                   # simulator/runtime/app-server helper scripts
 - `port is already in use`:
   - Free the port, or choose another `--listen` port
 - iOS app cannot connect to app-server:
-  - Use a reachable IP/hostname instead of `ws://localhost:...`
+  - Simulator: use `ws://127.0.0.1:18081` or `ws://localhost:18081`
+  - Physical device: use a reachable IP/hostname instead of `ws://localhost:...`
 - app-server disconnects right after startup:
   - Check app-server stderr/stdout logs on the remote host
 
