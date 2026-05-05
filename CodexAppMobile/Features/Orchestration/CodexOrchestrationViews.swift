@@ -350,7 +350,7 @@ struct RemoteHostEditorView: View {
     }
 
     private var parsedAppServerPort: Int {
-        Int(self.appServerPortText) ?? 8080
+        Int(self.appServerPortText) ?? RemoteHost.defaultAppServerPort
     }
 
     private var draft: RemoteHostDraft {

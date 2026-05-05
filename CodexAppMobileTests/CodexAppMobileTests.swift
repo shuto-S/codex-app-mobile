@@ -24,7 +24,7 @@ final class CodexAppMobileTests: XCTestCase {
             sshPort: 22,
             username: "user",
             appServerHost: "",
-            appServerPort: 8080,
+            appServerPort: RemoteHost.defaultAppServerPort,
             preferredTransport: .appServerWS,
             password: ""
         )
@@ -112,11 +112,11 @@ final class CodexAppMobileTests: XCTestCase {
         XCTAssertEqual(store.hosts[0].id, legacyProfile.id)
         XCTAssertEqual(store.hosts[0].host, legacyProfile.host)
         XCTAssertEqual(store.hosts[0].username, legacyProfile.username)
-        XCTAssertEqual(store.hosts[0].appServerURL, "ws://legacy.example.com:8080")
+        XCTAssertEqual(store.hosts[0].appServerURL, "ws://legacy.example.com:18081")
         XCTAssertEqual(store.hosts[0].preferredTransport, .ssh)
     }
 
-    func testRemoteHostDefaultsToSSHTransport() {
+    func testRemoteHostDefaultsToSSHTransportAndAppServerPort() {
         let host = RemoteHost(
             name: "Host A",
             host: "a.example.com",
@@ -127,6 +127,8 @@ final class CodexAppMobileTests: XCTestCase {
 
         XCTAssertEqual(host.preferredTransport, .ssh)
         XCTAssertEqual(RemoteHostDraft.empty.preferredTransport, .ssh)
+        XCTAssertEqual(RemoteHostDraft.empty.appServerPort, 18081)
+        XCTAssertEqual(RemoteHost.defaultAppServerURL(host: "a.example.com"), "ws://a.example.com:18081")
     }
 
     func testRemoteHostDecodeLegacyPayloadDefaultsTransportToSSH() throws {
@@ -332,6 +334,20 @@ final class CodexAppMobileTests: XCTestCase {
         decoder.dateDecodingStrategy = .iso8601
         let summary = try decoder.decode(CodexThreadSummary.self, from: Data(payload.utf8))
         XCTAssertTrue(summary.ephemeral)
+    }
+
+    func testResolveAppServerURLAllowsSimulatorLoopback() throws {
+        let url = try AppServerClient.resolveAppServerURL(raw: "ws://127.0.0.1:18081")
+        XCTAssertEqual(url.absoluteString, "ws://127.0.0.1:18081")
+    }
+
+    func testResolveAppServerURLRejectsWildcardListener() {
+        XCTAssertThrowsError(try AppServerClient.resolveAppServerURL(raw: "ws://0.0.0.0:18081")) { error in
+            guard case AppServerClientError.invalidEndpointHost(let host) = error else {
+                return XCTFail("Expected invalidEndpointHost, got \(error)")
+            }
+            XCTAssertEqual(host, "0.0.0.0")
+        }
     }
 
     @MainActor
@@ -681,7 +697,13 @@ final class CodexAppMobileTests: XCTestCase {
         let handshakeMessage = client.userFacingMessage(
             for: URLError(.networkConnectionLost)
         )
-        XCTAssertTrue(handshakeMessage.contains("WebSocket handshake failed"))
+        XCTAssertTrue(
+            handshakeMessage.contains(
+                L10n.text(
+                    "WebSocket handshake failed before app-server initialization. Verify the app-server URL is reachable and update codex-cli on the remote host if needed, or use Terminal tab."
+                )
+            )
+        )
     }
 
     @MainActor

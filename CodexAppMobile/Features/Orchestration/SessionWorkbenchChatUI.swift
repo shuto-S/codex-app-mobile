@@ -406,17 +406,7 @@ extension SessionWorkbenchView {
     @ViewBuilder
     func chatMessageRow(_ message: SessionChatMessage) -> some View {
         if message.role == .assistant {
-            let assistantForeground = message.isProgressDetail
-                ? Color.white.opacity(0.62)
-                : Color.white
-            self.assistantMarkdownView(
-                message.text,
-                isProgressDetail: message.isProgressDetail
-            )
-                .foregroundStyle(assistantForeground)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-                .tint(Color.blue.opacity(0.94))
+            self.assistantMessageSurface(message)
         } else {
             HStack {
                 Spacer(minLength: 48)
@@ -430,6 +420,44 @@ extension SessionWorkbenchView {
                     .frame(maxWidth: 300, alignment: .trailing)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+
+    func assistantMessageSurface(_ message: SessionChatMessage) -> some View {
+        VStack(alignment: .leading, spacing: message.isProgressDetail ? 6 : 10) {
+            HStack(spacing: 7) {
+                Image(systemName: message.isProgressDetail ? "gearshape" : "sparkles")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(message.isProgressDetail ? 0.46 : 0.62))
+                    .frame(width: 16, height: 16)
+
+                Text(message.isProgressDetail ? L10n.text("Progress") : L10n.text("Codex"))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(message.isProgressDetail ? 0.48 : 0.66))
+                    .textCase(.uppercase)
+
+                Spacer(minLength: 8)
+            }
+
+            self.assistantMarkdownView(
+                message.text,
+                isProgressDetail: message.isProgressDetail
+            )
+            .foregroundStyle(message.isProgressDetail ? Color.white.opacity(0.62) : Color.white.opacity(0.94))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
+            .tint(Color.blue.opacity(0.94))
+        }
+        .padding(.horizontal, message.isProgressDetail ? 12 : 14)
+        .padding(.vertical, message.isProgressDetail ? 10 : 13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: message.isProgressDetail ? 14 : 18, style: .continuous)
+                .fill(Color.white.opacity(message.isProgressDetail ? 0.045 : 0.075))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: message.isProgressDetail ? 14 : 18, style: .continuous)
+                .stroke(Color.white.opacity(message.isProgressDetail ? 0.07 : 0.11), lineWidth: 0.8)
         }
     }
 
